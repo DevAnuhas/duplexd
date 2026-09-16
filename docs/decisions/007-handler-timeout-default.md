@@ -11,7 +11,7 @@ Two things could be timed: time to the first item, and total time to `done`. Two
 
 ## Decision
 
-`handlerTimeoutMs` is one wall-clock budget from the moment the broker dispatches the `HandlerRequest` to the moment the stream yields `done` or ends. Default `30000`. Accepted range `1000` to `120000`, validated in the contract schema.
+`handlerTimeoutMs` is one wall-clock budget from the moment the broker dispatches the `HandlerRequest` to the moment the stream yields `done` or ends. Default `30000`. Accepted range `1000` to `120000`, validated in the contract schema. Keepalive lines (ADR 006) do not restart or extend it; they exist to keep proxies from closing an idle connection, and a handler that needs longer than the budget needs a bigger budget, not more keepalives.
 
 On expiry the broker stops waiting and stops reading: it aborts the handler call (in-process: the request's abort signal and the iterator's `return`; remote: the HTTP request), emits `delegation.finished { outcome: "timeout" }`, and sends no append of its own. Items the broker forwarded before expiry stand; the model may already have spoken them. No further item from that delegation is forwarded after the deadline.
 

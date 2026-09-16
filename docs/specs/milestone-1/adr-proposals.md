@@ -1,0 +1,43 @@
+# ADR proposals 006, 007, 008
+
+Three decisions `CONTEXT.md` and `docs/PROTOCOL.md` leave open and milestone 1 cannot ship without. Each is in [`docs/decisions/`](../../decisions/) with status `proposed`.
+
+| ADR | File | Recommendation |
+| --- | --- | --- |
+| 006 | [006-remote-handler-ndjson.md](../../decisions/006-remote-handler-ndjson.md) | Remote handler results are newline-delimited JSON over a chunked POST response. Clean body end is `done`; a failed read is an error. The parser bounds a line in bytes. Amends ADR 003. |
+| 007 | [007-handler-timeout-default.md](../../decisions/007-handler-timeout-default.md) | One total wall-clock budget per delegation, default 30 000 ms, range 1 000 to 120 000. Keepalives do not extend it. Timeout means the broker stopped waiting and stopped forwarding; it generates no content of its own; earlier forwarded items stand; the consumer's outcome is unknown and the consumer reconciles. |
+| 008 | [008-handler-request-signing.md](../../decisions/008-handler-request-signing.md) | HMAC-SHA256 over `"<t>.<body>"` with a consumer-supplied secret; the signed body is authoritative and the `duplexd-session-id` and `duplexd-contract-version` headers must equal it; `https:` required unless loopback; redirects refused; 300 s tolerance; idempotency keyed on `(sessionId, delegationId)`. |
+
+## How they get accepted
+
+Documentation changes to canonical files land in the same ticket as the behavior they describe. All three decisions are contract-level behavior, so [#2](https://github.com/DevAnuhas/duplexd/issues/2) flips them to `accepted` in the PR that ships the schemas, parser, and signing helper. If that PR changes a proposal (a different header name, a different default), it edits the proposed file before accepting; no superseding record is needed for a proposal.
+
+## Summary of the reasoning
+
+**NDJSON over SSE.** The consumer of the stream is duplexd's server, not a browser, so `EventSource` convenience is irrelevant and `EventSource` cannot POST anyway. NDJSON is one `json.dumps` and a flush per item in any language. SSE's event, id, and retry fields have no meaning for a delegation that is never resumed. Whitespace-only lines are keepalives. The conformance runner asserts the first line arrives before the stream ends, which catches buffering HTTP stacks. The token budget cannot bound memory because it runs after a line completes, so the parser bounds a line in bytes. The server-to-console stream uses the same encoding and the same parser; ADR 006 does not govern it, but there is no reason for two encodings once the console reads with `fetch`.
+
+**30 second single budget.** Two timeouts are two things to explain in every handler language. A result that arrives a minute later answers a conversation that has moved on. Ten seconds would cut off consumers running a modest reasoning loop inside the handler. The figure is a judgment, not a measurement, and the ADR says so; it is revisited after live sessions show real latency. A broker cannot promise that a handler stops its side effect at the deadline or that a timed-out delegation produced no speech, so the ADR defines timeout as the broker's state only, keeps items forwarded before the deadline, and places duplicate suppression with the consumer.
+
+**HMAC with a consumer-supplied secret.** A server-issued per-session secret is minted at runtime and returned in the create response, which in the demo goes to the console, and the console has no channel to a separate handler process. A bearer token puts the secret on the wire every request and binds nothing to the body. HMAC over timestamp plus raw body is the webhook-signature pattern every language has prior art for. The request signature does nothing for the response, so non-loopback handlers must be `https:` and redirects are refused; the metadata headers are unsigned, so they must equal the signed body and nothing acts on them before that check. Derived per-session keys (HMAC of a master secret and the session id) would work with the same environment variable the demo already uses, and are deferred for a different reason: a second algorithm every handler language must implement.
+
+## Intentional departures from `docs/PROTOCOL.md`
+
+Deliberate changes, not drift. #2 records them in the protocol document when it accepts the ADRs.
+
+| Protocol today | Proposal | Why |
+| --- | --- | --- |
+| "one JSON object per line, or an SSE stream" | NDJSON only | ADR 006 |
+| "a per-session secret issued at creation" | consumer-supplied; per session only if the consumer chooses | the create response goes to the creator, not the handler |
+| "items after `done` … are dropped and counted" | not read: the broker stops reading at finish; there is no count | a count of items never read would be fiction |
+| "nothing is spoken on the consumer's behalf" | kept, and defined as: the broker generates no content of its own; items forwarded before the deadline stand | a handler heard before the deadline is not un-heard by a timeout |
+| "a server refuses a handler declaring a version it cannot speak" | the server declares; the handler refuses with 400 | the handler declares nothing on the wire |
+| no statement about keepalives and the budget | keepalives do not extend `handlerTimeoutMs` | consumers will otherwise assume they do |
+| `content` limited only by the provider's token budget | `MAX_CONTENT_CHARS` in the schema as well, and guidance to keep commentary short | the stream is one-way; a handler cannot see a broker-side rejection |
+| `handler` required in `SessionConfig` | still required; the server's create body is a derived `SessionCreateRequest` with it optional | the console must never see the secret, so the server fills it in |
+| `delegation.finished` without `append.rejected`; no `running` prior outcome | both added | named in [contracts.md](contracts.md) |
+
+## What each one leaves open
+
+- 006: nothing for milestone 1; a persistent per-handler connection if measured latency demands it.
+- 007: whether to notify the model on timeout; `handlerFirstItemTimeoutMs` as a later addition; how a consumer reconciles committed-but-unreported work is the consumer's, and the contract only requires that duplicates are suppressed.
+- 008: derived per-session keys; server-issued secrets for consumers whose creator and handler are one process; signing the response stream if a consumer cannot trust its own TLS termination; console auth before hosting.

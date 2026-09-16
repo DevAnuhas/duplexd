@@ -7,7 +7,7 @@ Date: 2026-09-16
 
 The server calls a consumer's handler URL once per delegation. The consumer must be able to reject requests that did not come from duplexd for that session, and must never receive its own duplexd API key back. `docs/PROTOCOL.md` says the server signs each request with a per-session secret issued at creation and leaves the scheme open.
 
-Whoever creates the session is not always the process that serves the handler. In the milestone demo the console creates sessions through the server and a separate example handler process answers them, so a secret the server invents at creation has no channel back to the handler.
+Whoever creates the session is not always the process that serves the handler. In the milestone demo the console creates sessions through the server and a separate example handler process answers them. A secret the server mints per session at creation time is returned in the create response, which goes to the creator, and the creator has no channel to the handler. That rules out server-issued per-session secrets for this topology. It does not rule out a shared secret both sides read from their environment, which is what the demo does; the choice among the schemes that work with a shared secret is made below on other grounds.
 
 A request signature authenticates the request. It does nothing for the response: the handler's result stream carries what the model will say, and the signature cannot protect it. The contract already allows any `http(s)` handler URL, so the response path needs its own protection or the allowed surface has a hole.
 
@@ -21,7 +21,7 @@ Every handler request carries:
 - `duplexd-session-id`: the provider session id, unchanged
 - `duplexd-signature`: `t=<unix seconds>,v1=<hex HMAC-SHA256(secret, "<t>.<raw request body>")>`
 
-The signed body is authoritative. The two metadata headers exist so a handler can route or reject before parsing the body; they carry no authority of their own. A handler verifies in this order and rejects at the first failure, before any dispatch or side effect:
+The signed body is authoritative. The two metadata headers exist for logs, traces, and proxies that cannot read a body; a handler acts on neither before the equality check below, and they carry no authority of their own. A handler verifies in this order and rejects at the first failure, before any dispatch or side effect:
 
 1. Recompute the signature over the raw body bytes, compare in constant time, and reject with 401 when it does not match or when `t` is more than 300 seconds from the handler's clock. Everything unsigned, the headers included, is untrusted until this passes.
 2. Parse the body.
@@ -40,7 +40,7 @@ The delegation id inside the signed body is the replay boundary. A request repla
 
 **Server-issued secret returned at session creation.** Rejected for milestone 1: it requires the session creator to distribute the secret to the handler before the first delegation, which the demo topology cannot do. It remains a reasonable addition for consumers whose creator and handler are the same process.
 
-**Derived per-session keys (HMAC of a master secret and the session id).** Deferred. It gives per-session isolation without distribution, at the cost of a second algorithm every handler must implement. Add it as a second `auth.type` if a consumer needs it.
+**Derived per-session keys (HMAC of a master secret and the session id).** Deferred. It works with the same shared master secret the demo already distributes by environment, and gives per-session isolation on top, at the cost of a second algorithm every handler must implement before it can verify anything. Add it as a second `auth.type` if a consumer needs it.
 
 **Sign the response stream too.** Rejected: signing a chunked stream line by line is a second algorithm in every language, and TLS already covers the whole exchange. Revisit only if a consumer needs to terminate TLS somewhere it does not trust.
 
