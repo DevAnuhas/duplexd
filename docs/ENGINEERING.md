@@ -88,4 +88,7 @@ None yet. When the server is deployable, releases are tagged from `main` and dep
 
 ## Evidence
 
-Evidence is added only after a check runs. T01's first entry will link the current-head CI run for PR #15.
+- 2026-09-16 — PR [#15](https://github.com/DevAnuhas/duplexd/pull/15) code path: [CI run 35058950023](https://github.com/DevAnuhas/duplexd/actions/runs/35058950023) passed `changes` and `checks`; `docs` reported skipped.
+- 2026-09-16 — temporary docs-only PR [#16](https://github.com/DevAnuhas/duplexd/pull/16): the [docs job](https://github.com/DevAnuhas/duplexd/actions/runs/35059064162/job/104675351128) passed, `changes` passed, and `checks` reported skipped. The PR was closed without merge.
+- 2026-09-16 — a fresh clone of the pushed branch under Node `24.21.0`, with no `.env` or application environment variables, passed frozen install, lint, typecheck, test, and build. Local `pnpm lint:links` also passed.
+- 2026-09-16 — `docker compose up -d --wait postgres` reached healthy. A host-side query through the `.env.example` URL returned PostgreSQL `17.6`, current user `duplexd`, and current database `duplexd`; the Compose service was then stopped.
