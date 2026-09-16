@@ -1,0 +1,31 @@
+{
+  "name": "duplexd",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.4.2+sha512.08adc6613180275c7c9edada39dcf08c9c61ad4e7eaf330a4f3461f102b0f907423454d117f98e72d47fef0616070644d7bffc973a6a57f5090a6d7c368b07c9",
+  "scripts": {
+    "build": "turbo run build",
+    "db:generate": "node -e \"console.error('Database generation lands in T07.'); process.exit(1)\"",
+    "db:migrate": "node -e \"console.error('Database migrations land in T07.'); process.exit(1)\"",
+    "dev": "node -e \"console.error('Server development mode lands in T06.'); process.exit(1)\"",
+    "lint": "turbo run lint",
+    "lint:links": "find . -type f -name '*.md' -not -path './.git/*' -not -path './node_modules/*' -print0 | xargs -0 markdown-link-check --quiet --config .markdown-link-check.json",
+    "lint:root": "bash -n scripts/classify-docs-only.sh && eslint --max-warnings=0 eslint.config.js vitest.config.ts vitest.shared.ts tests",
+    "test": "turbo run test",
+    "test:live": "turbo run test:live",
+    "test:scripts": "vitest run",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.13.5",
+    "eslint": "10.10.0",
+    "markdown-link-check": "3.15.0",
+    "prettier": "3.9.6",
+    "turbo": "2.10.13",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.70.0",
+    "vitest": "5.0.1"
+  }
+}

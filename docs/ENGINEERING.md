@@ -1,29 +1,45 @@
 # Engineering
 
-Setup, verification, CI, and releases. This file owns supported commands and actual verification evidence. Until application code exists, every command below is intended, not verified.
+Setup, verification, CI, and releases. This file owns supported commands and actual verification evidence. The workspace commands are executable; application startup remains planned until the tickets named below land.
 
 ## Toolchain
 
-- Node `24.21.0` (`.node-version`), pnpm pinned in `package.json` `packageManager`. Use `corepack enable` or install the pinned version.
+- Node `24.21.0` (`.node-version`) and pnpm `12.4.2` (including its Corepack integrity hash in `package.json`). Use `corepack enable` or install that exact pnpm version.
+- Turborepo `2.10.13`, TypeScript `6.0.3`, ESLint `10.10.0`, typescript-eslint `8.70.0`, Prettier `3.9.6`, and Vitest `5.0.1`.
+- Markdown links are checked by `markdown-link-check` `3.15.0` through `pnpm lint:links`.
 - Python 3.12+ and `uv` only for `examples/handler-python`.
 - Docker for local PostgreSQL.
 - `pnpm install --frozen-lockfile` locally and in CI. Exact pins, one committed lockfile.
 
-## Intended layout
+## Layout
 
 ```
-packages/contracts     Zod schemas, JSON Schema export, contract test suite
-packages/core          session FSM, transcript, broker, provider adapters
-packages/transports    webrtc, websocket-audio, twilio, sip
-apps/server            Fastify server
-apps/console           Vite + React
-examples/handler-node  sample remote handler
-examples/handler-python
+packages/contracts          @duplexd/contracts placeholder; T02 adds the wire contract
+packages/core               @duplexd/core placeholder; depends on contracts
+packages/transports/webrtc  @duplexd/transport-webrtc placeholder
+apps/server                 @duplexd/server placeholder
+apps/console                @duplexd/console placeholder
+examples/handler-node       handler-node placeholder
+examples/handler-python     README placeholder only; T11 owns its toolchain
 ```
 
-Turborepo orders and caches build, lint, typecheck, and test. Packaging and anything touching the live provider are never cached.
+Turborepo orders and caches build, lint, typecheck, and test. `@duplexd/core` imports `@duplexd/contracts` through its package export so the dependency edge is real. Packaging and anything touching the live provider are never cached. TypeScript `6.0.3` accepts `tsc -b --noEmit` with composite projects, so package `typecheck` scripts use that form; `build` uses `tsc -b`.
 
-## Local run
+## Workspace verification
+
+```bash
+corepack enable
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm lint:links
+```
+
+All commands require no environment variables. `pnpm dev` exits with a T06 message; `pnpm db:generate` and `pnpm db:migrate` exit with a T07 message until those tickets land.
+
+## Planned application run
 
 ```bash
 cp .env.example .env         # set OPENAI_API_KEY and DATABASE_URL
@@ -40,9 +56,9 @@ Open the console, start a call. The Twilio path is not part of milestone 1; when
 
 | Layer | What it proves | Command |
 | --- | --- | --- |
-| Contract tests | A handler implementation matches `PROTOCOL.md` | `pnpm --filter contracts test` and the Python equivalent |
-| Core unit tests | Broker behavior against a scripted fake provider | `pnpm --filter core test` |
-| Server tests | Session creation, auth, handler forwarding, persistence | `pnpm --filter server test` |
+| Contract tests | A handler implementation matches `PROTOCOL.md` | `pnpm --filter @duplexd/contracts test` and the Python equivalent |
+| Core unit tests | Broker behavior against a scripted fake provider | `pnpm --filter @duplexd/core test` |
+| Server tests | Session creation, auth, handler forwarding, persistence | `pnpm --filter @duplexd/server test` |
 | Live session | The real provider accepts our session and delegation flow | manual, recorded, session id in the PR |
 
 Aggregate contracts used by CI: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`. Do not invent substitutes.
@@ -60,7 +76,7 @@ Names only, in `.env.example`. Never commit values.
 
 ## CI
 
-Intended: one workflow on pull requests and `main` running frozen install, lint, typecheck, test, and build on Linux. The exact check name is recorded in `docs/WORKFLOW.md` when it exists. Documentation-only changes run link validation only.
+`.github/workflows/ci.yml` always starts for pull requests and pushes to `main`. Its `changes` job runs the repository's merge-base-aware path classifier. Code changes run frozen install, lint, typecheck, test, and build in `checks`; documentation-only changes run `pnpm lint:links` in `docs`. The unselected job reports skipped rather than disappearing, so later branch protection can require the stable check names recorded in [WORKFLOW.md](WORKFLOW.md).
 
 ## Data
 
@@ -72,4 +88,4 @@ None yet. When the server is deployable, releases are tagged from `main` and dep
 
 ## Evidence
 
-No checks have run. This section records observed results once they exist.
+Evidence is added only after a check runs. T01's first entry will link the current-head CI run for PR #15.
