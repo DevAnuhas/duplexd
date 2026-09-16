@@ -78,7 +78,7 @@ The server's API key authenticates a consumer to duplexd. It does not authorize 
 2. Broker snapshots the transcript and attaches the session's consumer context (an opaque blob the consumer supplied at session creation, echoed back unchanged).
 3. Broker invokes the handler. In-process: a function call. Remote: HTTP POST to the consumer's endpoint with the request body; the response is a stream of result items.
 4. Each result item is one of: `thinking` (silent context), `commentary` (to be spoken), `instruction` (session-wide steering), or `done`. The broker forwards each as the matching provider append, always carrying the delegation id, always within the provider's token limit.
-5. On `done`, or on handler timeout, or on session close, the broker marks the delegation finished. A timeout produces an honest state event; it never fabricates a spoken result. Late items for a finished delegation are dropped and counted.
+5. On `done`, or on handler timeout, or on session close, the broker marks the delegation finished and stops reading the handler stream. A timeout produces an honest state event; it never fabricates a spoken result. Later items are not observed.
 
 The provider may emit a second delegation before the first finishes. The broker runs them concurrently and keeps the ids separate.
 

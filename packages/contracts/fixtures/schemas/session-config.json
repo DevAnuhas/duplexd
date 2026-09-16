@@ -1,0 +1,15 @@
+{
+  "syntheticSecret": "synthetic-test-secret",
+  "valid": {
+    "provider": "openai-gpt-live",
+    "instructions": "Speak clearly and delegate when help is needed.",
+    "handler": {
+      "type": "remote",
+      "url": "https://handler.example.com/delegations",
+      "auth": {
+        "type": "hmac-sha256",
+        "secret": "synthetic-test-secret"
+      }
+    }
+  }
+}

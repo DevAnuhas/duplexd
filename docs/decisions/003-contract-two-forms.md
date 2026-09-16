@@ -32,6 +32,6 @@ The exact streaming encoding for the remote form (newline-delimited JSON versus 
 
 The contract must be language-neutral in practice, not just in intent. Anything that only works because of a TypeScript type is a contract bug.
 
-Contract changes are versioned. A remote handler declares the version it implements; a server refuses versions it cannot speak.
+Contract changes are versioned. The server declares the version in every request; a remote handler that cannot speak it returns `unsupported_contract_version`, as settled by ADR 008.
 
 The Python example handler is a required deliverable of milestone 1, not a nice-to-have, because it is the only proof the second form works.

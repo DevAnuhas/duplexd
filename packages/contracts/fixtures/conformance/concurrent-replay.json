@@ -1,0 +1,5 @@
+{
+  "name": "concurrent-replay",
+  "request": "booking",
+  "expectation": "same_commentary"
+}

@@ -1,0 +1,30 @@
+{
+  "expected": {
+    "strict": "valid",
+    "loose": "valid"
+  },
+  "request": {
+    "contractVersion": "1",
+    "sessionId": "session_fixture_1",
+    "delegationId": "delegation_delay_1",
+    "offsetMs": 1200,
+    "transcript": [
+      {
+        "role": "user",
+        "text": "Book a table for two tomorrow.",
+        "offsetMs": 200
+      },
+      {
+        "role": "assistant",
+        "text": "I will check that for you.",
+        "offsetMs": 900
+      }
+    ],
+    "priorDelegations": [],
+    "consumerContext": {
+      "sample": {
+        "delayMs": 3000
+      }
+    }
+  }
+}

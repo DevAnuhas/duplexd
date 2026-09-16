@@ -1,0 +1,84 @@
+{
+  "booking.ndjson": {
+    "schema": "HandlerResult",
+    "expectItems": 3,
+    "expectOutcome": "done",
+    "expectFinalDone": true
+  },
+  "keepalives.ndjson": {
+    "schema": "HandlerResult",
+    "expectItems": 2,
+    "expectOutcome": "done",
+    "expectFinalDone": true,
+    "splitAt": [
+      1,
+      3,
+      17
+    ]
+  },
+  "clean-end.ndjson": {
+    "schema": "HandlerResult",
+    "expectItems": 1,
+    "expectOutcome": "done",
+    "expectFinalDone": false,
+    "splitAt": [
+      8,
+      24
+    ]
+  },
+  "order-status.ndjson": {
+    "schema": "HandlerResult",
+    "expectItems": 1,
+    "expectOutcome": "done",
+    "expectFinalDone": true
+  },
+  "unknown-kind.ndjson": {
+    "schema": "HandlerResult",
+    "expectItems": 0,
+    "expectOutcome": "error",
+    "expectError": "unknown_kind"
+  },
+  "oversized.ndjson": {
+    "schema": "HandlerResult",
+    "expectItems": 0,
+    "expectOutcome": "error",
+    "expectError": "content_too_long"
+  },
+  "exact-max.ndjson": {
+    "schema": "HandlerResult",
+    "expectItems": 2,
+    "expectOutcome": "done",
+    "expectFinalDone": true
+  },
+  "line-too-long.ndjson": {
+    "schema": "HandlerResult",
+    "expectItems": 0,
+    "expectOutcome": "error",
+    "expectError": "line_too_long",
+    "splitAt": [
+      32000,
+      65536
+    ]
+  },
+  "oversized-whitespace.ndjson": {
+    "schema": "HandlerResult",
+    "expectItems": 0,
+    "expectOutcome": "error",
+    "expectError": "line_too_long",
+    "splitAt": [
+      32000,
+      65536
+    ]
+  },
+  "core-event.ndjson": {
+    "schema": "CoreEvent",
+    "expectItems": 5,
+    "expectOutcome": "done",
+    "expectFinalDone": false,
+    "splitAt": [
+      7,
+      120,
+      240
+    ]
+  }
+}

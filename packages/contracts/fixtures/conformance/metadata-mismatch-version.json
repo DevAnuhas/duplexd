@@ -1,0 +1,7 @@
+{
+  "name": "metadata-mismatch-version",
+  "request": "booking",
+  "expectation": "problem",
+  "status": 400,
+  "code": "metadata_mismatch"
+}

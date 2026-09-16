@@ -1,0 +1,5 @@
+{
+  "name": "empty-transcript",
+  "request": "empty-transcript",
+  "expectation": "valid_stream"
+}

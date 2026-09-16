@@ -1,0 +1,7 @@
+{
+  "name": "stale-timestamp",
+  "request": "booking",
+  "expectation": "problem",
+  "status": 401,
+  "code": "stale_timestamp"
+}

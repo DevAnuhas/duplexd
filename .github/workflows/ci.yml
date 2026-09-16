@@ -68,6 +68,11 @@ jobs:
         run: pnpm test
       - name: Build
         run: pnpm build
+      - name: Verify committed contract schemas
+        run: |
+          pnpm --filter @duplexd/contracts schema:check
+          git diff --exit-code -- packages/contracts/schema
+          test -z "$(git ls-files --others --exclude-standard -- packages/contracts/schema)"
 
   docs:
     name: docs

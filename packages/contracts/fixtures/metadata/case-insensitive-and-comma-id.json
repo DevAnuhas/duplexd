@@ -1,0 +1,36 @@
+{
+  "rawHeaders": [
+    [
+      "DUPLEXD-CONTRACT-VERSION",
+      "1"
+    ],
+    [
+      "Duplexd-Session-Id",
+      "opaque,id"
+    ]
+  ],
+  "body": {
+    "contractVersion": "1",
+    "sessionId": "opaque,id",
+    "delegationId": "delegation_fixture_1",
+    "offsetMs": 1200,
+    "transcript": [
+      {
+        "role": "user",
+        "text": "Book a table for two tomorrow.",
+        "offsetMs": 200
+      },
+      {
+        "role": "assistant",
+        "text": "I will check that for you.",
+        "offsetMs": 900
+      }
+    ],
+    "priorDelegations": []
+  },
+  "expected": {
+    "helper": {
+      "ok": true
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "APPEND_TOKEN_BUDGET": 500,
+  "CONTRACT_VERSION": "1",
+  "DEFAULT_HANDLER_TIMEOUT_MS": 30000,
+  "HANDLER_URL_PATTERN": "^(?:https:\\/\\/(?:\\[[0-9a-fA-F:]+\\]|[^\\s@/?#:[\\]]+)(?::[0-9]+)?(?:[/?][^\\s#]*)?|http:\\/\\/(?:localhost|127\\.0\\.0\\.1|\\[::1\\])(?::[0-9]+)?(?:[/?][^\\s#]*)?)$",
+  "MAX_CONTENT_CHARS": 500,
+  "MAX_HANDLER_TIMEOUT_MS": 120000,
+  "MAX_NDJSON_LINE_BYTES": 65536,
+  "MIN_HANDLER_TIMEOUT_MS": 1000,
+  "SCHEMA_DRAFT": "https://json-schema.org/draft/2020-12/schema",
+  "SIGNATURE_TOLERANCE_SECONDS": 300
+}

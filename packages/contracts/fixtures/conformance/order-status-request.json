@@ -1,0 +1,5 @@
+{
+  "name": "order-status-request",
+  "request": "order-status",
+  "expectation": "valid_stream"
+}

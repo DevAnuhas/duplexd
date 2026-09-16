@@ -1,0 +1,125 @@
+{
+  "$defs": {
+    "__schema0": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "$id": "https://duplexd.dev/schema/v1/HandlerRequest.loose.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": {},
+  "properties": {
+    "consumerContext": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "contractVersion": {
+      "const": "1",
+      "type": "string"
+    },
+    "delegationId": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "offsetMs": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "priorDelegations": {
+      "items": {
+        "additionalProperties": {},
+        "properties": {
+          "delegationId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "timeout",
+              "cancelled",
+              "error",
+              "running"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "delegationId",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "transcript": {
+      "items": {
+        "additionalProperties": {},
+        "properties": {
+          "offsetMs": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "role": {
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "text",
+          "offsetMs"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "contractVersion",
+    "sessionId",
+    "delegationId",
+    "offsetMs",
+    "transcript",
+    "priorDelegations"
+  ],
+  "type": "object"
+}

@@ -1,0 +1,502 @@
+{
+  "cases": [
+    {
+      "name": "session.started",
+      "value": {
+        "type": "session.started",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {}
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "session.closing",
+      "value": {
+        "type": "session.closing",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {}
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "session.closed",
+      "value": {
+        "type": "session.closed",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "usage": {
+            "seconds": 12.5,
+            "raw": {
+              "tier": "test"
+            }
+          }
+        }
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "session.failed",
+      "value": {
+        "type": "session.failed",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "reason": "provider refused the session"
+        }
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "session.incomplete provider_disconnected",
+      "value": {
+        "type": "session.incomplete",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "reason": "provider_disconnected"
+        }
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "session.incomplete provider_final_event_missing",
+      "value": {
+        "type": "session.incomplete",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "reason": "provider_final_event_missing"
+        }
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "session.incomplete process_shutdown",
+      "value": {
+        "type": "session.incomplete",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "reason": "process_shutdown"
+        }
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "session.incomplete instance_lost",
+      "value": {
+        "type": "session.incomplete",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "reason": "instance_lost"
+        }
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "transcript.user.delta",
+      "value": {
+        "type": "transcript.user.delta",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "text": "Book a table.",
+          "offsetMs": 200
+        }
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "transcript.assistant.delta",
+      "value": {
+        "type": "transcript.assistant.delta",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "text": "On it.",
+          "offsetMs": 900
+        }
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "delegation.created",
+      "value": {
+        "type": "delegation.created",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "delegationId": "delegation_fixture_1",
+          "offsetMs": 1200
+        }
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "delegation.finished without an error",
+      "value": {
+        "type": "delegation.finished",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "delegationId": "delegation_fixture_1",
+          "outcome": "done"
+        }
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "delegation.finished with the optional error",
+      "value": {
+        "type": "delegation.finished",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "delegationId": "delegation_fixture_1",
+          "outcome": "error",
+          "error": "handler returned 500"
+        }
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "delegation.finished cannot report running",
+      "value": {
+        "type": "delegation.finished",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "delegationId": "delegation_fixture_1",
+          "outcome": "running"
+        }
+      },
+      "expected": "invalid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "append.sent with a delegation id",
+      "value": {
+        "type": "append.sent",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "delegationId": "delegation_fixture_1",
+          "kind": "commentary",
+          "tokens": 12
+        }
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "append.sent with a null delegation id",
+      "value": {
+        "type": "append.sent",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "delegationId": null,
+          "kind": "instruction",
+          "tokens": 0
+        }
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "append.rejected over_budget",
+      "value": {
+        "type": "append.rejected",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "delegationId": null,
+          "kind": "thinking",
+          "reason": "over_budget"
+        }
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "append.rejected unknown_delegation",
+      "value": {
+        "type": "append.rejected",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "delegationId": null,
+          "kind": "thinking",
+          "reason": "unknown_delegation"
+        }
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "append.rejected delegation_finished",
+      "value": {
+        "type": "append.rejected",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "delegationId": null,
+          "kind": "thinking",
+          "reason": "delegation_finished"
+        }
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "append.rejected provider_error",
+      "value": {
+        "type": "append.rejected",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "delegationId": null,
+          "kind": "thinking",
+          "reason": "provider_error"
+        }
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "append.rejected with every optional field",
+      "value": {
+        "type": "append.rejected",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "delegationId": "delegation_fixture_1",
+          "kind": "commentary",
+          "reason": "over_budget",
+          "tokens": 501,
+          "chars": 640,
+          "detail": "append exceeded the token budget"
+        }
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "append.rejected with an unknown reason",
+      "value": {
+        "type": "append.rejected",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "delegationId": null,
+          "kind": "commentary",
+          "reason": "vibes"
+        }
+      },
+      "expected": "invalid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "transport.dtmf",
+      "value": {
+        "type": "transport.dtmf",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "digit": "5"
+        }
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "provider.raw carrying recursive JSON",
+      "value": {
+        "type": "provider.raw",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "event": {
+            "a": [
+              1,
+              null,
+              true,
+              "x",
+              {
+                "b": {
+                  "c": [
+                    [],
+                    {}
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "provider.raw carrying a bare JSON scalar",
+      "value": {
+        "type": "provider.raw",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "event": null
+        }
+      },
+      "expected": "valid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "unknown event type",
+      "value": {
+        "type": "session.teleported",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {}
+      },
+      "expected": "invalid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "seq below one",
+      "value": {
+        "type": "session.started",
+        "sessionId": "session_fixture_1",
+        "seq": 0,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {}
+      },
+      "expected": "invalid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "seq is not an integer",
+      "value": {
+        "type": "session.started",
+        "sessionId": "session_fixture_1",
+        "seq": 1.5,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {}
+      },
+      "expected": "invalid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "empty sessionId",
+      "value": {
+        "type": "session.started",
+        "sessionId": "",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {}
+      },
+      "expected": "invalid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "at is not an ISO-8601 timestamp",
+      "value": {
+        "type": "session.started",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "yesterday",
+        "payload": {}
+      },
+      "expected": "invalid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "unknown key at the event level",
+      "value": {
+        "type": "session.started",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {},
+        "extraTopLevel": true
+      },
+      "expected": "invalid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "unknown key nested in the payload",
+      "value": {
+        "type": "transport.dtmf",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "digit": "5",
+          "extraNested": true
+        }
+      },
+      "expected": "invalid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "unknown key nested two levels down, inside usage",
+      "value": {
+        "type": "session.closed",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "usage": {
+            "seconds": 1,
+            "raw": {},
+            "extraNested": true
+          }
+        }
+      },
+      "expected": "invalid",
+      "schema": "CoreEvent"
+    }
+  ]
+}

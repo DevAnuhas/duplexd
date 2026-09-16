@@ -2,11 +2,11 @@
 
 Three decisions `CONTEXT.md` and `docs/PROTOCOL.md` leave open and milestone 1 cannot ship without. Each is in [`docs/decisions/`](../../decisions/) with status `proposed`.
 
-| ADR | File | Recommendation |
-| --- | --- | --- |
-| 006 | [006-remote-handler-ndjson.md](../../decisions/006-remote-handler-ndjson.md) | Remote handler results are newline-delimited JSON over a chunked POST response. Clean body end is `done`; a failed read is an error. The parser bounds a line in bytes. Amends ADR 003. |
+| ADR | File                                                                             | Recommendation                                                                                                                                                                                                                                                                                                         |
+| --- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 006 | [006-remote-handler-ndjson.md](../../decisions/006-remote-handler-ndjson.md)     | Remote handler results are newline-delimited JSON over a chunked POST response. Clean body end is `done`; a failed read is an error. The parser bounds a line in bytes. Amends ADR 003.                                                                                                                                |
 | 007 | [007-handler-timeout-default.md](../../decisions/007-handler-timeout-default.md) | One total wall-clock budget per delegation, default 30 000 ms, range 1 000 to 120 000. Keepalives do not extend it. Timeout means the broker stopped waiting and stopped forwarding; it generates no content of its own; earlier forwarded items stand; the consumer's outcome is unknown and the consumer reconciles. |
-| 008 | [008-handler-request-signing.md](../../decisions/008-handler-request-signing.md) | HMAC-SHA256 over `"<t>.<body>"` with a consumer-supplied secret; the signed body is authoritative and the `duplexd-session-id` and `duplexd-contract-version` headers must equal it; `https:` required unless loopback; redirects refused; 300 s tolerance; idempotency keyed on `(sessionId, delegationId)`. |
+| 008 | [008-handler-request-signing.md](../../decisions/008-handler-request-signing.md) | HMAC-SHA256 over `"<t>.<body>"` with a consumer-supplied secret; the signed body is authoritative and the `duplexd-session-id` and `duplexd-contract-version` headers must equal it; `https:` required unless loopback; redirects refused; 300 s tolerance; idempotency keyed on `(sessionId, delegationId)`.          |
 
 ## How they get accepted
 
@@ -24,17 +24,17 @@ Documentation changes to canonical files land in the same ticket as the behavior
 
 Deliberate changes, not drift. #2 records them in the protocol document when it accepts the ADRs.
 
-| Protocol today | Proposal | Why |
-| --- | --- | --- |
-| "one JSON object per line, or an SSE stream" | NDJSON only | ADR 006 |
-| "a per-session secret issued at creation" | consumer-supplied; per session only if the consumer chooses | the create response goes to the creator, not the handler |
-| "items after `done` … are dropped and counted" | not read: the broker stops reading at finish; there is no count | a count of items never read would be fiction |
-| "nothing is spoken on the consumer's behalf" | kept, and defined as: the broker generates no content of its own; items forwarded before the deadline stand | a handler heard before the deadline is not un-heard by a timeout |
-| "a server refuses a handler declaring a version it cannot speak" | the server declares; the handler refuses with 400 | the handler declares nothing on the wire |
-| no statement about keepalives and the budget | keepalives do not extend `handlerTimeoutMs` | consumers will otherwise assume they do |
-| `content` limited only by the provider's token budget | `MAX_CONTENT_CHARS` in the schema as well, and guidance to keep commentary short | the stream is one-way; a handler cannot see a broker-side rejection |
-| `handler` required in `SessionConfig` | still required; the server's create body is a derived `SessionCreateRequest` with it optional | the console must never see the secret, so the server fills it in |
-| `delegation.finished` without `append.rejected`; no `running` prior outcome | both added | named in [contracts.md](contracts.md) |
+| Protocol today                                                              | Proposal                                                                                                    | Why                                                                 |
+| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| "one JSON object per line, or an SSE stream"                                | NDJSON only                                                                                                 | ADR 006                                                             |
+| "a per-session secret issued at creation"                                   | consumer-supplied; per session only if the consumer chooses                                                 | the create response goes to the creator, not the handler            |
+| continued consumption after `done`                                          | not read: the broker stops reading at finish; there is no count                                             | a count of items never read would be fiction                        |
+| "nothing is spoken on the consumer's behalf"                                | kept, and defined as: the broker generates no content of its own; items forwarded before the deadline stand | a handler heard before the deadline is not un-heard by a timeout    |
+| handler-led version negotiation                                             | the server declares; the handler refuses with 400                                                           | the handler declares nothing on the wire                            |
+| no statement about keepalives and the budget                                | keepalives do not extend `handlerTimeoutMs`                                                                 | consumers will otherwise assume they do                             |
+| `content` limited only by the provider's token budget                       | `MAX_CONTENT_CHARS` in the schema as well, and guidance to keep commentary short                            | the stream is one-way; a handler cannot see a broker-side rejection |
+| `handler` required in `SessionConfig`                                       | still required; the server's create body is a derived `SessionCreateRequest` with it optional               | the console must never see the secret, so the server fills it in    |
+| `delegation.finished` without `append.rejected`; no `running` prior outcome | both added                                                                                                  | named in [contracts.md](contracts.md)                               |
 
 ## What each one leaves open
 
