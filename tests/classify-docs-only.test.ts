@@ -29,6 +29,31 @@ function expectClassification(
   expect(result.stdout).toBe(expected);
 }
 
+/**
+ * Applies one working-tree mutation as a single commit and classifies it the
+ * way the workflow would for the given event, so a single table of expectations
+ * can cover both the merge-base (`pull_request`) and `before..after` (`push`)
+ * revision ranges.
+ */
+function classifyMutation(
+  mode: 'pull_request' | 'push',
+  mutate: () => void,
+  message: string,
+): ClassifierResult {
+  if (mode === 'pull_request') {
+    repo.git('checkout', '--quiet', '-b', 'feature');
+    mutate();
+    repo.commitAll(message);
+
+    return repo.classify('pull_request', 'main', 'feature');
+  }
+
+  mutate();
+  const after = repo.commitAll(message);
+
+  return repo.classify('push', initial, after);
+}
+
 beforeEach(() => {
   repo = new GitFixture();
   initial = repo.commit(
@@ -129,30 +154,6 @@ describe('classify-docs-only.sh', () => {
         { 'docsy/tool.ts': 'export const tool = 1;\n' },
         'feat: docsy tool',
       );
-
-      expectClassification(
-        repo.classify('pull_request', 'main', 'feature'),
-        'false',
-      );
-    });
-
-    it('classifies a renamed documentation file as docs-only', () => {
-      repo.git('checkout', '--quiet', '-b', 'feature');
-      repo.git('mv', 'docs/index.md', 'docs/overview.md');
-      repo.git('commit', '--quiet', '--message', 'docs: rename index');
-
-      expectClassification(
-        repo.classify('pull_request', 'main', 'feature'),
-        'true',
-      );
-    });
-
-    it('classifies a deletion-only change as not docs-only', () => {
-      // Deletions are excluded by --diff-filter=ACMRT, leaving an empty path
-      // set. The fail-safe must win: run the full checks.
-      repo.git('checkout', '--quiet', '-b', 'feature');
-      repo.git('rm', '--quiet', 'docs/index.md');
-      repo.git('commit', '--quiet', '--message', 'docs: drop index');
 
       expectClassification(
         repo.classify('pull_request', 'main', 'feature'),
@@ -282,6 +283,104 @@ describe('classify-docs-only.sh', () => {
       expectClassification(repo.classify('push', initial), 'false');
     });
   });
+
+  /**
+   * Deletions and renames are the cases a `--name-only --diff-filter=ACMRT`
+   * classifier gets wrong in both directions: it drops deleted paths entirely
+   * (so removing a source file looks like "nothing changed", and removing a
+   * docs file looks the same) and it reports only a rename's destination (so
+   * moving code *into* `docs/` looks like a documentation change).
+   *
+   * Both event modes are exercised from the same table because the two code
+   * paths in the classifier compute their revision range differently and can
+   * regress independently.
+   */
+  describe.each(['pull_request', 'push'] as const)(
+    'deletions and renames (%s events)',
+    (mode) => {
+      it('classifies deleting a source file alongside a docs edit as not docs-only', () => {
+        expectClassification(
+          classifyMutation(
+            mode,
+            () => {
+              repo.git('rm', '--quiet', 'src/app.ts');
+              repo.write({ 'README.md': '# duplexd\n\nupdated\n' });
+            },
+            'chore: drop app and touch readme',
+          ),
+          'false',
+        );
+      });
+
+      it('classifies deleting only a source file as not docs-only', () => {
+        expectClassification(
+          classifyMutation(
+            mode,
+            () => {
+              repo.git('rm', '--quiet', 'src/app.ts');
+            },
+            'chore: drop app',
+          ),
+          'false',
+        );
+      });
+
+      it('classifies deleting only a documentation file as docs-only', () => {
+        expectClassification(
+          classifyMutation(
+            mode,
+            () => {
+              repo.git('rm', '--quiet', 'docs/index.md');
+            },
+            'docs: drop index',
+          ),
+          'true',
+        );
+      });
+
+      it('classifies moving a source file into docs/ as not docs-only', () => {
+        // Rename detection reports only `docs/app.ts` unless the source side
+        // is considered too — the deleted `src/app.ts` is what makes this a
+        // code change.
+        expectClassification(
+          classifyMutation(
+            mode,
+            () => {
+              repo.git('mv', 'src/app.ts', 'docs/app.ts');
+            },
+            'chore: move app into docs',
+          ),
+          'false',
+        );
+      });
+
+      it('classifies moving a documentation file out of docs/ into src/ as not docs-only', () => {
+        expectClassification(
+          classifyMutation(
+            mode,
+            () => {
+              repo.git('mv', 'docs/index.md', 'src/index.ts');
+            },
+            'chore: move index into src',
+          ),
+          'false',
+        );
+      });
+
+      it('preserves a docs-to-docs rename as docs-only', () => {
+        expectClassification(
+          classifyMutation(
+            mode,
+            () => {
+              repo.git('mv', 'docs/index.md', 'docs/overview.md');
+            },
+            'docs: rename index',
+          ),
+          'true',
+        );
+      });
+    },
+  );
 
   describe('unsupported and malformed invocations', () => {
     it.each([

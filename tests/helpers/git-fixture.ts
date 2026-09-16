@@ -102,18 +102,31 @@ export class GitFixture {
     return result.stdout.trim();
   }
 
-  /** Writes the given files and commits them, returning the new commit SHA. */
-  commit(files: Record<string, string>, message: string): string {
+  /** Writes the given files into the working tree without staging them. */
+  write(files: Record<string, string>): void {
     for (const [relativePath, contents] of Object.entries(files)) {
       const absolutePath = join(this.dir, relativePath);
       mkdirSync(dirname(absolutePath), { recursive: true });
       writeFileSync(absolutePath, contents);
     }
+  }
 
+  /**
+   * Stages everything currently in the working tree — additions, modifications
+   * and deletions alike — and commits it, returning the new commit SHA.
+   */
+  commitAll(message: string): string {
     this.git('add', '--all');
     this.git('commit', '--quiet', '--message', message);
 
     return this.git('rev-parse', 'HEAD');
+  }
+
+  /** Writes the given files and commits them, returning the new commit SHA. */
+  commit(files: Record<string, string>, message: string): string {
+    this.write(files);
+
+    return this.commitAll(message);
   }
 
   /** Creates an empty commit, returning the new commit SHA. */
