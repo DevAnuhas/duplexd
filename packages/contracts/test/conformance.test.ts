@@ -1,3 +1,5 @@
+import { createServer } from 'node:http';
+
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { signHandlerRequest } from '@duplexd/contracts';
@@ -12,9 +14,38 @@ import {
   startReferenceHandler,
 } from '@duplexd/contracts/conformance';
 
-import { listFixtures, readFixtureJson, SYNTHETIC_TEST_SECRET } from './support/fixtures.js';
+import {
+  listFixtures,
+  readFixtureJson,
+  SYNTHETIC_TEST_SECRET,
+} from './support/fixtures.js';
 
 const secret = SYNTHETIC_TEST_SECRET;
+
+async function startProblemServer(chunks: string[]): Promise<RunningHandler> {
+  const server = createServer((_request, response) => {
+    response.writeHead(400, { 'content-type': 'application/problem+json' });
+    for (const chunk of chunks) response.write(chunk);
+    response.end();
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  if (address === null || typeof address === 'string') {
+    throw new Error('test server did not bind');
+  }
+  return {
+    url: `http://127.0.0.1:${address.port}/delegations`,
+    close: () =>
+      new Promise<void>((resolve, reject) =>
+        server.close((error) =>
+          error === undefined ? resolve() : reject(error),
+        ),
+      ),
+  };
+}
 
 /** The fourteen scenarios the spec's table requires, by name. */
 const REQUIRED_SCENARIOS: ConformanceScenarioName[] = [
@@ -58,30 +89,40 @@ afterAll(async () => {
 });
 
 const reasonsOf = (report: ConformanceReport) =>
-  report.scenarios.filter((result) => !result.passed).map((result) => `${result.name}: ${result.reason}`);
+  report.scenarios
+    .filter((result) => !result.passed)
+    .map((result) => `${result.name}: ${result.reason}`);
 
 describe('the scenario inventory', () => {
   it('declares exactly the fourteen required scenarios', () => {
-    expect([...CONFORMANCE_SCENARIOS].sort()).toEqual([...REQUIRED_SCENARIOS].sort());
+    expect([...CONFORMANCE_SCENARIOS].sort()).toEqual(
+      [...REQUIRED_SCENARIOS].sort(),
+    );
     expect(CONFORMANCE_SCENARIOS).toHaveLength(14);
   });
 
   it('has a fixture file per scenario and no orphans', () => {
-    const files = listFixtures('conformance').map((file) => file.replace(/\.json$/, ''));
+    const files = listFixtures('conformance').map((file) =>
+      file.replace(/\.json$/, ''),
+    );
     expect(files.sort()).toEqual([...REQUIRED_SCENARIOS].sort());
   });
 
   it('gives every scenario a loadable fixture that names itself', async () => {
     for (const name of CONFORMANCE_SCENARIOS) {
       const fixture = await loadScenario(name);
-      expect(fixture.name, `${name} fixture disagrees with its filename`).toBe(name);
+      expect(fixture.name, `${name} fixture disagrees with its filename`).toBe(
+        name,
+      );
       expect(fixture.request, `${name} names no request fixture`).toBeTruthy();
       expect(
         ['valid_stream', 'problem', 'same_commentary', 'early_keepalive'],
         `${name} expectation`,
       ).toContain(fixture.expectation);
       if (fixture.expectation === 'problem') {
-        expect(fixture.status, `${name} declares no status`).toBeTypeOf('number');
+        expect(fixture.status, `${name} declares no status`).toBeTypeOf(
+          'number',
+        );
         expect(fixture.code, `${name} declares no code`).toBeTypeOf('string');
       }
     }
@@ -140,9 +181,12 @@ describe('scenario selection', () => {
       runConformance({
         url: reference.url,
         secret,
-        scenarios: ['booking-request', 'not-a-scenario' as ConformanceScenarioName],
+        scenarios: [
+          'booking-request',
+          'not-a-scenario' as ConformanceScenarioName,
+        ],
       }),
-    ).rejects.toThrow(/not-a-scenario/);
+    ).rejects.toThrow('Unknown conformance scenario');
   });
 
   it('runs a single scenario when asked for one', async () => {
@@ -182,7 +226,9 @@ describe('runConformance against the deliberately buffering handler', () => {
   });
 
   it('explains the failure in actionable, secret-free terms', () => {
-    const failure = bufferingReport.scenarios.find((result) => result.name === BUFFERING_ORACLE);
+    const failure = bufferingReport.scenarios.find(
+      (result) => result.name === BUFFERING_ORACLE,
+    );
     expect(failure?.reason).toBeTruthy();
     expect(failure?.reason).toMatch(/2000ms deadline/);
     for (const result of bufferingReport.scenarios) {
@@ -245,7 +291,9 @@ describe('the keepalive deadline is measured over a real connection', () => {
     // The delay the fixture asks the handler to take before its real answer.
     expect(fixture.consumerContext).toEqual({ sample: { delayMs: 3000 } });
 
-    const timeToFirstByte = async (url: string): Promise<number | 'timed out'> => {
+    const timeToFirstByte = async (
+      url: string,
+    ): Promise<number | 'timed out'> => {
       const controller = new AbortController();
       const started = performance.now();
       const deadline = setTimeout(() => controller.abort(), 2_000);
@@ -271,7 +319,10 @@ describe('the keepalive deadline is measured over a real connection', () => {
     };
 
     const referenceFirstByte = await timeToFirstByte(reference.url);
-    expect(referenceFirstByte, 'the reference handler withheld its keepalive').not.toBe('timed out');
+    expect(
+      referenceFirstByte,
+      'the reference handler withheld its keepalive',
+    ).not.toBe('timed out');
     expect(referenceFirstByte).toBeLessThan(2_000);
 
     expect(
@@ -283,23 +334,92 @@ describe('the keepalive deadline is measured over a real connection', () => {
   it('makes no timing claim in the scenarios without a delay', async () => {
     // Every other scenario passes against both handlers, which is only
     // possible if none of them infers buffering from read counts or chunking.
-    const timingFree = CONFORMANCE_SCENARIOS.filter((name) => name !== BUFFERING_ORACLE);
+    const timingFree = CONFORMANCE_SCENARIOS.filter(
+      (name) => name !== BUFFERING_ORACLE,
+    );
     for (const name of timingFree) {
-      const referenceResult = referenceReport.scenarios.find((result) => result.name === name);
-      const bufferingResult = bufferingReport.scenarios.find((result) => result.name === name);
-      expect(referenceResult?.passed, `${name} against the reference handler`).toBe(true);
-      expect(bufferingResult?.passed, `${name} against the buffering handler`).toBe(true);
+      const referenceResult = referenceReport.scenarios.find(
+        (result) => result.name === name,
+      );
+      const bufferingResult = bufferingReport.scenarios.find(
+        (result) => result.name === name,
+      );
+      expect(
+        referenceResult?.passed,
+        `${name} against the reference handler`,
+      ).toBe(true);
+      expect(
+        bufferingResult?.passed,
+        `${name} against the buffering handler`,
+      ).toBe(true);
     }
   });
 });
 
 describe('the runner reports failures rather than throwing', () => {
+  it('assembles a duplicate-header problem split across HTTP chunks', async () => {
+    const remote = await startProblemServer([
+      '{"code":"metadata_',
+      'mismatch"}',
+    ]);
+    try {
+      const report = await runConformance({
+        url: remote.url,
+        secret,
+        scenarios: ['metadata-duplicate-header'],
+      });
+      expect(report.passed).toBe(true);
+    } finally {
+      await remote.close();
+    }
+  });
+
+  it('turns malformed duplicate-header responses into a sanitized failure', async () => {
+    const canary = 'SYNTHETIC_SECRET_CANARY_DO_NOT_PRINT';
+    const remote = await startProblemServer([`not-json-${canary}`]);
+    try {
+      const report = await runConformance({
+        url: remote.url,
+        secret,
+        scenarios: ['metadata-duplicate-header'],
+      });
+      expect(report.passed).toBe(false);
+      expect(JSON.stringify(report)).not.toContain(canary);
+      expect(report.scenarios[0]?.reason).toBe(
+        'request failed without exposing remote diagnostics',
+      );
+    } finally {
+      await remote.close();
+    }
+  });
+
+  it('does not echo an untrusted problem code into the report', async () => {
+    const canary = 'SYNTHETIC_SECRET_CANARY_DO_NOT_PRINT';
+    const remote = await startProblemServer([JSON.stringify({ code: canary })]);
+    try {
+      const report = await runConformance({
+        url: remote.url,
+        secret,
+        scenarios: ['metadata-mismatch-session'],
+      });
+      expect(report.passed).toBe(false);
+      expect(JSON.stringify(report)).not.toContain(canary);
+      expect(report.scenarios[0]?.reason).toContain('unexpected 400 response');
+    } finally {
+      await remote.close();
+    }
+  });
+
   it('turns an unreachable handler into a failed report', async () => {
     const dead = await startReferenceHandler(secret);
     const url = dead.url;
     await dead.close();
 
-    const report = await runConformance({ url, secret, scenarios: ['booking-request'] });
+    const report = await runConformance({
+      url,
+      secret,
+      scenarios: ['booking-request'],
+    });
     expect(report.passed).toBe(false);
     expect(report.scenarios[0]?.reason).toBeTruthy();
     expect(report.scenarios[0]?.reason).not.toContain(secret);
@@ -313,8 +433,16 @@ describe('the runner reports failures rather than throwing', () => {
     });
     // The valid-stream scenario now fails; the bad-signature one still passes,
     // because a wrong secret is exactly what it sends on purpose.
-    expect(report.scenarios.find((result) => result.name === 'booking-request')?.passed).toBe(false);
-    expect(report.scenarios.find((result) => result.name === 'bad-signature')?.passed).toBe(true);
-    expect(JSON.stringify(report)).not.toContain('a-different-synthetic-secret');
+    expect(
+      report.scenarios.find((result) => result.name === 'booking-request')
+        ?.passed,
+    ).toBe(false);
+    expect(
+      report.scenarios.find((result) => result.name === 'bad-signature')
+        ?.passed,
+    ).toBe(true);
+    expect(JSON.stringify(report)).not.toContain(
+      'a-different-synthetic-secret',
+    );
   });
 });

@@ -24,7 +24,7 @@ if (url === undefined || secret === undefined) {
   scenario !== undefined &&
   !CONFORMANCE_SCENARIOS.includes(scenario as ConformanceScenarioName)
 ) {
-  console.error(`Unknown conformance scenario: ${scenario}`);
+  console.error('Unknown conformance scenario');
   process.exitCode = 1;
 } else {
   const report = await runConformance({

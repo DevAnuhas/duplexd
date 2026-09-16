@@ -2,8 +2,17 @@ import { request as httpRequest } from 'node:http';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { CONTRACT_VERSION, HandlerResult, parseNdjson, signHandlerRequest } from '@duplexd/contracts';
-import { type RunningHandler, startReferenceHandler } from '@duplexd/contracts/conformance';
+import {
+  CONTRACT_VERSION,
+  HandlerResult,
+  checkHandlerRequestMetadata,
+  parseNdjson,
+  signHandlerRequest,
+} from '@duplexd/contracts';
+import {
+  type RunningHandler,
+  startReferenceHandler,
+} from '@duplexd/contracts/conformance';
 
 import { readFixtureJson, SYNTHETIC_TEST_SECRET } from './support/fixtures.js';
 import { collect } from './support/streams.js';
@@ -24,7 +33,8 @@ afterAll(async () => {
 });
 
 interface SendOptions {
-  body?: string;
+  body?: string | Uint8Array;
+  signedBody?: string | Uint8Array;
   signWith?: string;
   now?: () => number;
   headers?: Record<string, string>;
@@ -37,8 +47,11 @@ async function send(options: SendOptions = {}): Promise<Response> {
   const raw = options.body ?? JSON.stringify(booking);
   const parsed = ((): { contractVersion?: unknown; sessionId?: unknown } => {
     try {
+      if (typeof raw !== 'string') return {};
       const value: unknown = JSON.parse(raw);
-      return value !== null && typeof value === 'object' && !Array.isArray(value)
+      return value !== null &&
+        typeof value === 'object' &&
+        !Array.isArray(value)
         ? (value as Record<string, unknown>)
         : {};
     } catch {
@@ -48,8 +61,14 @@ async function send(options: SendOptions = {}): Promise<Response> {
 
   const headers: Record<string, string> = {
     'content-type': 'application/json',
-    'duplexd-signature': await signHandlerRequest(options.signWith ?? secret, raw, options.now),
-    'duplexd-contract-version': String(parsed.contractVersion ?? CONTRACT_VERSION),
+    'duplexd-signature': await signHandlerRequest(
+      options.signWith ?? secret,
+      options.signedBody ?? raw,
+      options.now,
+    ),
+    'duplexd-contract-version': String(
+      parsed.contractVersion ?? CONTRACT_VERSION,
+    ),
     'duplexd-session-id': String(parsed.sessionId ?? booking.sessionId),
     ...options.headers,
   };
@@ -58,12 +77,14 @@ async function send(options: SendOptions = {}): Promise<Response> {
   return fetch(options.url ?? handler.url, {
     method: options.method ?? 'POST',
     headers,
-    body: raw,
+    body: raw as BodyInit,
     redirect: 'error',
   });
 }
 
-async function problemOf(response: Response): Promise<{ code?: string; detail?: string }> {
+async function problemOf(
+  response: Response,
+): Promise<{ code?: string; detail?: string }> {
   expect(response.headers.get('content-type')).toBe('application/problem+json');
   return (await response.json()) as { code?: string; detail?: string };
 }
@@ -74,7 +95,10 @@ async function expectProblem(
   code: string,
 ): Promise<{ code?: string; detail?: string }> {
   const problem = await problemOf(response);
-  expect({ status: response.status, code: problem.code }).toEqual({ status, code });
+  expect({ status: response.status, code: problem.code }).toEqual({
+    status,
+    code,
+  });
   return problem;
 }
 
@@ -96,18 +120,22 @@ function sendWithDuplicateHeader(
   baseHeaders[name] = values;
 
   return new Promise((resolvePromise, reject) => {
-    const request = httpRequest(target, { method: 'POST', headers: baseHeaders }, (response) => {
-      let body = '';
-      response.setEncoding('utf8');
-      response.on('data', (chunk: string) => (body += chunk));
-      response.on('end', () =>
-        resolvePromise({
-          status: response.statusCode ?? 0,
-          contentType: String(response.headers['content-type'] ?? ''),
-          body,
-        }),
-      );
-    });
+    const request = httpRequest(
+      target,
+      { method: 'POST', headers: baseHeaders },
+      (response) => {
+        let body = '';
+        response.setEncoding('utf8');
+        response.on('data', (chunk: string) => (body += chunk));
+        response.on('end', () =>
+          resolvePromise({
+            status: response.statusCode ?? 0,
+            contentType: String(response.headers['content-type'] ?? ''),
+            body,
+          }),
+        );
+      },
+    );
     request.once('error', reject);
     request.end(raw);
   });
@@ -121,7 +149,9 @@ describe('the reference handler accepts a valid request', () => {
     expect(response.body).not.toBeNull();
     if (response.body === null) return;
 
-    const items = await collect(parseNdjson(response.body, (json) => HandlerResult.parse(json)));
+    const items = await collect(
+      parseNdjson(response.body, (json) => HandlerResult.parse(json)),
+    );
     expect(items.length).toBeGreaterThan(0);
     expect(items.at(-1)).toEqual({ kind: 'done' });
   });
@@ -134,7 +164,9 @@ describe('the reference handler accepts a valid request', () => {
     const response = await send({ body: JSON.stringify(orderStatus) });
     expect(response.status).toBe(200);
     if (response.body === null) return;
-    const items = await collect(parseNdjson(response.body, (json) => HandlerResult.parse(json)));
+    const items = await collect(
+      parseNdjson(response.body, (json) => HandlerResult.parse(json)),
+    );
     expect(items.at(-1)).toEqual({ kind: 'done' });
   });
 
@@ -148,7 +180,11 @@ describe('the reference handler accepts a valid request', () => {
 
 describe('the reference handler stops at the first failing step', () => {
   it('step 1: a bad signature is 401 invalid_signature', async () => {
-    await expectProblem(await send({ signWith: `${secret}-wrong` }), 401, 'invalid_signature');
+    await expectProblem(
+      await send({ signWith: `${secret}-wrong` }),
+      401,
+      'invalid_signature',
+    );
   });
 
   it('step 1: a missing signature header is 401 invalid_signature', async () => {
@@ -182,8 +218,16 @@ describe('the reference handler stops at the first failing step', () => {
   });
 
   it('step 2: signed malformed JSON is 400 malformed_body, not a 500', async () => {
-    await expectProblem(await send({ body: '{"contractVersion":' }), 400, 'malformed_body');
-    await expectProblem(await send({ body: 'not json at all' }), 400, 'malformed_body');
+    await expectProblem(
+      await send({ body: '{"contractVersion":' }),
+      400,
+      'malformed_body',
+    );
+    await expectProblem(
+      await send({ body: 'not json at all' }),
+      400,
+      'malformed_body',
+    );
     await expectProblem(await send({ body: '' }), 400, 'malformed_body');
   });
 
@@ -193,14 +237,17 @@ describe('the reference handler stops at the first failing step', () => {
     ['a string', '"a scalar"'],
     ['a boolean', 'true'],
     ['an array', '[{"contractVersion":"1"}]'],
-  ])('step 3: a signed %s body is refused without throwing', async (_label, raw) => {
-    // These parse as JSON but carry no fields for the headers to equal, so the
-    // earliest applicable failure is the metadata check — never a 500.
-    const response = await send({ body: raw });
-    expect(response.status).toBe(400);
-    const problem = await problemOf(response);
-    expect(problem.code).toBe('metadata_mismatch');
-  });
+  ])(
+    'step 3: a signed %s body is refused without throwing',
+    async (_label, raw) => {
+      // These parse as JSON but carry no fields for the headers to equal, so the
+      // earliest applicable failure is the metadata check — never a 500.
+      const response = await send({ body: raw });
+      expect(response.status).toBe(400);
+      const problem = await problemOf(response);
+      expect(problem.code).toBe('metadata_mismatch');
+    },
+  );
 
   it('step 3: a changed session header is 400 metadata_mismatch', async () => {
     const problem = await expectProblem(
@@ -222,7 +269,11 @@ describe('the reference handler stops at the first failing step', () => {
 
   it('step 3: a missing metadata header is 400 metadata_mismatch', async () => {
     for (const name of ['duplexd-contract-version', 'duplexd-session-id']) {
-      await expectProblem(await send({ omitHeaders: [name] }), 400, 'metadata_mismatch');
+      await expectProblem(
+        await send({ omitHeaders: [name] }),
+        400,
+        'metadata_mismatch',
+      );
     }
   });
 
@@ -242,7 +293,11 @@ describe('the reference handler stops at the first failing step', () => {
 
   it('step 4: a body version of "0" is 400 unsupported_contract_version', async () => {
     const raw = JSON.stringify({ ...booking, contractVersion: '0' });
-    await expectProblem(await send({ body: raw }), 400, 'unsupported_contract_version');
+    await expectProblem(
+      await send({ body: raw }),
+      400,
+      'unsupported_contract_version',
+    );
   });
 
   it('step 5: a metadata-clean but schema-invalid body is 400 invalid_request', async () => {
@@ -258,7 +313,11 @@ describe('the reference handler stops at the first failing step', () => {
 
 describe('the earliest applicable problem wins', () => {
   it('signature beats metadata, version and schema together', async () => {
-    const raw = JSON.stringify({ ...booking, contractVersion: '0', offsetMs: 'soon' });
+    const raw = JSON.stringify({
+      ...booking,
+      contractVersion: '0',
+      offsetMs: 'soon',
+    });
     await expectProblem(
       await send({
         body: raw,
@@ -271,7 +330,11 @@ describe('the earliest applicable problem wins', () => {
   });
 
   it('staleness beats metadata, version and schema together', async () => {
-    const raw = JSON.stringify({ ...booking, contractVersion: '0', offsetMs: 'soon' });
+    const raw = JSON.stringify({
+      ...booking,
+      contractVersion: '0',
+      offsetMs: 'soon',
+    });
     await expectProblem(
       await send({
         body: raw,
@@ -287,7 +350,10 @@ describe('the earliest applicable problem wins', () => {
     await expectProblem(
       await send({
         body: '{ not json',
-        headers: { 'duplexd-session-id': 'another-session', 'duplexd-contract-version': '0' },
+        headers: {
+          'duplexd-session-id': 'another-session',
+          'duplexd-contract-version': '0',
+        },
       }),
       400,
       'malformed_body',
@@ -297,15 +363,26 @@ describe('the earliest applicable problem wins', () => {
   it('metadata beats version', async () => {
     const raw = JSON.stringify({ ...booking, contractVersion: '0' });
     await expectProblem(
-      await send({ body: raw, headers: { 'duplexd-contract-version': CONTRACT_VERSION } }),
+      await send({
+        body: raw,
+        headers: { 'duplexd-contract-version': CONTRACT_VERSION },
+      }),
       400,
       'metadata_mismatch',
     );
   });
 
   it('version beats schema', async () => {
-    const raw = JSON.stringify({ ...booking, contractVersion: '0', offsetMs: 'soon' });
-    await expectProblem(await send({ body: raw }), 400, 'unsupported_contract_version');
+    const raw = JSON.stringify({
+      ...booking,
+      contractVersion: '0',
+      offsetMs: 'soon',
+    });
+    await expectProblem(
+      await send({ body: raw }),
+      400,
+      'unsupported_contract_version',
+    );
   });
 
   it('a body tampered after signing fails at the signature, never at metadata', async () => {
@@ -317,24 +394,41 @@ describe('the earliest applicable problem wins', () => {
     const fixture = readFixtureJson<{
       rawHeaders: Array<[string, string]>;
       body: Record<string, unknown>;
-      expected: { handler: { status: number; code: string; helperCalled: boolean } };
+      expected: {
+        handler: { status: number; code: string; helperCalled: boolean };
+      };
     }>('metadata', 'body-session-changed.json');
 
     const signedBody = JSON.stringify(booking);
-    const tamperedBody = JSON.stringify({ ...booking, sessionId: 'tampered-session' });
+    const tamperedBody = JSON.stringify({
+      ...booking,
+      sessionId: 'tampered-session',
+    });
     const signature = await signHandlerRequest(secret, signedBody);
 
-    const response = await fetch(handler.url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'duplexd-signature': signature,
-        'duplexd-contract-version': CONTRACT_VERSION,
-        'duplexd-session-id': String(booking.sessionId),
+    let helperCalls = 0;
+    const observed = await startReferenceHandler(secret, {
+      checkMetadata: (...arguments_) => {
+        helperCalls += 1;
+        return checkHandlerRequestMetadata(...arguments_);
       },
-      body: tamperedBody,
-      redirect: 'error',
     });
+    let response: Response;
+    try {
+      response = await fetch(observed.url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'duplexd-signature': signature,
+          'duplexd-contract-version': CONTRACT_VERSION,
+          'duplexd-session-id': String(booking.sessionId),
+        },
+        body: tamperedBody,
+        redirect: 'error',
+      });
+    } finally {
+      await observed.close();
+    }
 
     const problem = await expectProblem(
       response,
@@ -342,9 +436,62 @@ describe('the earliest applicable problem wins', () => {
       fixture.expected.handler.code,
     );
     expect(fixture.expected.handler.helperCalled).toBe(false);
+    expect(helperCalls).toBe(0);
     // The helper always supplies a detail naming a header; a signature
     // rejection carries none.
     expect(problem.detail).toBeUndefined();
+  });
+
+  it('authenticates the exact wire bytes before decoding UTF-8', async () => {
+    const raw = JSON.stringify(booking);
+    const encoded = new TextEncoder().encode(raw);
+    const withBom = new Uint8Array(encoded.byteLength + 3);
+    withBom.set([0xef, 0xbb, 0xbf]);
+    withBom.set(encoded, 3);
+
+    await expectProblem(
+      await send({ body: withBom, signedBody: raw }),
+      401,
+      'invalid_signature',
+    );
+
+    const replacementBody = JSON.stringify({
+      ...booking,
+      transcript: [{ role: 'user', text: '\ufffd', offsetMs: 0 }],
+    });
+    const replacementBytes = new TextEncoder().encode(replacementBody);
+    const marker = replacementBytes.findIndex(
+      (_byte, index) =>
+        replacementBytes[index] === 0xef &&
+        replacementBytes[index + 1] === 0xbf &&
+        replacementBytes[index + 2] === 0xbd,
+    );
+    expect(marker).toBeGreaterThanOrEqual(0);
+    const invalidUtf8 = replacementBytes.slice();
+    invalidUtf8[marker] = 0xff;
+
+    await expectProblem(
+      await send({ body: invalidUtf8, signedBody: replacementBody }),
+      401,
+      'invalid_signature',
+    );
+  });
+
+  it('reports byte tampering before timestamp staleness', async () => {
+    const raw = JSON.stringify(booking);
+    const encoded = new TextEncoder().encode(raw);
+    const withBom = new Uint8Array(encoded.byteLength + 3);
+    withBom.set([0xef, 0xbb, 0xbf]);
+    withBom.set(encoded, 3);
+    await expectProblem(
+      await send({
+        body: withBom,
+        signedBody: raw,
+        now: () => Date.now() - 10 * 60 * 1000,
+      }),
+      401,
+      'invalid_signature',
+    );
   });
 });
 
@@ -359,14 +506,20 @@ describe('the reference handler never leaks or trusts the wrong thing', () => {
       send({ body: JSON.stringify({ ...booking, offsetMs: 'soon' }) }),
     ]);
     for (const response of rejections) {
-      expect(response.headers.get('content-type')).toBe('application/problem+json');
+      expect(response.headers.get('content-type')).toBe(
+        'application/problem+json',
+      );
       expect([400, 401]).toContain(response.status);
     }
   });
 
   it('echoes neither the secret, the signature, nor the raw body', async () => {
     const marker = 'CANARY_IN_THE_UNTRUSTED_BODY';
-    const raw = JSON.stringify({ ...booking, offsetMs: 'soon', canary: marker });
+    const raw = JSON.stringify({
+      ...booking,
+      offsetMs: 'soon',
+      canary: marker,
+    });
     const signature = await signHandlerRequest(secret, raw);
 
     for (const response of [
@@ -390,7 +543,9 @@ describe('the reference handler never leaks or trusts the wrong thing', () => {
     const withBookingSession = { ...orderStatus, sessionId: booking.sessionId };
 
     const bookingResponse = await send();
-    const orderResponse = await send({ body: JSON.stringify(withBookingSession) });
+    const orderResponse = await send({
+      body: JSON.stringify(withBookingSession),
+    });
     expect(bookingResponse.status).toBe(200);
     expect(orderResponse.status).toBe(200);
     if (bookingResponse.body === null || orderResponse.body === null) return;
@@ -445,6 +600,8 @@ describe('the reference handler binds cleanly', () => {
       await extra.close();
     }
     // A closed handler refuses new connections rather than leaking the socket.
-    await expect(fetch(extra.url, { method: 'POST', body: '{}' })).rejects.toThrow();
+    await expect(
+      fetch(extra.url, { method: 'POST', body: '{}' }),
+    ).rejects.toThrow();
   });
 });

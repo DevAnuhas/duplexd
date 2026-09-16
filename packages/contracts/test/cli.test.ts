@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -11,13 +12,19 @@ import {
   startReferenceHandler,
 } from '@duplexd/contracts/conformance';
 
-import { distRoot, packageRoot, SYNTHETIC_TEST_SECRET } from './support/fixtures.js';
+import {
+  distRoot,
+  packageRoot,
+  SYNTHETIC_TEST_SECRET,
+} from './support/fixtures.js';
 
 const execFileAsync = promisify(execFile);
 const secret = SYNTHETIC_TEST_SECRET;
 const repoRoot = resolve(packageRoot, '..', '..');
 
-const manifest = JSON.parse(readFileSync(resolve(packageRoot, 'package.json'), 'utf8')) as {
+const manifest = JSON.parse(
+  readFileSync(resolve(packageRoot, 'package.json'), 'utf8'),
+) as {
   bin: Record<string, string>;
 };
 
@@ -29,7 +36,10 @@ const manifest = JSON.parse(readFileSync(resolve(packageRoot, 'package.json'), '
  * the built executable — no source runner and no test-only import stands in
  * for it.
  */
-const binFromManifest = resolve(packageRoot, manifest.bin['duplexd-conformance'] ?? '');
+const binFromManifest = resolve(
+  packageRoot,
+  manifest.bin['duplexd-conformance'] ?? '',
+);
 const binShim = [
   resolve(packageRoot, 'node_modules/.bin/duplexd-conformance'),
   resolve(repoRoot, 'node_modules/.bin/duplexd-conformance'),
@@ -56,7 +66,11 @@ async function runCli(args: string[]): Promise<CliRun> {
     });
     return { status: 0, stdout, stderr };
   } catch (error) {
-    const failure = error as { code?: number; stdout?: string; stderr?: string };
+    const failure = error as {
+      code?: number;
+      stdout?: string;
+      stderr?: string;
+    };
     return {
       status: failure.code ?? -1,
       stdout: failure.stdout ?? '',
@@ -78,13 +92,19 @@ afterAll(async () => {
 
 describe('the duplexd-conformance bin', () => {
   it('is declared and resolves to built output', () => {
-    expect(manifest.bin['duplexd-conformance']).toBe('./dist/src/conformance/cli.js');
+    expect(manifest.bin['duplexd-conformance']).toBe(
+      './dist/src/conformance/cli.js',
+    );
     expect(existsSync(binFromManifest)).toBe(true);
-    expect(realpathSync(binFromManifest).startsWith(realpathSync(distRoot))).toBe(true);
+    expect(
+      realpathSync(binFromManifest).startsWith(realpathSync(distRoot)),
+    ).toBe(true);
   });
 
   it('carries a shebang so an installed shim can execute it', () => {
-    expect(readFileSync(binFromManifest, 'utf8').startsWith('#!/usr/bin/env node')).toBe(true);
+    expect(
+      readFileSync(binFromManifest, 'utf8').startsWith('#!/usr/bin/env node'),
+    ).toBe(true);
   });
 });
 
@@ -97,7 +117,11 @@ describe('duplexd-conformance against the reference handler', () => {
     const lines = run.stdout.trim().split('\n');
     expect(lines).toHaveLength(14);
     for (const line of lines) expect(line.startsWith('PASS ')).toBe(true);
-    for (const name of ['booking-request', 'replayed-request', 'keepalive-under-delay']) {
+    for (const name of [
+      'booking-request',
+      'replayed-request',
+      'keepalive-under-delay',
+    ]) {
       expect(run.stdout).toContain(`PASS ${name}`);
     }
   }, 60_000);
@@ -119,6 +143,42 @@ describe('duplexd-conformance against the reference handler', () => {
     const run = await runCli(['--url', reference.url, '--secret', secret]);
     expect(`${run.stdout}${run.stderr}`).not.toContain(secret);
   }, 60_000);
+
+  it('does not print an untrusted remote problem code', async () => {
+    const canary = 'SYNTHETIC_SECRET_CANARY_DO_NOT_PRINT';
+    const remote = createServer((request, response) => {
+      request.resume();
+      response.writeHead(401, { 'content-type': 'application/problem+json' });
+      response.end(JSON.stringify({ code: canary }));
+    });
+    await new Promise<void>((resolve, reject) => {
+      remote.once('error', reject);
+      remote.listen(0, '127.0.0.1', resolve);
+    });
+    const address = remote.address();
+    if (address === null || typeof address === 'string') {
+      throw new Error('test server did not bind');
+    }
+    try {
+      const run = await runCli([
+        '--url',
+        `http://127.0.0.1:${address.port}/delegations`,
+        '--secret',
+        secret,
+        '--scenario',
+        'bad-signature',
+      ]);
+      expect(run.status).not.toBe(0);
+      expect(`${run.stdout}${run.stderr}`).not.toContain(canary);
+    } finally {
+      remote.closeAllConnections();
+      await new Promise<void>((resolve, reject) =>
+        remote.close((error) =>
+          error === undefined ? resolve() : reject(error),
+        ),
+      );
+    }
+  });
 });
 
 describe('duplexd-conformance against the buffering handler', () => {
@@ -158,11 +218,7 @@ describe('duplexd-conformance against the buffering handler', () => {
 
 describe('duplexd-conformance argument handling', () => {
   it('exits nonzero with usage when a required flag is missing', async () => {
-    for (const args of [
-      [],
-      ['--url', reference.url],
-      ['--secret', secret],
-    ]) {
+    for (const args of [[], ['--url', reference.url], ['--secret', secret]]) {
       const run = await runCli(args);
       expect(run.status, `args ${JSON.stringify(args)}`).not.toBe(0);
       expect(run.stderr).toContain('Usage: duplexd-conformance');
@@ -180,16 +236,38 @@ describe('duplexd-conformance argument handling', () => {
       'not-a-scenario',
     ]);
     expect(run.status).not.toBe(0);
-    expect(run.stderr).toContain('not-a-scenario');
+    expect(run.stderr).toContain('Unknown conformance scenario');
+    expect(run.stderr).not.toContain('not-a-scenario');
     expect(run.stdout).toBe('');
   }, 30_000);
+
+  it('does not echo an untrusted scenario value that contains a secret canary', async () => {
+    const canary = 'SYNTHETIC_SECRET_CANARY_DO_NOT_PRINT';
+    const run = await runCli([
+      '--url',
+      reference.url,
+      '--secret',
+      secret,
+      '--scenario',
+      canary,
+    ]);
+    expect(run.status).not.toBe(0);
+    expect(`${run.stdout}${run.stderr}`).not.toContain(canary);
+  });
 
   it('reports a config error rather than hanging on an unreachable URL', async () => {
     const dead = await startReferenceHandler(secret);
     const url = dead.url;
     await dead.close();
 
-    const run = await runCli(['--url', url, '--secret', secret, '--scenario', 'booking-request']);
+    const run = await runCli([
+      '--url',
+      url,
+      '--secret',
+      secret,
+      '--scenario',
+      'booking-request',
+    ]);
     expect(run.status).not.toBe(0);
     expect(run.stdout).toContain('FAIL booking-request');
     expect(`${run.stdout}${run.stderr}`).not.toContain(secret);

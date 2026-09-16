@@ -2,6 +2,22 @@ import { SIGNATURE_TOLERANCE_SECONDS } from './constants.js';
 
 const encoder = new TextEncoder();
 
+function bodyBytes(body: string | Uint8Array): Uint8Array {
+  return typeof body === 'string' ? encoder.encode(body) : body;
+}
+
+function signingInput(
+  timestamp: number,
+  body: string | Uint8Array,
+): Uint8Array {
+  const prefix = encoder.encode(`${timestamp}.`);
+  const rawBody = bodyBytes(body);
+  const input = new Uint8Array(prefix.byteLength + rawBody.byteLength);
+  input.set(prefix);
+  input.set(rawBody, prefix.byteLength);
+  return input;
+}
+
 function toHex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join(
     '',
@@ -29,7 +45,7 @@ async function importKey(secret: string) {
 
 export async function signHandlerRequest(
   secret: string,
-  body: string,
+  body: string | Uint8Array,
   now: () => number = Date.now,
 ): Promise<string> {
   const timestamp = Math.floor(now() / 1000);
@@ -37,7 +53,7 @@ export async function signHandlerRequest(
   const signature = await crypto.subtle.sign(
     'HMAC',
     key,
-    encoder.encode(`${timestamp}.${body}`),
+    signingInput(timestamp, body),
   );
   return `t=${timestamp},v1=${toHex(new Uint8Array(signature))}`;
 }
@@ -48,7 +64,7 @@ export type SignatureVerification =
 export async function verifyHandlerSignature(
   secret: string,
   header: string | null,
-  body: string,
+  body: string | Uint8Array,
   options: { now?: () => number; toleranceSeconds?: number } = {},
 ): Promise<SignatureVerification> {
   const match = /^t=(\d+),v1=([0-9a-f]{64})$/.exec(header ?? '');
@@ -67,7 +83,7 @@ export async function verifyHandlerSignature(
       'HMAC',
       key,
       signature,
-      encoder.encode(`${timestamp}.${body}`),
+      signingInput(timestamp, body),
     );
   } catch {
     return { ok: false, code: 'invalid_signature' };

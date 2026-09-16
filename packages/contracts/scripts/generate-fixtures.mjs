@@ -54,7 +54,9 @@ const requests = {
   },
   'missing-field': {
     expected: { strict: 'invalid', loose: 'invalid' },
-    request: Object.fromEntries(Object.entries(base).filter(([key]) => key !== 'sessionId')),
+    request: Object.fromEntries(
+      Object.entries(base).filter(([key]) => key !== 'sessionId'),
+    ),
   },
   'wrong-offset': {
     expected: { strict: 'invalid', loose: 'invalid' },
@@ -80,12 +82,18 @@ function coreEventStream() {
       type: 'transcript.user.delta',
       payload: { text: 'Book a table for two tomorrow.', offsetMs: 200 },
     },
-    { type: 'delegation.created', payload: { delegationId: 'delegation_fixture_1', offsetMs: 1200 } },
+    {
+      type: 'delegation.created',
+      payload: { delegationId: 'delegation_fixture_1', offsetMs: 1200 },
+    },
     {
       type: 'provider.raw',
       payload: { event: { nested: [1, null, { deep: ['ok', true] }] } },
     },
-    { type: 'session.closed', payload: { usage: { seconds: 12.5, raw: { tier: 'test' } } } },
+    {
+      type: 'session.closed',
+      payload: { usage: { seconds: 12.5, raw: { tier: 'test' } } },
+    },
   ];
   return events
     .map((event, index) =>
@@ -110,8 +118,10 @@ const results = {
     .map((item) => JSON.stringify(item))
     .join('\n')
     .concat('\n'),
-  'keepalives.ndjson': ' \r\n\n{"kind":"commentary","content":"Still checking."}\r\n{"kind":"done"}\r\n',
-  'clean-end.ndjson': '{"kind":"commentary","content":"Complete without an explicit marker."}',
+  'keepalives.ndjson':
+    ' \r\n\n{"kind":"commentary","content":"Still checking."}\r\n{"kind":"done"}\r\n',
+  'clean-end.ndjson':
+    '{"kind":"commentary","content":"Complete without an explicit marker."}',
   // A legitimate order-status answer: the handler has nothing to say and just
   // finishes. It carries no delay, so it makes no buffering claim either.
   'order-status.ndjson': '{"kind":"done"}\n',
@@ -202,7 +212,13 @@ async function json(path, value) {
   await writeFile(resolve(root, path), `${JSON.stringify(value, null, 2)}\n`);
 }
 
-for (const directory of ['requests', 'results', 'metadata', 'conformance', 'schemas']) {
+for (const directory of [
+  'requests',
+  'results',
+  'metadata',
+  'conformance',
+  'schemas',
+]) {
   await mkdir(resolve(root, directory), { recursive: true });
 }
 for (const [name, fixture] of Object.entries(requests)) {
@@ -216,7 +232,9 @@ await json('results/index.json', resultIndex);
 const signedBody = JSON.stringify(base);
 const signature = await signHandlerRequest(secret, signedBody, fixedNow);
 await json('signing.json', {
-  vectors: [{ secret, timestamp: 1_700_000_000, body: signedBody, header: signature }],
+  vectors: [
+    { secret, timestamp: 1_700_000_000, body: signedBody, header: signature },
+  ],
   tampered: [
     { base: 0, mutate: 'body', expectCode: 'invalid_signature' },
     { base: 0, mutate: 'timestamp', expectCode: 'invalid_signature' },
@@ -263,7 +281,9 @@ const metadata = {
     expected: { helper: { status: 400, code: 'metadata_mismatch' } },
   },
   'version-missing': {
-    rawHeaders: validHeaders.filter(([name]) => name !== 'duplexd-contract-version'),
+    rawHeaders: validHeaders.filter(
+      ([name]) => name !== 'duplexd-contract-version',
+    ),
     body: base,
     expected: { helper: { status: 400, code: 'metadata_mismatch' } },
   },
@@ -309,7 +329,12 @@ const scenarioDefinitions = {
   'prior-delegations': ['prior-delegations', 'valid_stream'],
   'bad-signature': ['booking', 'problem', 401, 'invalid_signature'],
   'stale-timestamp': ['booking', 'problem', 401, 'stale_timestamp'],
-  'unsupported-version': ['booking', 'problem', 400, 'unsupported_contract_version'],
+  'unsupported-version': [
+    'booking',
+    'problem',
+    400,
+    'unsupported_contract_version',
+  ],
   'metadata-mismatch-session': ['booking', 'problem', 400, 'metadata_mismatch'],
   'metadata-mismatch-version': ['booking', 'problem', 400, 'metadata_mismatch'],
   'metadata-duplicate-header': ['booking', 'problem', 400, 'metadata_mismatch'],
@@ -370,7 +395,9 @@ const sessionBase = {
 
 /** `JSON.stringify({ pad })` is `{"pad":"…"}` — ten bytes of frame plus `pad`. */
 const CONTEXT_FRAME_BYTES = 10;
-const asciiContext = (bytes) => ({ pad: 'x'.repeat(bytes - CONTEXT_FRAME_BYTES) });
+const asciiContext = (bytes) => ({
+  pad: 'x'.repeat(bytes - CONTEXT_FRAME_BYTES),
+});
 const euroContext = (euros, extraAscii = 0) => ({
   pad: '€'.repeat(euros) + 'x'.repeat(extraAscii),
 });
@@ -466,19 +493,31 @@ const sessionCases = [
   {
     name: 'handlerTimeoutMs is not an integer',
     schema: 'SessionConfig',
-    value: { ...sessionBase, handlerTimeoutMs: 30000.5, handler: remoteHandler },
+    value: {
+      ...sessionBase,
+      handlerTimeoutMs: 30000.5,
+      handler: remoteHandler,
+    },
     expected: 'invalid',
   },
   {
     name: 'instructions at the maximum length',
     schema: 'SessionConfig',
-    value: { ...sessionBase, instructions: 'i'.repeat(4000), handler: remoteHandler },
+    value: {
+      ...sessionBase,
+      instructions: 'i'.repeat(4000),
+      handler: remoteHandler,
+    },
     expected: 'valid',
   },
   {
     name: 'instructions one character over the maximum',
     schema: 'SessionConfig',
-    value: { ...sessionBase, instructions: 'i'.repeat(4001), handler: remoteHandler },
+    value: {
+      ...sessionBase,
+      instructions: 'i'.repeat(4001),
+      handler: remoteHandler,
+    },
     expected: 'invalid',
   },
   {
@@ -490,7 +529,11 @@ const sessionCases = [
   {
     name: 'unknown provider literal',
     schema: 'SessionConfig',
-    value: { ...sessionBase, provider: 'anthropic-live', handler: remoteHandler },
+    value: {
+      ...sessionBase,
+      provider: 'anthropic-live',
+      handler: remoteHandler,
+    },
     expected: 'invalid',
   },
   {
@@ -514,7 +557,10 @@ const sessionCases = [
     schema: 'SessionConfig',
     value: {
       ...sessionBase,
-      handler: { ...remoteHandler, auth: { ...remoteHandler.auth, extraNested: true } },
+      handler: {
+        ...remoteHandler,
+        auth: { ...remoteHandler.auth, extraNested: true },
+      },
     },
     expected: 'invalid',
   },
@@ -531,7 +577,11 @@ const sessionCases = [
   {
     name: 'unsupported audio format',
     schema: 'SessionConfig',
-    value: { ...sessionBase, audio: { format: 'opus' }, handler: remoteHandler },
+    value: {
+      ...sessionBase,
+      audio: { format: 'opus' },
+      handler: remoteHandler,
+    },
     expected: 'invalid',
   },
   {
@@ -539,7 +589,10 @@ const sessionCases = [
     schema: 'SessionConfig',
     value: {
       ...sessionBase,
-      handler: { ...remoteHandler, auth: { type: 'hmac-sha256', secret: minimumSecret } },
+      handler: {
+        ...remoteHandler,
+        auth: { type: 'hmac-sha256', secret: minimumSecret },
+      },
     },
     expected: 'valid',
   },
@@ -548,7 +601,10 @@ const sessionCases = [
     schema: 'SessionConfig',
     value: {
       ...sessionBase,
-      handler: { ...remoteHandler, auth: { type: 'hmac-sha256', secret: tooShortSecret } },
+      handler: {
+        ...remoteHandler,
+        auth: { type: 'hmac-sha256', secret: tooShortSecret },
+      },
     },
     expected: 'invalid',
   },
@@ -597,7 +653,10 @@ const sessionCases = [
   {
     name: 'handler present but malformed',
     schema: 'SessionCreateRequest',
-    value: { ...sessionBase, handler: { type: 'remote', url: 'http://example.com' } },
+    value: {
+      ...sessionBase,
+      handler: { type: 'remote', url: 'http://example.com' },
+    },
     expected: 'invalid',
   },
   {
@@ -634,12 +693,17 @@ for (const url of invalidUrls) {
 const contextExceptionReason =
   'draft 2020-12 has no keyword for the serialized-UTF-8 byte length of an arbitrary JSON value, so this bound is enforced by native Zod only';
 for (const schema of ['SessionConfig', 'SessionCreateRequest']) {
-  const withHandler = schema === 'SessionConfig' ? { handler: remoteHandler } : {};
+  const withHandler =
+    schema === 'SessionConfig' ? { handler: remoteHandler } : {};
   sessionCases.push(
     {
       name: 'consumerContext serializing to exactly 16384 ASCII bytes',
       schema,
-      value: { ...sessionBase, ...withHandler, consumerContext: asciiContext(16384) },
+      value: {
+        ...sessionBase,
+        ...withHandler,
+        consumerContext: asciiContext(16384),
+      },
       expected: 'valid',
       crossValidator: false,
       reason: contextExceptionReason,
@@ -647,7 +711,11 @@ for (const schema of ['SessionConfig', 'SessionCreateRequest']) {
     {
       name: 'consumerContext serializing to 16385 ASCII bytes',
       schema,
-      value: { ...sessionBase, ...withHandler, consumerContext: asciiContext(16385) },
+      value: {
+        ...sessionBase,
+        ...withHandler,
+        consumerContext: asciiContext(16385),
+      },
       expected: 'invalid',
       crossValidator: false,
       reason: contextExceptionReason,
@@ -655,7 +723,11 @@ for (const schema of ['SessionConfig', 'SessionCreateRequest']) {
     {
       name: 'consumerContext serializing to exactly 16384 bytes of multibyte text',
       schema,
-      value: { ...sessionBase, ...withHandler, consumerContext: euroContext(5458) },
+      value: {
+        ...sessionBase,
+        ...withHandler,
+        consumerContext: euroContext(5458),
+      },
       expected: 'valid',
       crossValidator: false,
       reason: contextExceptionReason,
@@ -663,7 +735,11 @@ for (const schema of ['SessionConfig', 'SessionCreateRequest']) {
     {
       name: 'consumerContext serializing to 16385 bytes of multibyte text',
       schema,
-      value: { ...sessionBase, ...withHandler, consumerContext: euroContext(5458, 1) },
+      value: {
+        ...sessionBase,
+        ...withHandler,
+        consumerContext: euroContext(5458, 1),
+      },
       expected: 'invalid',
       crossValidator: false,
       reason: contextExceptionReason,
@@ -684,16 +760,28 @@ const coreEvent = (type, payload, overrides = {}) => ({
 
 await json('schemas/core-event.json', {
   cases: [
-    { name: 'session.started', value: coreEvent('session.started', {}), expected: 'valid' },
-    { name: 'session.closing', value: coreEvent('session.closing', {}), expected: 'valid' },
+    {
+      name: 'session.started',
+      value: coreEvent('session.started', {}),
+      expected: 'valid',
+    },
+    {
+      name: 'session.closing',
+      value: coreEvent('session.closing', {}),
+      expected: 'valid',
+    },
     {
       name: 'session.closed',
-      value: coreEvent('session.closed', { usage: { seconds: 12.5, raw: { tier: 'test' } } }),
+      value: coreEvent('session.closed', {
+        usage: { seconds: 12.5, raw: { tier: 'test' } },
+      }),
       expected: 'valid',
     },
     {
       name: 'session.failed',
-      value: coreEvent('session.failed', { reason: 'provider refused the session' }),
+      value: coreEvent('session.failed', {
+        reason: 'provider refused the session',
+      }),
       expected: 'valid',
     },
     ...[
@@ -708,12 +796,18 @@ await json('schemas/core-event.json', {
     })),
     {
       name: 'transcript.user.delta',
-      value: coreEvent('transcript.user.delta', { text: 'Book a table.', offsetMs: 200 }),
+      value: coreEvent('transcript.user.delta', {
+        text: 'Book a table.',
+        offsetMs: 200,
+      }),
       expected: 'valid',
     },
     {
       name: 'transcript.assistant.delta',
-      value: coreEvent('transcript.assistant.delta', { text: 'On it.', offsetMs: 900 }),
+      value: coreEvent('transcript.assistant.delta', {
+        text: 'On it.',
+        offsetMs: 900,
+      }),
       expected: 'valid',
     },
     {
@@ -760,20 +854,27 @@ await json('schemas/core-event.json', {
     },
     {
       name: 'append.sent with a null delegation id',
-      value: coreEvent('append.sent', { delegationId: null, kind: 'instruction', tokens: 0 }),
+      value: coreEvent('append.sent', {
+        delegationId: null,
+        kind: 'instruction',
+        tokens: 0,
+      }),
       expected: 'valid',
     },
-    ...['over_budget', 'unknown_delegation', 'delegation_finished', 'provider_error'].map(
-      (reason) => ({
-        name: `append.rejected ${reason}`,
-        value: coreEvent('append.rejected', {
-          delegationId: null,
-          kind: 'thinking',
-          reason,
-        }),
-        expected: 'valid',
+    ...[
+      'over_budget',
+      'unknown_delegation',
+      'delegation_finished',
+      'provider_error',
+    ].map((reason) => ({
+      name: `append.rejected ${reason}`,
+      value: coreEvent('append.rejected', {
+        delegationId: null,
+        kind: 'thinking',
+        reason,
       }),
-    ),
+      expected: 'valid',
+    })),
     {
       name: 'append.rejected with every optional field',
       value: coreEvent('append.rejected', {
@@ -838,6 +939,25 @@ await json('schemas/core-event.json', {
       expected: 'invalid',
     },
     {
+      name: 'at has impossible calendar and clock fields',
+      value: coreEvent('session.started', {}, { at: '2026-99-99T88:88:88Z' }),
+      expected: 'invalid',
+    },
+    {
+      name: 'at has an impossible calendar date',
+      value: coreEvent('session.started', {}, { at: '2026-02-30T12:00:00Z' }),
+      expected: 'invalid',
+    },
+    {
+      name: 'at has an impossible UTC offset',
+      value: coreEvent(
+        'session.started',
+        {},
+        { at: '2026-01-01T00:00:00+99:99' },
+      ),
+      expected: 'invalid',
+    },
+    {
       name: 'unknown key at the event level',
       value: coreEvent('session.started', {}, { extraTopLevel: true }),
       expected: 'invalid',
@@ -859,15 +979,27 @@ await json('schemas/core-event.json', {
 
 await json('schemas/handler-result.json', {
   cases: [
-    { name: 'thinking', value: { kind: 'thinking', content: 'Checking.' }, expected: 'valid' },
-    { name: 'commentary', value: { kind: 'commentary', content: 'Confirmed.' }, expected: 'valid' },
+    {
+      name: 'thinking',
+      value: { kind: 'thinking', content: 'Checking.' },
+      expected: 'valid',
+    },
+    {
+      name: 'commentary',
+      value: { kind: 'commentary', content: 'Confirmed.' },
+      expected: 'valid',
+    },
     {
       name: 'instruction',
       value: { kind: 'instruction', content: 'Ask for the date.' },
       expected: 'valid',
     },
     { name: 'done', value: { kind: 'done' }, expected: 'valid' },
-    { name: 'error', value: { kind: 'error', message: 'upstream failed' }, expected: 'valid' },
+    {
+      name: 'error',
+      value: { kind: 'error', message: 'upstream failed' },
+      expected: 'valid',
+    },
     {
       name: 'content at exactly MAX_CONTENT_CHARS',
       value: { kind: 'commentary', content: 'c'.repeat(500) },
@@ -888,9 +1020,21 @@ await json('schemas/handler-result.json', {
       value: { kind: 'done', traceId: 'abc' },
       expected: 'valid',
     },
-    { name: 'unknown kind', value: { kind: 'mystery', content: 'x' }, expected: 'invalid' },
-    { name: 'content variant without content', value: { kind: 'commentary' }, expected: 'invalid' },
-    { name: 'error without a message', value: { kind: 'error' }, expected: 'invalid' },
+    {
+      name: 'unknown kind',
+      value: { kind: 'mystery', content: 'x' },
+      expected: 'invalid',
+    },
+    {
+      name: 'content variant without content',
+      value: { kind: 'commentary' },
+      expected: 'invalid',
+    },
+    {
+      name: 'error without a message',
+      value: { kind: 'error' },
+      expected: 'invalid',
+    },
     {
       name: 'content is not a string',
       value: { kind: 'commentary', content: 12 },
@@ -924,7 +1068,13 @@ const recordBase = {
     },
   ],
   appends: [
-    { seq: 1, delegationId: 'delegation_fixture_1', kind: 'commentary', tokens: 12, at: eventAt },
+    {
+      seq: 1,
+      delegationId: 'delegation_fixture_1',
+      kind: 'commentary',
+      tokens: 12,
+      at: eventAt,
+    },
     { seq: 2, delegationId: null, kind: 'instruction', tokens: 4, at: eventAt },
   ],
   rejectedAppends: [
@@ -939,14 +1089,20 @@ const recordBase = {
 };
 
 const withoutRecordKeys = (keys) =>
-  Object.fromEntries(Object.entries(recordBase).filter(([key]) => !keys.includes(key)));
+  Object.fromEntries(
+    Object.entries(recordBase).filter(([key]) => !keys.includes(key)),
+  );
 
 await json('schemas/call-record.json', {
   cases: [
     { name: 'closed record', value: recordBase, expected: 'valid' },
     {
       name: 'failed record with a reason carries no usage',
-      value: { ...withoutRecordKeys(['usage']), state: 'failed', reason: 'provider disconnected' },
+      value: {
+        ...withoutRecordKeys(['usage']),
+        state: 'failed',
+        reason: 'provider disconnected',
+      },
       expected: 'valid',
     },
     {
@@ -1004,7 +1160,11 @@ await json('schemas/call-record.json', {
       name: 'the stored handler cannot carry auth material',
       value: {
         ...recordBase,
-        handler: { type: 'remote', url: recordBase.handler.url, auth: { type: 'hmac-sha256', secret } },
+        handler: {
+          type: 'remote',
+          url: recordBase.handler.url,
+          auth: { type: 'hmac-sha256', secret },
+        },
       },
       expected: 'invalid',
     },
@@ -1032,7 +1192,14 @@ await json('schemas/call-record.json', {
       name: 'unknown key nested in a transcript fragment',
       value: {
         ...recordBase,
-        transcript: [{ role: 'user', text: 'Book a table.', offsetMs: 200, extraNested: true }],
+        transcript: [
+          {
+            role: 'user',
+            text: 'Book a table.',
+            offsetMs: 200,
+            extraNested: true,
+          },
+        ],
       },
       expected: 'invalid',
     },
@@ -1053,7 +1220,9 @@ await json('schemas/call-record.json', {
       name: 'rejected append with an unknown reason',
       value: {
         ...recordBase,
-        rejectedAppends: [{ ...recordBase.rejectedAppends[0], reason: 'vibes' }],
+        rejectedAppends: [
+          { ...recordBase.rejectedAppends[0], reason: 'vibes' },
+        ],
       },
       expected: 'invalid',
     },

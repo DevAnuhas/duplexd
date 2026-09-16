@@ -26,6 +26,8 @@ import { readCommittedSchema } from './support/fixtures.js';
  */
 const EXPECTED_HANDLER_URL_SOURCE =
   '^(?:https:\\/\\/(?:\\[[0-9a-fA-F:]+\\]|[^\\s@/?#:[\\]]+)(?::[0-9]+)?(?:[/?][^\\s#]*)?|http:\\/\\/(?:localhost|127\\.0\\.0\\.1|\\[::1\\])(?::[0-9]+)?(?:[/?][^\\s#]*)?)$';
+const EXPECTED_PORTABLE_HANDLER_URL_PATTERN =
+  '^(?:https://(?:\\[[0-9a-fA-F:]+\\]|[^\\s@/?#:[\\]]+)(?::[0-9]+)?(?:[/?][^\\s#]*)?|http://(?:localhost|127\\.0\\.0\\.1|\\[::1\\])(?::[0-9]+)?(?:[/?][^\\s#]*)?)$';
 
 describe('contract constants', () => {
   it('exports exactly the values the spec names', () => {
@@ -59,7 +61,7 @@ describe('schema/constants.json', () => {
       APPEND_TOKEN_BUDGET,
       CONTRACT_VERSION,
       DEFAULT_HANDLER_TIMEOUT_MS,
-      HANDLER_URL_PATTERN: HANDLER_URL_PATTERN.source,
+      HANDLER_URL_PATTERN: EXPECTED_PORTABLE_HANDLER_URL_PATTERN,
       MAX_CONTENT_CHARS,
       MAX_HANDLER_TIMEOUT_MS,
       MAX_NDJSON_LINE_BYTES,
@@ -87,7 +89,13 @@ describe('schema/constants.json', () => {
   });
 
   it('carries the URL pattern in a form another language can compile', () => {
-    expect(portable.HANDLER_URL_PATTERN).toBe(EXPECTED_HANDLER_URL_SOURCE);
-    expect(new RegExp(String(portable.HANDLER_URL_PATTERN)).test('https://example.com')).toBe(true);
+    expect(portable.HANDLER_URL_PATTERN).toBe(
+      EXPECTED_PORTABLE_HANDLER_URL_PATTERN,
+    );
+    expect(
+      new RegExp(String(portable.HANDLER_URL_PATTERN)).test(
+        'https://example.com',
+      ),
+    ).toBe(true);
   });
 });

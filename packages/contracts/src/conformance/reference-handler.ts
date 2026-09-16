@@ -13,7 +13,11 @@ import {
 } from '../index.js';
 import { fixturePath } from './scenarios.js';
 
-const decoder = new TextDecoder();
+const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+
+export interface ReferenceHandlerDependencies {
+  checkMetadata: typeof checkHandlerRequestMetadata;
+}
 
 export interface RunningHandler {
   url: string;
@@ -52,7 +56,7 @@ function singleHeader(request: IncomingMessage, name: string): string | null {
   return values.length === 1 ? (values[0] ?? null) : null;
 }
 
-async function readBody(request: IncomingMessage): Promise<string> {
+async function readBody(request: IncomingMessage): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   for await (const chunk of request) {
     chunks.push(
@@ -66,14 +70,15 @@ async function readBody(request: IncomingMessage): Promise<string> {
     body.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return decoder.decode(body);
+  return body;
 }
 
 async function validateRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  rawBody: string,
+  rawBody: Uint8Array,
   secret: string,
+  dependencies: ReferenceHandlerDependencies,
 ): Promise<ReturnType<typeof HandlerRequestLoose.parse> | null> {
   const signature = await verifyHandlerSignature(
     secret,
@@ -87,7 +92,7 @@ async function validateRequest(
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(rawBody);
+    parsed = JSON.parse(decoder.decode(rawBody));
   } catch {
     problem(response, 400, 'malformed_body');
     return null;
@@ -97,7 +102,7 @@ async function validateRequest(
     parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
       ? (parsed as { contractVersion?: unknown; sessionId?: unknown })
       : {};
-  const metadata = checkHandlerRequestMetadata(rawHeaderPairs(request), {
+  const metadata = dependencies.checkMetadata(rawHeaderPairs(request), {
     contractVersion:
       typeof fields.contractVersion === 'string' ? fields.contractVersion : '',
     sessionId: typeof fields.sessionId === 'string' ? fields.sessionId : '',
@@ -153,13 +158,20 @@ async function serve(
   response: ServerResponse,
   secret: string,
   buffered: boolean,
+  dependencies: ReferenceHandlerDependencies,
 ): Promise<void> {
   if (request.method !== 'POST' || request.url !== '/delegations') {
     problem(response, 404, 'not_found');
     return;
   }
   const rawBody = await readBody(request);
-  const body = await validateRequest(request, response, rawBody, secret);
+  const body = await validateRequest(
+    request,
+    response,
+    rawBody,
+    secret,
+    dependencies,
+  );
   if (body === null) return;
 
   const delay = sampleDelay(body);
@@ -185,9 +197,10 @@ async function serve(
 async function startHandler(
   secret: string,
   buffered: boolean,
+  dependencies: ReferenceHandlerDependencies,
 ): Promise<RunningHandler> {
   const server: Server = createServer((request, response) => {
-    void serve(request, response, secret, buffered).catch(() => {
+    void serve(request, response, secret, buffered, dependencies).catch(() => {
       if (!response.headersSent) problem(response, 500, 'internal_error');
       else response.destroy();
     });
@@ -210,10 +223,20 @@ async function startHandler(
   };
 }
 
-export function startReferenceHandler(secret: string): Promise<RunningHandler> {
-  return startHandler(secret, false);
+const defaultDependencies: ReferenceHandlerDependencies = {
+  checkMetadata: checkHandlerRequestMetadata,
+};
+
+export function startReferenceHandler(
+  secret: string,
+  dependencies: ReferenceHandlerDependencies = defaultDependencies,
+): Promise<RunningHandler> {
+  return startHandler(secret, false, dependencies);
 }
 
-export function startBufferingHandler(secret: string): Promise<RunningHandler> {
-  return startHandler(secret, true);
+export function startBufferingHandler(
+  secret: string,
+  dependencies: ReferenceHandlerDependencies = defaultDependencies,
+): Promise<RunningHandler> {
+  return startHandler(secret, true, dependencies);
 }

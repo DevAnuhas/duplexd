@@ -1,4 +1,5 @@
 import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { readFile } from 'node:fs/promises';
 
 import { HandlerResult, parseNdjson, signHandlerRequest } from '../index.js';
@@ -30,6 +31,18 @@ export interface ConformanceOptions {
 interface PreparedRequest {
   body: string;
   headers: Record<string, string>;
+}
+
+class ConformanceFailure extends Error {}
+
+function fail(message: string): never {
+  throw new ConformanceFailure(message);
+}
+
+function safeReason(error: unknown): string {
+  return error instanceof ConformanceFailure
+    ? error.message
+    : 'request failed without exposing remote diagnostics';
 }
 
 async function requestFixture(name: string): Promise<Record<string, unknown>> {
@@ -71,16 +84,16 @@ async function prepare(
 
 async function commentary(response: Response): Promise<string[]> {
   if (response.headers.get('content-type') !== 'application/x-ndjson') {
-    throw new Error('successful response must use application/x-ndjson');
+    fail('successful response must use application/x-ndjson');
   }
-  if (response.body === null) throw new Error('response body is missing');
+  if (response.body === null) fail('response body is missing');
   const items: Array<ReturnType<typeof HandlerResult.parse>> = [];
   for await (const item of parseNdjson(response.body, (json) =>
     HandlerResult.parse(json),
   )) {
     items.push(item);
   }
-  if (items.at(-1)?.kind !== 'done') throw new Error('last result is not done');
+  if (items.at(-1)?.kind !== 'done') fail('last result is not done');
   return items
     .filter(
       (item): item is Extract<(typeof items)[number], { kind: 'commentary' }> =>
@@ -94,8 +107,15 @@ async function duplicateHeaderRequest(
   prepared: PreparedRequest,
 ): Promise<{ status: number; code?: string }> {
   const target = new URL(url);
+  const requestForProtocol =
+    target.protocol === 'https:'
+      ? httpsRequest
+      : target.protocol === 'http:'
+        ? httpRequest
+        : null;
+  if (requestForProtocol === null) fail('handler URL must use http or https');
   return new Promise((resolveRequest, reject) => {
-    const request = httpRequest(
+    const request = requestForProtocol(
       target,
       {
         method: 'POST',
@@ -113,18 +133,32 @@ async function duplicateHeaderRequest(
       (response) => {
         const chunks: Uint8Array[] = [];
         response.on('data', (chunk: Uint8Array) => chunks.push(chunk));
+        response.once('error', reject);
+        response.once('aborted', () =>
+          reject(new Error('handler response was interrupted')),
+        );
         response.on('end', () => {
-          const text = new TextDecoder().decode(
-            chunks.length === 1
-              ? chunks[0]
-              : Uint8Array.from(chunks.flatMap(Array.from)),
-          );
-          const parsed =
-            text.length === 0 ? {} : (JSON.parse(text) as { code?: string });
-          resolveRequest({
-            status: response.statusCode ?? 0,
-            code: parsed.code,
-          });
+          try {
+            const byteLength = chunks.reduce(
+              (total, chunk) => total + chunk.byteLength,
+              0,
+            );
+            const body = new Uint8Array(byteLength);
+            let offset = 0;
+            for (const chunk of chunks) {
+              body.set(chunk, offset);
+              offset += chunk.byteLength;
+            }
+            const text = new TextDecoder('utf-8', { fatal: true }).decode(body);
+            const parsed =
+              text.length === 0 ? {} : (JSON.parse(text) as { code?: unknown });
+            resolveRequest({
+              status: response.statusCode ?? 0,
+              code: typeof parsed.code === 'string' ? parsed.code : undefined,
+            });
+          } catch (error) {
+            reject(error);
+          }
         });
       },
     );
@@ -145,8 +179,8 @@ async function runOne(
   if (name === 'metadata-duplicate-header') {
     const response = await duplicateHeaderRequest(url, prepared);
     if (response.status !== 400 || response.code !== 'metadata_mismatch') {
-      throw new Error(
-        `expected 400 metadata_mismatch, got ${response.status} ${response.code}`,
+      fail(
+        `expected 400 metadata_mismatch; received an unexpected ${response.status} response`,
       );
     }
     return;
@@ -161,7 +195,7 @@ async function runOne(
         redirect: 'error',
       });
       if (response.status !== 200)
-        throw new Error(`expected 200, got ${response.status}`);
+        fail(`expected 200; received status ${response.status}`);
       return commentary(response);
     };
     const [first, second] =
@@ -169,7 +203,7 @@ async function runOne(
         ? await Promise.all([send(), send()])
         : [await send(), await send()];
     if (JSON.stringify(first) !== JSON.stringify(second)) {
-      throw new Error('replayed commentary differs');
+      fail('replayed commentary differs');
     }
     return;
   }
@@ -187,10 +221,10 @@ async function runOne(
         signal: controller.signal,
       });
       if (response.status !== 200 || response.body === null) {
-        throw new Error(`expected streaming 200, got ${response.status}`);
+        fail(`expected streaming 200; received status ${response.status}`);
       }
       if (response.headers.get('content-type') !== 'application/x-ndjson') {
-        throw new Error('successful response must use application/x-ndjson');
+        fail('successful response must use application/x-ndjson');
       }
       const reader = response.body.getReader();
       const chunks: Uint8Array[] = [];
@@ -198,13 +232,13 @@ async function runOne(
       while (!completeLine) {
         const chunk = await reader.read();
         if (chunk.done) {
-          throw new Error('response ended before a complete keepalive or item');
+          fail('response ended before a complete keepalive or item');
         }
         chunks.push(chunk.value);
         completeLine = chunk.value.includes(0x0a);
       }
       if (performance.now() - started >= 2_000) {
-        throw new Error('complete line arrived after the 2000ms deadline');
+        fail('complete line arrived after the 2000ms deadline');
       }
       clearTimeout(deadline);
       while (true) {
@@ -231,7 +265,7 @@ async function runOne(
       return;
     } catch (error) {
       if (controller.signal.aborted) {
-        throw new Error(
+        throw new ConformanceFailure(
           'no response headers or complete line before the 2000ms deadline',
           { cause: error },
         );
@@ -249,16 +283,21 @@ async function runOne(
     redirect: 'error',
   });
   if (fixture.expectation === 'problem') {
-    const problem = (await response.json()) as { code?: string };
+    let problem: { code?: unknown };
+    try {
+      problem = (await response.json()) as { code?: unknown };
+    } catch {
+      fail('handler returned a malformed problem response');
+    }
     if (response.status !== fixture.status || problem.code !== fixture.code) {
-      throw new Error(
-        `expected ${fixture.status} ${fixture.code}, got ${response.status} ${problem.code}`,
+      fail(
+        `expected ${fixture.status} ${fixture.code}; received an unexpected ${response.status} response`,
       );
     }
     return;
   }
   if (response.status !== 200)
-    throw new Error(`expected 200, got ${response.status}`);
+    fail(`expected 200; received status ${response.status}`);
   await commentary(response);
 }
 
@@ -270,7 +309,7 @@ export async function runConformance(
     (name) => !CONFORMANCE_SCENARIOS.includes(name as ConformanceScenarioName),
   );
   if (unknown !== undefined)
-    throw new Error(`Unknown conformance scenario: ${unknown}`);
+    throw new ConformanceFailure('Unknown conformance scenario');
   const results: ScenarioResult[] = [];
   for (const name of selected) {
     try {
@@ -285,7 +324,7 @@ export async function runConformance(
       results.push({
         name,
         passed: false,
-        reason: error instanceof Error ? error.message : String(error),
+        reason: safeReason(error),
       });
     }
   }

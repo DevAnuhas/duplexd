@@ -31,6 +31,10 @@ const outputDirectory =
   requestedOutput === undefined
     ? resolve(packageRoot, 'schema')
     : resolve(requestedOutput);
+const portableHandlerUrlPattern = HANDLER_URL_PATTERN.source.replaceAll(
+  '\\/',
+  '/',
+);
 
 function sortValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortValue);
@@ -45,6 +49,7 @@ function sortValue(value: unknown): unknown {
 }
 
 function stripRuntimeMetadata(value: unknown): unknown {
+  if (value === HANDLER_URL_PATTERN.source) return portableHandlerUrlPattern;
   if (Array.isArray(value)) return value.map(stripRuntimeMetadata);
   if (value !== null && typeof value === 'object') {
     const entries = Object.entries(value).filter(
@@ -92,7 +97,7 @@ const schemas = {
     APPEND_TOKEN_BUDGET,
     CONTRACT_VERSION,
     DEFAULT_HANDLER_TIMEOUT_MS,
-    HANDLER_URL_PATTERN: HANDLER_URL_PATTERN.source,
+    HANDLER_URL_PATTERN: portableHandlerUrlPattern,
     MAX_CONTENT_CHARS,
     MAX_HANDLER_TIMEOUT_MS,
     MAX_NDJSON_LINE_BYTES,

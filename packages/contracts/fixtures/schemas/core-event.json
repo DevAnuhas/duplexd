@@ -453,6 +453,42 @@
       "schema": "CoreEvent"
     },
     {
+      "name": "at has impossible calendar and clock fields",
+      "value": {
+        "type": "session.started",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-99-99T88:88:88Z",
+        "payload": {}
+      },
+      "expected": "invalid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "at has an impossible calendar date",
+      "value": {
+        "type": "session.started",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-02-30T12:00:00Z",
+        "payload": {}
+      },
+      "expected": "invalid",
+      "schema": "CoreEvent"
+    },
+    {
+      "name": "at has an impossible UTC offset",
+      "value": {
+        "type": "session.started",
+        "sessionId": "session_fixture_1",
+        "seq": 1,
+        "at": "2026-01-01T00:00:00+99:99",
+        "payload": {}
+      },
+      "expected": "invalid",
+      "schema": "CoreEvent"
+    },
+    {
       "name": "unknown key at the event level",
       "value": {
         "type": "session.started",
