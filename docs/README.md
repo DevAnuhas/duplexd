@@ -12,6 +12,7 @@
 | [OPERATIONS.md](OPERATIONS.md) | Hosting, environments, provisioning |
 | [REFERENCES.md](REFERENCES.md) | Using external repos and code: pinning, licensing, attribution |
 | [decisions/](decisions/) | ADRs: accepted, proposed, superseded |
+| [specs/milestone-1/](specs/milestone-1/) | Planning specs for the current milestone: package tech docs, server API, provider facts. Design intent until the code lands; then code and tests are the authority |
 | [research/LANDSCAPE.md](research/LANDSCAPE.md) | Pre-decision survey of existing projects. Reference only, not authority |
 | [research/TRAYCER_EPIC_BRIEF.md](research/TRAYCER_EPIC_BRIEF.md) | Prompt for the planning Epic that produces stage 1 tickets |
 

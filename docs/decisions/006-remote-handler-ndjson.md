@@ -7,7 +7,7 @@ Date: 2026-09-16
 
 ADR 003 fixes one contract with two delivery forms and defers the remote form's streaming encoding. The in-process form is an async iterable of `HandlerResult` items. The remote form must carry the same ordered items over one HTTP response, from a handler written in any language, through whatever proxies sit between the consumer and duplexd, with no library beyond a JSON encoder and an HTTP server that can flush.
 
-The consumer of the stream is duplexd's server, never a browser. The stream is short (seconds), has no reconnection semantics, and carries no event types beyond what each item's `kind` already says.
+The consumer of the stream is duplexd's server, never a browser. The stream lives at most as long as `handlerTimeoutMs` (ADR 007, up to two minutes), has no reconnection semantics, and carries no event types beyond what each item's `kind` already says.
 
 ## Decision
 
@@ -33,4 +33,4 @@ Keepalive lines are the only idle-proxy defense. A handler that does nothing for
 
 The provider's per-append token budget is not a memory bound: it is checked only once a line is complete. The reference parser therefore bounds a single line in bytes, keepalives and partial lines included, with the constant living in `packages/contracts`. That bound is a transport resource limit and is independent of the token budget.
 
-This amends ADR 003. Server-to-console streaming is a separate choice and is not constrained by this record.
+This amends ADR 003. Server-to-console streaming is outside this record's scope; the server uses the same encoding and the same reference parser there, because once the console reads with `fetch` rather than `EventSource`, SSE's one browser advantage is gone and a second encoding would exist for no reason.
