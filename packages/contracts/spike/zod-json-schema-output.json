@@ -1,0 +1,97 @@
+{
+  "jsonValue": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "anyOf": [
+      { "type": "null" },
+      { "type": "boolean" },
+      { "type": "number" },
+      { "type": "string" },
+      { "type": "array", "items": { "$ref": "#" } },
+      {
+        "type": "object",
+        "propertyNames": { "type": "string" },
+        "additionalProperties": { "$ref": "#" }
+      }
+    ]
+  },
+  "coreEvent": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "sessionId": { "type": "string" },
+          "seq": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "at": { "type": "string" },
+          "type": { "type": "string", "const": "session.started" },
+          "payload": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+          }
+        },
+        "required": ["sessionId", "seq", "at", "type", "payload"],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "sessionId": { "type": "string" },
+          "seq": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "at": { "type": "string" },
+          "type": { "type": "string", "const": "session.failed" },
+          "payload": {
+            "type": "object",
+            "properties": { "reason": { "type": "string" } },
+            "required": ["reason"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["sessionId", "seq", "at", "type", "payload"],
+        "additionalProperties": false
+      }
+    ]
+  },
+  "nestedStrict": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "nested": {
+        "type": "object",
+        "properties": { "value": { "type": "string" } },
+        "required": ["value"],
+        "additionalProperties": false
+      }
+    },
+    "required": ["nested"],
+    "additionalProperties": false
+  },
+  "nestedLoose": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "nested": {
+        "type": "object",
+        "properties": { "value": { "type": "string" } },
+        "required": ["value"],
+        "additionalProperties": {}
+      }
+    },
+    "required": ["nested"],
+    "additionalProperties": {}
+  },
+  "patternAndMax": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "string",
+    "maxLength": 500,
+    "pattern": "^(?:https:\\/\\/(?:\\[[0-9a-fA-F:]+\\]|[^\\s@/?#:[\\]]+)(?::[0-9]+)?(?:[/?][^\\s#]*)?|http:\\/\\/(?:localhost|127\\.0\\.0\\.1|\\[::1\\])(?::[0-9]+)?(?:[/?][^\\s#]*)?)$"
+  }
+}

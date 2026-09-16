@@ -9,12 +9,17 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -b",
     "lint": "eslint .",
     "test": "vitest run",
     "test:live": "node -e \"console.log('No live contract tests in T01.')\"",
     "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "zod": "4.6.5"
   }
 }
