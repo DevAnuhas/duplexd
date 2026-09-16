@@ -107,7 +107,14 @@ The intended configuration:
 
 ## Required checks
 
-None exist yet. When CI lands, list the exact check names here and add them to the ruleset. A check not in the ruleset gates nothing.
+CI reports these stable job names:
+
+- `changes`
+- `checks`
+
+Both must be required when the repository ruleset is enabled. Requiring `changes` prevents a failed path detector from becoming an apparently successful skipped `checks` job. Requiring `checks` is safe for documentation-only pull requests because the workflow always starts and its job-level condition reports `checks` as skipped; this differs from a trigger-level path filter, where no check run exists and a required check remains pending.
+
+Branch protection is not currently configured, and T01 does not change repository settings. Configure the ruleset to require pull requests, block force-push and deletion, allow squash merge only, and require both names above after CI is merged.
 
 ## Authorization
 

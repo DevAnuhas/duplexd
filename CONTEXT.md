@@ -36,4 +36,4 @@ Provider region placement, outbound calling compliance, recording retention, and
 
 ## Status
 
-Documentation only. No application code, executable CI, deployment, or passing tests exist. The current build target and its acceptance evidence are in [the milestone](docs/MILESTONE.md).
+The executable pnpm/Turborepo workspace scaffold and CI now exist. Six TypeScript package placeholders build, lint, typecheck, and run smoke tests; Docker Compose defines local PostgreSQL. There is still no application behavior or deployment. The current build target and its acceptance evidence are in [the milestone](docs/MILESTONE.md).

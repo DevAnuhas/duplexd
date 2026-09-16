@@ -1,0 +1,11 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/contracts" },
+    { "path": "packages/core" },
+    { "path": "packages/transports/webrtc" },
+    { "path": "apps/server" },
+    { "path": "apps/console" },
+    { "path": "examples/handler-node" }
+  ]
+}
