@@ -23,7 +23,7 @@ examples/handler-node       handler-node placeholder
 examples/handler-python     README placeholder only; T11 owns its toolchain
 ```
 
-Turborepo orders and caches build, lint, typecheck, and test. `@duplexd/core` imports `@duplexd/contracts` through its package export so the dependency edge is real. Packaging and anything touching the live provider are never cached. TypeScript `6.0.3` accepts `tsc -b --noEmit` with composite projects, so package `typecheck` scripts use that form; `build` uses `tsc -b`.
+Turborepo orders and caches build, lint, typecheck, and test. `@duplexd/core` imports `@duplexd/contracts` through its package export so the dependency edge is real. Packaging and anything touching the live provider are never cached. Package `typecheck` and `build` scripts both use `tsc -b`: TypeScript `6.0.3` accepts `--noEmit` for an isolated composite project, but a cold referenced build rejects it with `TS6310` because the referenced contracts project may not disable emit.
 
 ## Workspace verification
 

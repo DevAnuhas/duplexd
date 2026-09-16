@@ -15,6 +15,6 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:live": "node -e \"console.log('No live contract tests in T01.')\"",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc -b"
   }
 }
