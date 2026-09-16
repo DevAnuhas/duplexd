@@ -88,4 +88,4 @@ PostgreSQL holds sessions, calls, delegations, transcripts, and usage. Records a
 
 ## What would change this
 
-A second speech provider with a different delegation model would test whether the broker abstraction is real or GPT-Live-shaped. A consumer needing sub-second handler round trips at high concurrency would push toward a persistent bidirectional handler connection instead of HTTP per delegation. Either is an ADR, not a quiet refactor.
+A second speech provider with a different delegation model would test whether the broker abstraction is real or GPT-Live-shaped. `docs/decisions/009-gemini-live-candidate-provider.md` names the candidate and the rules milestone 1 follows so it can land as an adapter. A consumer needing sub-second handler round trips at high concurrency would push toward a persistent bidirectional handler connection instead of HTTP per delegation. Either is an ADR, not a quiet refactor.

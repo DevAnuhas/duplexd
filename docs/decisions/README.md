@@ -46,3 +46,4 @@ Supersede rather than edit: mark the old record superseded and write a new one.
 - [006: Remote handler results stream as newline-delimited JSON](006-remote-handler-ndjson.md) — accepted
 - [007: Handler timeout is one total budget, default 30 seconds](007-handler-timeout-default.md) — accepted
 - [008: Remote handler requests are HMAC-signed with a consumer-supplied secret](008-handler-request-signing.md) — accepted
+- [009: Gemini 3.8 Live is the candidate second provider; provider limits live in adapters](009-gemini-live-candidate-provider.md) — proposed
