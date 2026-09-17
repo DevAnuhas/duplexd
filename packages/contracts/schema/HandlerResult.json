@@ -1,0 +1,90 @@
+{
+  "$id": "https://duplexd.dev/schema/v1/HandlerResult.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "additionalProperties": {},
+      "properties": {
+        "content": {
+          "maxLength": 500,
+          "type": "string"
+        },
+        "kind": {
+          "const": "thinking",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "content"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": {},
+      "properties": {
+        "content": {
+          "maxLength": 500,
+          "type": "string"
+        },
+        "kind": {
+          "const": "commentary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "content"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": {},
+      "properties": {
+        "content": {
+          "maxLength": 500,
+          "type": "string"
+        },
+        "kind": {
+          "const": "instruction",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "content"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": {},
+      "properties": {
+        "kind": {
+          "const": "done",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": {},
+      "properties": {
+        "kind": {
+          "const": "error",
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "message"
+      ],
+      "type": "object"
+    }
+  ]
+}

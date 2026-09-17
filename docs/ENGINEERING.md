@@ -14,7 +14,7 @@ Setup, verification, CI, and releases. This file owns supported commands and act
 ## Layout
 
 ```
-packages/contracts          @duplexd/contracts placeholder; T02 adds the wire contract
+packages/contracts          @duplexd/contracts wire schemas, fixtures, signing, NDJSON, and conformance
 packages/core               @duplexd/core placeholder; depends on contracts
 packages/transports/webrtc  @duplexd/transport-webrtc placeholder
 apps/server                 @duplexd/server placeholder
@@ -54,14 +54,27 @@ Open the console, start a call. The Twilio path is not part of milestone 1; when
 
 ## Verification layers
 
-| Layer | What it proves | Command |
-| --- | --- | --- |
-| Contract tests | A handler implementation matches `PROTOCOL.md` | `pnpm --filter @duplexd/contracts test` and the Python equivalent |
-| Core unit tests | Broker behavior against a scripted fake provider | `pnpm --filter @duplexd/core test` |
-| Server tests | Session creation, auth, handler forwarding, persistence | `pnpm --filter @duplexd/server test` |
-| Live session | The real provider accepts our session and delegation flow | manual, recorded, session id in the PR |
+| Layer           | What it proves                                            | Command                                                           |
+| --------------- | --------------------------------------------------------- | ----------------------------------------------------------------- |
+| Contract tests  | A handler implementation matches `PROTOCOL.md`            | `pnpm --filter @duplexd/contracts test` and the Python equivalent |
+| Core unit tests | Broker behavior against a scripted fake provider          | `pnpm --filter @duplexd/core test`                                |
+| Server tests    | Session creation, auth, handler forwarding, persistence   | `pnpm --filter @duplexd/server test`                              |
+| Live session    | The real provider accepts our session and delegation flow | manual, recorded, session id in the PR                            |
 
 Aggregate contracts used by CI: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`. Do not invent substitutes.
+
+Contracts-specific verification:
+
+```bash
+pnpm --filter @duplexd/contracts build
+pnpm --filter @duplexd/contracts schema:check
+pnpm --filter @duplexd/contracts test
+node packages/contracts/dist/src/conformance/cli.js --url http://127.0.0.1:<port>/delegations --secret synthetic-test-secret
+```
+
+The build regenerates committed `packages/contracts/schema/*.json` and `constants.json`. `schema:check` generates into a separate temporary directory and compares the complete file set and bytes. CI additionally rejects any tracked or untracked schema change left by the build.
+
+The repository command above executes the built file named by the package's `duplexd-conformance` bin mapping. Once the package is installed, consumers invoke the same file as `duplexd-conformance`.
 
 A live session is required for any change to a provider adapter or transport. It is not cached, not automated in milestone 1, and its session id goes in the PR.
 

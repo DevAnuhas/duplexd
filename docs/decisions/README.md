@@ -15,15 +15,19 @@ Status: proposed | accepted | superseded by NNN
 Date: YYYY-MM-DD
 
 ## Context
+
 What forced a choice. Constraints and requirements that matter.
 
 ## Decision
+
 What was chosen.
 
 ## Alternatives
+
 What else was considered and why it lost.
 
 ## Consequences
+
 What this makes easy, what it makes hard, what it commits us to,
 and what would invalidate it.
 ```
@@ -39,7 +43,7 @@ Supersede rather than edit: mark the old record superseded and write a new one.
 - [003: One contract, two integration forms](003-contract-two-forms.md) — accepted
 - [004: TypeScript core with a language-neutral wire contract](004-typescript-core.md) — accepted
 - [005: Fly.io for the server](005-fly-hosting.md) — accepted
-- [006: Remote handler results stream as newline-delimited JSON](006-remote-handler-ndjson.md) — proposed
-- [007: Handler timeout is one total budget, default 30 seconds](007-handler-timeout-default.md) — proposed
-- [008: Remote handler requests are HMAC-signed with a consumer-supplied secret](008-handler-request-signing.md) — proposed
+- [006: Remote handler results stream as newline-delimited JSON](006-remote-handler-ndjson.md) — accepted
+- [007: Handler timeout is one total budget, default 30 seconds](007-handler-timeout-default.md) — accepted
+- [008: Remote handler requests are HMAC-signed with a consumer-supplied secret](008-handler-request-signing.md) — accepted
 - [009: Gemini 3.8 Live is the candidate second provider; provider limits live in adapters](009-gemini-live-candidate-provider.md) — proposed

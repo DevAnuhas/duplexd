@@ -1,0 +1,153 @@
+{
+  "$defs": {
+    "__schema0": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "$id": "https://duplexd.dev/schema/v1/SessionCreateRequest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "audio": {
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "enum": [
+            "pcm16",
+            "g711_ulaw",
+            "g711_alaw"
+          ],
+          "type": "string"
+        },
+        "sampleRateHz": {
+          "anyOf": [
+            {
+              "const": 8000,
+              "type": "number"
+            },
+            {
+              "const": 16000,
+              "type": "number"
+            },
+            {
+              "const": 24000,
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "type": "object"
+    },
+    "consumerContext": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "handler": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "in-process",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "auth": {
+              "additionalProperties": false,
+              "properties": {
+                "secret": {
+                  "minLength": 16,
+                  "type": "string"
+                },
+                "type": {
+                  "const": "hmac-sha256",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "secret"
+              ],
+              "type": "object"
+            },
+            "type": {
+              "const": "remote",
+              "type": "string"
+            },
+            "url": {
+              "pattern": "^(?:https://(?:\\[[0-9a-fA-F:]+\\]|[^\\s@/?#:[\\]]+)(?::[0-9]+)?(?:[/?][^\\s#]*)?|http://(?:localhost|127\\.0\\.0\\.1|\\[::1\\])(?::[0-9]+)?(?:[/?][^\\s#]*)?)$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "url",
+            "auth"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "handlerTimeoutMs": {
+      "default": 30000,
+      "maximum": 120000,
+      "minimum": 1000,
+      "type": "integer"
+    },
+    "instructions": {
+      "maxLength": 4000,
+      "minLength": 1,
+      "type": "string"
+    },
+    "provider": {
+      "const": "openai-gpt-live",
+      "type": "string"
+    },
+    "voice": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "provider",
+    "instructions"
+  ],
+  "type": "object"
+}

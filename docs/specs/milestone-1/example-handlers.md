@@ -21,13 +21,13 @@ What the sample does not do, and says in its README: the store is process memory
 
 Test hooks under `consumerContext.sample` (opaque to duplexd, honored by both handlers):
 
-| Hint | Effect |
-| --- | --- |
-| `delayMs` | wait before the result |
-| `failWith: "error"` | emit `error` instead of a result |
-| `failWith: "hang"` | never emit anything after `thinking` (drives the silent timeout test) |
-| `failWith: "hang-after-commentary"` | record the booking, emit `commentary`, then never emit `done` or close (drives the commentary-then-hang timeout test: the booking exists and was heard, the delegation still times out) |
-| `failWith: "oversized"` | bypass the handler's own output validation and emit a `commentary` over `MAX_CONTENT_CHARS` and over 500 tokens, under the parser's byte bound (drives the broker's over-budget test; the bypass exists only for this hint and is the one place a handler sends an item it did not validate) |
+| Hint                                | Effect                                                                                                                                                                                                                                                                                       |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `delayMs`                           | wait before the result                                                                                                                                                                                                                                                                       |
+| `failWith: "error"`                 | emit `error` instead of a result                                                                                                                                                                                                                                                             |
+| `failWith: "hang"`                  | never emit anything after `thinking` (drives the silent timeout test)                                                                                                                                                                                                                        |
+| `failWith: "hang-after-commentary"` | record the booking, emit `commentary`, then never emit `done` or close (drives the commentary-then-hang timeout test: the booking exists and was heard, the delegation still times out)                                                                                                      |
+| `failWith: "oversized"`             | bypass the handler's own output validation and emit a `commentary` over `MAX_CONTENT_CHARS` and over 500 tokens, under the parser's byte bound (drives the broker's over-budget test; the bypass exists only for this hint and is the one place a handler sends an item it did not validate) |
 
 Labeling: package README, startup log line, and the first `thinking` item all say sample. The confirmation code is prefixed so it cannot be mistaken for a real one.
 
@@ -45,7 +45,7 @@ Tests (`vitest`): signature verification with the shared vectors; every `fixture
 
 `examples/handler-python`, Python 3.12+, `uv`, FastAPI with a streaming response. Validates incoming requests against `packages/contracts/schema/HandlerRequest.loose.json` with a JSON Schema validator, with no validator options beyond what the file says, and validates each result against `HandlerResult.json` before writing it. Implements HMAC verification and the metadata check order from the contracts doc's tables (not by porting the Node code) and checks itself against `fixtures/signing.json` and `fixtures/metadata/*.json`. Env: `PORT`, `HANDLER_SECRET`. Run with `uv run handler`.
 
-Tests (`pytest`): signing vectors; metadata fixtures; schema validation of every request fixture with the outcome read from the fixture's `expected.loose`; every generated commentary under `MAX_CONTENT_CHARS`; keyword inference; the same idempotency set as Node (sequential replay, concurrent replay under a thread pool, commit-before-disconnect, different session same delegation id); each `sample` hint; streaming (first line before delay).
+Tests (`pytest`): signing vectors; metadata fixtures; schema validation of every request fixture with the outcome read from the fixture's `expected.loose`; every generated commentary under `MAX_CONTENT_CHARS`; keyword inference; the same idempotency set as Node (sequential replay, concurrent replay under a thread pool, commit-before-disconnect, different session same delegation id); each `sample` hint; and the real-HTTP delayed-keepalive deadline used by the conformance runner.
 
 `docs/ENGINEERING.md` says "`pnpm --filter contracts test` and the Python equivalent". The Python equivalent is `uv run pytest` inside the handler, and the conformance oracle for both languages is the single TypeScript runner. T11 updates that sentence.
 

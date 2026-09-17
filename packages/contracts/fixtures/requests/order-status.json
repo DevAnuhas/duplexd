@@ -1,0 +1,20 @@
+{
+  "expected": {
+    "strict": "valid",
+    "loose": "valid"
+  },
+  "request": {
+    "contractVersion": "1",
+    "sessionId": "session_fixture_1",
+    "delegationId": "delegation_order_1",
+    "offsetMs": 1200,
+    "transcript": [
+      {
+        "role": "user",
+        "text": "Where is order 123?",
+        "offsetMs": 50
+      }
+    ],
+    "priorDelegations": []
+  }
+}

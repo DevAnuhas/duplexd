@@ -1,6 +1,6 @@
 # 008: Remote handler requests are HMAC-signed with a consumer-supplied secret
 
-Status: proposed
+Status: accepted
 Date: 2026-09-16
 
 ## Context
@@ -23,16 +23,17 @@ Every handler request carries:
 
 The signed body is authoritative. The two metadata headers exist for logs, traces, and proxies that cannot read a body; a handler acts on neither before the equality check below, and they carry no authority of their own. A handler verifies in this order and rejects at the first failure, before any dispatch or side effect:
 
-1. Recompute the signature over the raw body bytes, compare in constant time, and reject with 401 when it does not match or when `t` is more than 300 seconds from the handler's clock. Everything unsigned, the headers included, is untrusted until this passes.
+1. Verify the signature over the raw body bytes with WebCrypto's constant-time HMAC verification and reject invalid signatures with 401 `invalid_signature`; only after a valid signature, reject `t` values more than 300 seconds from the handler's clock with 401 `stale_timestamp`. Everything unsigned, the headers included, is untrusted until this passes.
 2. Parse the body.
 3. Reject with 400 when either header is missing, carries more than one value, or differs from the signed body's `contractVersion` or `sessionId`.
 4. Reject with 400 when the body's `contractVersion` is not one the handler speaks.
+5. Validate the loose handler-request schema and reject invalid requests with 400.
 
 A handler never uses the session header for authorization or as an idempotency key; it uses the body's `sessionId`.
 
-The response path is protected by transport security, not by the signature. A remote handler URL must be `https:` unless its host is loopback (`localhost`, `127.0.0.1`, `::1`), which is the local-development exception the shipped examples use. The schema enforces the rule and the server applies it to its own default handler URL. The broker's HTTP client never follows a redirect: a 3xx response is a delegation error, so a redirect cannot change the destination or downgrade the transport. Certificate verification is the runtime default and is never disabled.
+The response path is protected by transport security, not by the signature. A remote handler URL must be `https:` unless its host is loopback (`localhost`, `127.0.0.1`, `[::1]`), which is the local-development exception the shipped examples use. The schema enforces the rule and the server applies it to its own default handler URL. The broker's HTTP client never follows a redirect: a 3xx response is a delegation error, so a redirect cannot change the destination or downgrade the transport. Certificate verification is the runtime default and is never disabled.
 
-The delegation id inside the signed body is the replay boundary. A request replayed inside the 300 second window is the same delegation, so a handler that suppresses duplicates atomically on `sessionId` plus `delegationId` treats it as harmless. The contract requires that suppression of every handler; the contract package ships a Node sign and verify helper, a documented algorithm, test vectors (secret, timestamp, body, expected signature) that the Python example handler verifies against, and a replay scenario in the conformance runner.
+The delegation id inside the signed body is the replay boundary. A request replayed inside the 300 second window is the same delegation, so a handler that suppresses duplicates atomically on `sessionId` plus `delegationId` treats it as harmless. The contract requires that suppression of every handler; the contract package ships an isomorphic WebCrypto sign and verify helper, a documented algorithm, test vectors (secret, timestamp, body, expected signature) that the Python example handler verifies against, and a replay scenario in the conformance runner.
 
 ## Alternatives
 

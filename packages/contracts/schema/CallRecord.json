@@ -1,0 +1,836 @@
+{
+  "$defs": {
+    "__schema0": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "$id": "https://duplexd.dev/schema/v1/CallRecord.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "appends": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "at": {
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$",
+                "type": "string"
+              },
+              "delegationId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "enum": [
+                  "thinking",
+                  "commentary",
+                  "instruction"
+                ],
+                "type": "string"
+              },
+              "seq": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "tokens": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "seq",
+              "delegationId",
+              "kind",
+              "tokens",
+              "at"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "contractVersion": {
+          "const": "1",
+          "type": "string"
+        },
+        "createdAt": {
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$",
+          "type": "string"
+        },
+        "delegations": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "appends": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "createdAt": {
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$",
+                "type": "string"
+              },
+              "delegationId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "finishedAt": {
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$",
+                "type": "string"
+              },
+              "offsetMs": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "outcome": {
+                "enum": [
+                  "done",
+                  "timeout",
+                  "cancelled",
+                  "error",
+                  "running"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "delegationId",
+              "offsetMs",
+              "outcome",
+              "createdAt",
+              "appends"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "endedAt": {
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$",
+          "type": "string"
+        },
+        "handler": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "const": "remote",
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "url"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "const": "in-process",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "instructions": {
+          "type": "string"
+        },
+        "provider": {
+          "const": "openai-gpt-live",
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "rejectedAppends": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "at": {
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$",
+                "type": "string"
+              },
+              "delegationId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "enum": [
+                  "thinking",
+                  "commentary",
+                  "instruction"
+                ],
+                "type": "string"
+              },
+              "reason": {
+                "enum": [
+                  "over_budget",
+                  "unknown_delegation",
+                  "delegation_finished",
+                  "provider_error"
+                ],
+                "type": "string"
+              },
+              "seq": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "seq",
+              "delegationId",
+              "kind",
+              "reason",
+              "at"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "sessionId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "startedAt": {
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$",
+          "type": "string"
+        },
+        "state": {
+          "const": "closed",
+          "type": "string"
+        },
+        "transcript": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "offsetMs": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "role": {
+                "enum": [
+                  "user",
+                  "assistant"
+                ],
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "role",
+              "text",
+              "offsetMs"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "usage": {
+          "additionalProperties": false,
+          "properties": {
+            "raw": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "seconds": {
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "seconds",
+            "raw"
+          ],
+          "type": "object"
+        },
+        "voice": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "contractVersion",
+        "sessionId",
+        "provider",
+        "createdAt",
+        "endedAt",
+        "instructions",
+        "handler",
+        "transcript",
+        "delegations",
+        "appends",
+        "rejectedAppends",
+        "state"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "appends": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "at": {
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$",
+                "type": "string"
+              },
+              "delegationId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "enum": [
+                  "thinking",
+                  "commentary",
+                  "instruction"
+                ],
+                "type": "string"
+              },
+              "seq": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "tokens": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "seq",
+              "delegationId",
+              "kind",
+              "tokens",
+              "at"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "contractVersion": {
+          "const": "1",
+          "type": "string"
+        },
+        "createdAt": {
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$",
+          "type": "string"
+        },
+        "delegations": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "appends": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "createdAt": {
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$",
+                "type": "string"
+              },
+              "delegationId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "finishedAt": {
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$",
+                "type": "string"
+              },
+              "offsetMs": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "outcome": {
+                "enum": [
+                  "done",
+                  "timeout",
+                  "cancelled",
+                  "error",
+                  "running"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "delegationId",
+              "offsetMs",
+              "outcome",
+              "createdAt",
+              "appends"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "endedAt": {
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$",
+          "type": "string"
+        },
+        "handler": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "const": "remote",
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "url"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "const": "in-process",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "instructions": {
+          "type": "string"
+        },
+        "provider": {
+          "const": "openai-gpt-live",
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "rejectedAppends": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "at": {
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$",
+                "type": "string"
+              },
+              "delegationId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "enum": [
+                  "thinking",
+                  "commentary",
+                  "instruction"
+                ],
+                "type": "string"
+              },
+              "reason": {
+                "enum": [
+                  "over_budget",
+                  "unknown_delegation",
+                  "delegation_finished",
+                  "provider_error"
+                ],
+                "type": "string"
+              },
+              "seq": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "seq",
+              "delegationId",
+              "kind",
+              "reason",
+              "at"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "sessionId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "startedAt": {
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$",
+          "type": "string"
+        },
+        "state": {
+          "const": "failed",
+          "type": "string"
+        },
+        "transcript": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "offsetMs": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "role": {
+                "enum": [
+                  "user",
+                  "assistant"
+                ],
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "role",
+              "text",
+              "offsetMs"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "voice": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "contractVersion",
+        "sessionId",
+        "provider",
+        "createdAt",
+        "endedAt",
+        "instructions",
+        "handler",
+        "transcript",
+        "delegations",
+        "appends",
+        "rejectedAppends",
+        "state"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "appends": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "at": {
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$",
+                "type": "string"
+              },
+              "delegationId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "enum": [
+                  "thinking",
+                  "commentary",
+                  "instruction"
+                ],
+                "type": "string"
+              },
+              "seq": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "tokens": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "seq",
+              "delegationId",
+              "kind",
+              "tokens",
+              "at"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "contractVersion": {
+          "const": "1",
+          "type": "string"
+        },
+        "createdAt": {
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$",
+          "type": "string"
+        },
+        "delegations": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "appends": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "createdAt": {
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$",
+                "type": "string"
+              },
+              "delegationId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "finishedAt": {
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$",
+                "type": "string"
+              },
+              "offsetMs": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "outcome": {
+                "enum": [
+                  "done",
+                  "timeout",
+                  "cancelled",
+                  "error",
+                  "running"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "delegationId",
+              "offsetMs",
+              "outcome",
+              "createdAt",
+              "appends"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "endedAt": {
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$",
+          "type": "string"
+        },
+        "handler": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "const": "remote",
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "url"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "const": "in-process",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "instructions": {
+          "type": "string"
+        },
+        "provider": {
+          "const": "openai-gpt-live",
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "rejectedAppends": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "at": {
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$",
+                "type": "string"
+              },
+              "delegationId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "enum": [
+                  "thinking",
+                  "commentary",
+                  "instruction"
+                ],
+                "type": "string"
+              },
+              "reason": {
+                "enum": [
+                  "over_budget",
+                  "unknown_delegation",
+                  "delegation_finished",
+                  "provider_error"
+                ],
+                "type": "string"
+              },
+              "seq": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "seq",
+              "delegationId",
+              "kind",
+              "reason",
+              "at"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "sessionId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "startedAt": {
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d))$",
+          "type": "string"
+        },
+        "state": {
+          "const": "incomplete",
+          "type": "string"
+        },
+        "transcript": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "offsetMs": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "role": {
+                "enum": [
+                  "user",
+                  "assistant"
+                ],
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "role",
+              "text",
+              "offsetMs"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "voice": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "contractVersion",
+        "sessionId",
+        "provider",
+        "createdAt",
+        "endedAt",
+        "instructions",
+        "handler",
+        "transcript",
+        "delegations",
+        "appends",
+        "rejectedAppends",
+        "state"
+      ],
+      "type": "object"
+    }
+  ]
+}

@@ -5,16 +5,35 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./conformance": {
+      "types": "./dist/src/conformance/index.d.ts",
+      "default": "./dist/src/conformance/index.js"
     }
   },
-  "files": ["dist"],
+  "bin": {
+    "duplexd-conformance": "./dist/src/conformance/cli.js"
+  },
+  "files": [
+    "dist",
+    "fixtures",
+    "schema"
+  ],
+  "sideEffects": false,
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -b && node dist/scripts/build-schema.js",
     "lint": "eslint .",
+    "schema:check": "node dist/scripts/check-schema.js",
     "test": "vitest run",
-    "test:live": "node -e \"console.log('No live contract tests in T01.')\"",
+    "test:live": "node -e \"console.log('No live provider tests required for contracts.')\"",
     "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "ajv": "8.17.1"
   }
 }

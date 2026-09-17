@@ -1,0 +1,22 @@
+{
+  "expected": {
+    "strict": "invalid",
+    "loose": "valid"
+  },
+  "request": {
+    "contractVersion": "1",
+    "sessionId": "session_fixture_1",
+    "delegationId": "delegation_fixture_1",
+    "offsetMs": 1200,
+    "transcript": [
+      {
+        "role": "user",
+        "text": "Book a table for two tomorrow.",
+        "offsetMs": 200,
+        "extraNested": true
+      }
+    ],
+    "priorDelegations": [],
+    "extraTopLevel": "additive"
+  }
+}

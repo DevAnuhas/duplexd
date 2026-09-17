@@ -1,0 +1,5 @@
+{
+  "name": "keepalive-under-delay",
+  "request": "keepalive-delay",
+  "expectation": "early_keepalive"
+}

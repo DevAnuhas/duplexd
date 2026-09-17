@@ -1,6 +1,6 @@
 # 006: Remote handler results stream as newline-delimited JSON
 
-Status: proposed
+Status: accepted
 Date: 2026-09-16
 
 ## Context
@@ -27,7 +27,7 @@ Handlers must flush after every line. The contract package ships a reference par
 
 ## Consequences
 
-Any HTTP stack that buffers responses breaks the contract silently; the contract test runner asserts that the first line arrives before the stream ends, so buffering is caught in tests, not in production.
+Any HTTP stack that buffers responses can break incremental progress. Read/chunk boundaries cannot prove server behavior, so the conformance runner uses a real HTTP request with a deliberate three-second delay: an incremental handler emits a complete keepalive within two seconds, while the deliberately buffering handler misses that bounded deadline. Fast scenarios without a controlled delay make no buffering claim.
 
 Keepalive lines are the only idle-proxy defense. A handler that does nothing for longer than an intermediate proxy's idle timeout must emit them.
 
