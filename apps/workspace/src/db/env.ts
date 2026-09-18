@@ -73,3 +73,32 @@ export function requireAuthSecret(): string {
 
   return secret;
 }
+
+/**
+ * The public origin the app is served from, or an error naming it.
+ *
+ * Required rather than optional. Better Auth will happily derive this from the
+ * incoming request when it is absent, but that means the origin used to build
+ * callback and cookie URLs is chosen by whatever `Host` header arrives — and
+ * behind a proxy, that is not something the application controls. Pinning it
+ * makes the deployment state its own identity instead of inferring it from
+ * traffic.
+ *
+ * It is also what keeps `.env.example` honest: every variable listed there
+ * fails at start when missing, so the file is a complete account of what the
+ * app needs rather than a mix of requirements and suggestions.
+ */
+export function requireAuthUrl(): string {
+  const url = process.env.BETTER_AUTH_URL;
+
+  if (url === undefined || url.trim() === '') {
+    throw new Error(
+      'BETTER_AUTH_URL is unset or empty. Set it to the origin the app is ' +
+        'served from, for example http://localhost:3000. It is not derived ' +
+        'from the request, because behind a proxy the request does not decide ' +
+        'what this deployment is.',
+    );
+  }
+
+  return url.trim();
+}

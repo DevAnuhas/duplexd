@@ -73,6 +73,7 @@ jobs:
         env:
           DATABASE_URL: postgres://duplexd:duplexd@127.0.0.1:5432/duplexd_test
           BETTER_AUTH_SECRET: ci-not-a-real-secret
+          BETTER_AUTH_URL: http://localhost:3000
           ASSISTANT_SECRET_KEY: 0000000000000000000000000000000000000000000000000000000000000001
         run: pnpm test
       # Deliberately no database environment: the production image must build

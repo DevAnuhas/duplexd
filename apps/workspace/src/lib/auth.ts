@@ -4,7 +4,7 @@ import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 
 import { getDb } from '@/db/client';
-import { requireAuthSecret } from '@/db/env';
+import { requireAuthSecret, requireAuthUrl } from '@/db/env';
 import * as schema from '@/db/schema';
 
 /**
@@ -22,6 +22,7 @@ import * as schema from '@/db/schema';
 function createAuth() {
   return betterAuth({
     secret: requireAuthSecret(),
+    baseURL: requireAuthUrl(),
     database: drizzleAdapter(getDb(), {
       provider: 'pg',
       schema: {
@@ -38,7 +39,16 @@ function createAuth() {
       additionalFields: {
         accountId: {
           type: 'string',
-          required: true,
+          // `required` here means "the signup request must supply it", which
+          // it cannot: `input: false` stops a client from sending `accountId`
+          // at all, and Better Auth validates required fields against the
+          // request body *before* any database hook runs. The two together are
+          // unsatisfiable and reject every signup with `MISSING_FIELD`.
+          //
+          // The invariant is enforced where it belongs instead: `account_id`
+          // is NOT NULL with a foreign key, and the `before` hook below fills
+          // it. A row without an account cannot reach the table.
+          required: false,
           input: false,
         },
       },
