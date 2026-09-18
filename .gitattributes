@@ -1,2 +1,1 @@
 * text=auto eol=lf
-packages/contracts/fixtures/results/*.ndjson -text

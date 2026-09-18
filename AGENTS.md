@@ -1,7 +1,7 @@
 # duplexd
 
-A voice transport and delegation broker for full-duplex speech models. It owns the live audio session and hands every request for reasoning or tools to a consumer backend, so the conversation keeps flowing while work happens elsewhere.
-TypeScript, Node 24, pnpm workspaces. Branch model: `feat/*` → `main`.
+A hosted voice-AI platform: a workspace where an assistant is given a voice, instructions, and tools, an API key per customer, and a call API any project can integrate. [Pipecat](https://github.com/pipecat-ai/pipecat) is the voice runtime.
+TypeScript and Node 24 for the workspace and control API; Python and `uv` for the agent. Branch model: `feat/*` → `main`.
 
 ## Working approach
 
@@ -33,22 +33,18 @@ Work crossing two or more files uses a GitHub issue, a worktree from `main`, and
 
 These hold regardless of implementation detail. They are the rules worth blocking a change over.
 
-- **The voice layer holds no authority.** It never receives tool definitions, credentials, tenant identifiers, or consumer records. It sees the current call's audio, transcript, and session metadata. Authorization, permissions, confirmations, and business state live in the consumer backend.
-- **Delegation events are metadata, not instructions.** The model signals that it needs help; it does not say what. The broker reconstructs intent from transcript and consumer-supplied context on the consumer's side of the contract. Never invent task text.
-- **One owner per side effect.** A duplicate webhook delivery, a retried delegation, or the same event observed on two connections must produce exactly one effect. Unknown outcomes reconcile; they do not blind-retry.
-- **Identifiers are opaque and preserved.** Session ids, delegation ids, and call ids are passed through unchanged. Appends reference only delegations the broker has seen. No id is constructed or parsed.
-- **`session.closed` is the only completion.** A hangup request, socket close, or provider disconnect is not. Usage is recorded only from the provider's final events. A session that ends without them is recorded as incomplete, not as finished.
-- **Honest states only.** A handler timeout is reported as a timeout, never spoken as a result. Nothing is announced to the caller before the consumer confirms it. Sample handlers are visibly labeled as sample.
-- **Secrets stay server-side.** Browsers receive session ids and SDP answers, never provider API keys. Consumer backends receive only the context the contract defines.
-- **The contract is the product.** `packages/contracts` is the single source of truth for every wire shape. Code that disagrees with the contract is wrong, not the contract.
+- **The voice layer holds no authority.** It never receives tool definitions, credentials, tenant identifiers, or customer records. It sees the current call's audio, transcript, and instructions. Authorization, permissions, confirmations, and business state live in the customer's backend, reached only by a signed webhook. This is [ADR 001](docs/decisions/001-client-delegation.md), and [ADR 010](docs/decisions/010-pipecat-runtime.md) changed how it is implemented, not whether it holds.
+- **One owner per side effect.** A duplicate webhook delivery, a retried tool call, or the same agent event ingested twice must produce exactly one effect. Unknown outcomes reconcile; they do not blind-retry.
+- **A call is finished only when the agent says so.** A closed socket, a lost container, or a sweeper's timeout is not a completed call. A call that stopped reporting is recorded as incomplete with its last known duration, never as ended. Nothing else may write a clean ending it did not observe.
+- **Honest states only.** A failed tool call is reported as failed, never spoken as a result. Nothing is announced to the caller before the customer's backend confirms it. Sample data is visibly labeled as sample.
+- **Secrets stay server-side, and one of them is not ours.** API keys are shown once and stored hashed. The assistant's webhook secret belongs to the customer: encrypted at rest, decrypted only where a call needs it, and never returned by an API, rendered into a page, written to a log, or included in an error message.
 
 ## Task map
 
 | Scope | Read |
 | --- | --- |
 | Product scope, non-goals, current status | `CONTEXT.md` |
-| System boundaries, session lifecycle, trust | `ARCHITECTURE.md` |
-| Wire contract: events, handler protocol, appends | `docs/PROTOCOL.md` |
+| System boundaries, call lifecycle, trust | `ARCHITECTURE.md` |
 | Setup, tests, CI, releases | `docs/ENGINEERING.md` |
 | Branching, issues, PRs, worktrees | `docs/WORKFLOW.md` |
 | Current milestone and acceptance | `docs/MILESTONE.md` |
@@ -60,7 +56,7 @@ These hold regardless of implementation detail. They are the rules worth blockin
 
 Use focused checks while iterating. Before completion, run the checks required for the changed surface. Do not broaden or repeat them without new changes, failures, or unresolved concerns. Documentation-only changes need link and instruction validation, not application builds.
 
-Contract changes require the contract test suite to pass for every example handler, in every language shipped. A transport change requires a recorded live session against the real provider, not only a mocked event stream. A fixture pass is not a live-path pass, and a model's claim is not a test result.
+A change to how a call is authenticated, scoped, or recorded requires a test that fails without the change. A change to the agent requires a real call against the real provider, not only a mocked event stream. A fixture pass is not a live-path pass, and a model's claim is not a test result.
 
 State what was actually verified. Report each check as passed, failed, blocked, or not run.
 
