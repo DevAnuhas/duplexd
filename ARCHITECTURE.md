@@ -1,6 +1,6 @@
 # Architecture
 
-Target boundaries. Most of this describes the system as it should exist once the platform milestone lands, not what exists today — `CONTEXT.md` owns status, and each section below says which of the two it is. What exists at this commit is the decision trail, the CI workflow, and the Pipecat gate spike.
+Target boundaries. Most of this describes the system as it should exist once the platform milestone lands, not what exists today — `CONTEXT.md` owns status. Every section that describes machinery is marked *Planned* where it is not yet built; the two that state trust rules and what would reopen the design are not marked, because they are constraints on whatever gets built rather than claims about what exists. What exists at this commit is the decision trail, the CI workflow, and the Pipecat gate spike.
 
 ## The shape in one paragraph
 

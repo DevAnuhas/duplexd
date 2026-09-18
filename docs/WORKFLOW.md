@@ -89,7 +89,7 @@ Pull request titles use the same format with the issue appended: `type(scope): s
 ```text
 feat(workspace): add assistant editor with tool-list validation (#26)
 feat(api): issue and revoke API keys (#26)
-docs(repo): record Pipecat as the voice runtime (#23)
+docs(repo): re-orient the documentation on the platform (#24)
 ```
 
 Agents commit with the repository's configured Git identity. Do not change global Git identity or rewrite existing commits.
