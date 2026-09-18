@@ -138,8 +138,8 @@ describe('classify-docs-only.sh', () => {
     it('treats markdown outside docs/ as documentation', () => {
       repo.git('checkout', '--quiet', '-b', 'feature');
       repo.commit(
-        { 'packages/core/README.md': '# core\n' },
-        'docs: package readme',
+        { 'scripts/README.md': '# scripts\n' },
+        'docs: scripts readme',
       );
 
       expectClassification(

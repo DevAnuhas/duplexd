@@ -34,20 +34,6 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17.6-alpine
-        env:
-          POSTGRES_DB: duplexd
-          POSTGRES_PASSWORD: duplexd
-          POSTGRES_USER: duplexd
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U duplexd -d duplexd"
-          --health-interval 2s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - name: Check out repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -68,11 +54,6 @@ jobs:
         run: pnpm test
       - name: Build
         run: pnpm build
-      - name: Verify committed contract schemas
-        run: |
-          pnpm --filter @duplexd/contracts schema:check
-          git diff --exit-code -- packages/contracts/schema
-          test -z "$(git ls-files --others --exclude-standard -- packages/contracts/schema)"
 
   docs:
     name: docs

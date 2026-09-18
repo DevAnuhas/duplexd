@@ -1,12 +1,12 @@
 import { defineConfig } from 'vitest/config';
 
 /**
- * Root-level suite for repository tooling that lives outside any workspace
- * package — currently `scripts/classify-docs-only.sh`.
+ * Root-level suite for repository tooling. Everything under `tests/` runs here;
+ * currently that is the `scripts/classify-docs-only.sh` suite.
  *
- * `include` is scoped to `tests/` on purpose: without it the root runner would
- * also collect every package's `test/` suite and run it from the wrong working
- * directory. Package suites are owned by each package's own `vitest.config.ts`.
+ * `include` is scoped to `tests/` deliberately. The repository has no workspace
+ * packages at this commit, but P02 adds `apps/workspace`, and a package suite
+ * belongs to that package's own runner rather than to this one.
  */
 export default defineConfig({
   test: {
