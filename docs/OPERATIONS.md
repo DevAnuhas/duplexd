@@ -4,7 +4,9 @@ Hosting and environments. Nothing here is deployed; this records the intended sh
 
 ## Local
 
-The workspace app is what runs locally; the agent runs against Pipecat Cloud rather than on the developer's machine, and the database is a Neon branch rather than a local server. Nothing runs locally at this commit — P02 adds the first thing that does.
+The workspace app is what runs locally; the agent runs against Pipecat Cloud rather than on the developer's machine.
+
+**A Neon branch per developer is the documented default, and any PostgreSQL 17 or newer works.** `DATABASE_URL` is a connection string and nothing in the app special-cases what answers it. Neon is the default because it matches production exactly — same major version, pooler, TLS — and branching gives each developer an isolated database in seconds; anyone without a Neon account points `DATABASE_URL` at a local server and loses nothing. `docker-compose.yml` was deleted in P01 and is not restored: it existed to run Postgres for the retired Fastify server.
 
 Tool webhooks are called from the agent, not from the developer's machine, so a locally developed webhook needs to be reachable from the internet. Use `ngrok` or `cloudflared`. Do not commit tunnel URLs.
 
@@ -14,9 +16,11 @@ Tool webhooks are called from the agent, not from the developer's machine, so a 
 
 **Agent: Pipecat Cloud.** The agent image is built and deployed by `pipecat cloud deploy`, with the provider key and the platform token held in a Pipecat Cloud secret set. `min_agents = 0` at launch, with `max_agents` set as a cost guard; cold start is measured on a real call rather than paid for in advance. Self-hosted regions are available if pricing or data residency demands them.
 
-**Database: Neon.** Postgres with Drizzle migrations, and the database for local development too — a branch per developer, and a branch per preview if useful.
+**Database: Neon.** Postgres with Drizzle migrations. A branch per preview if useful. See the local section above for what development uses.
 
-**Secrets:** Fly secrets for the database URL and the encryption key that protects customers' webhook secrets at rest. Pipecat Cloud secrets for the provider key. Never in an image, never in the repository.
+**Secrets:** Fly secrets for `DATABASE_URL`, `BETTER_AUTH_SECRET`, and `ASSISTANT_SECRET_KEY` — the last of which protects customers' webhook secrets at rest. Pipecat Cloud secrets for the provider key. Never in an image, never in the repository.
+
+**Migrations run as a Fly release command**, before any new machine serves traffic, so a deploy cannot serve a schema that has not been applied. The image deliberately does not migrate on boot: every container in a deploy would race the others.
 
 ## Environments
 
