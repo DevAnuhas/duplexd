@@ -9,3 +9,8 @@ out/
 .DS_Store
 coverage/
 *.tsbuildinfo
+
+# Python spikes
+spikes/**/.venv/
+spikes/**/evidence/
+spikes/**/__pycache__/
