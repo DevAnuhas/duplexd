@@ -75,7 +75,22 @@ def verdict(path: Path) -> dict:
     """Read one evidence file and decide whether the model spoke during each tool call."""
     events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     tools = [e for e in events if e["event"] == "tool_start"]
-    speech_starts = [e["t"] for e in events if e["event"] == "bot_speaking_start"]
+
+    # Speech intervals. The transport emits each speaking frame twice (once per
+    # direction), so collapse starts and stops that land within 50 ms.
+    def collapse(kind: str) -> list[float]:
+        out: list[float] = []
+        for e in events:
+            if e["event"] == kind and (not out or e["t"] - out[-1] > 0.05):
+                out.append(e["t"])
+        return out
+
+    starts, stops = collapse("bot_speaking_start"), collapse("bot_speaking_stop")
+    intervals = []
+    for s in starts:
+        stop = next((x for x in stops if x > s), None)
+        intervals.append((s, stop if stop is not None else float("inf")))
+
     rows = []
     for start in tools:
         end = next(
@@ -83,17 +98,25 @@ def verdict(path: Path) -> dict:
             None,
         )
         if end is None:
-            rows.append({"tool": start["tool"], "call_id": start.get("call_id"), "spoke_during": None, "note": "no tool_end"})
+            rows.append({"tool": start["tool"], "call_id": start.get("call_id"), "note": "no tool_end"})
             continue
-        during = [t for t in speech_starts if start["t"] < t < end["t"]]
+        t0, t1 = start["t"], end["t"]
+        overlapping = [(s, e) for s, e in intervals if s < t1 and e > t0]
+        started_inside = [s for s, _ in intervals if t0 < s < t1]
+        spoken = sum(min(e, t1) - max(s, t0) for s, e in overlapping)
+        # First speech after the webhook returned: the relay latency the caller feels.
+        relay_start = next((s for s, _ in intervals if s >= t1), None)
         rows.append(
             {
                 "tool": start["tool"],
                 "call_id": start.get("call_id"),
-                "webhook_secs": round(end["t"] - start["t"], 2),
                 "ok": end.get("ok"),
-                "spoke_during": bool(during),
-                "speech_starts_during": during,
+                "webhook_secs": round(t1 - t0, 2),
+                "speaking_overlapped_wait": bool(overlapping),
+                "speech_started_inside_wait": bool(started_inside),
+                "spoken_secs_during_wait": round(spoken, 2),
+                "silent_secs_during_wait": round(max(0.0, (t1 - t0) - spoken), 2),
+                "relay_latency_secs": None if relay_start is None else round(relay_start - t1, 2),
             }
         )
     return {"file": str(path), "tool_calls": rows, "interruptions": sum(1 for e in events if e["event"] == "interruption")}
