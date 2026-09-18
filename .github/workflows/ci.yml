@@ -27,6 +27,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           docs_only=$(./scripts/classify-docs-only.sh "$EVENT_NAME" "$BASE_SHA" "$HEAD_SHA")
+          echo "docs_only=$docs_only"
           echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
 
   checks:

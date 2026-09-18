@@ -8,7 +8,7 @@ An assistant is a record: a voice and accent, instructions, a list of tools in t
 
 **The voice model never receives tool definitions.** It listens and talks. A backend text model, owned by the platform, decides which tool to call and calls your webhook. The voice model holds no tools, no credentials, and no authority over what is true or what action to take.
 
-This is not an implementation detail. It is why a second voice provider stays cheap to add, and why a caller can never talk the voice layer into doing something your backend did not authorize. It is recorded in [ADR 001](docs/decisions/001-client-delegation.md) and, as implemented today, [ADR 010](docs/decisions/010-pipecat-runtime.md).
+This is not an implementation detail. It is why a second voice provider stays cheap to add, and why a caller can never talk the voice layer into doing something your backend did not authorize. It is recorded in [ADR 001](docs/decisions/001-client-delegation.md) and, as the approach now stands, [ADR 010](docs/decisions/010-pipecat-runtime.md).
 
 ## Shape
 

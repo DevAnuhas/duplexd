@@ -82,7 +82,7 @@ An agent's success narrative is not a check result. A blocked check is not a pas
 
 Format: `type(scope): summary`. Group by coherent change, not by file-count quota.
 
-Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `build`, `ci`. Scope is the workspace or area touched: `workspace`, `api`, `agent`, `repo`.
+Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `build`, `ci`. Scope is the area touched, not a closed set: `workspace`, `api`, `agent`, `spike`, `repo`, or the ticket identifier for a repository-wide chore.
 
 Pull request titles use the same format with the issue appended: `type(scope): summary (#N)`. This repository squash-merges with the PR title as the commit subject.
 

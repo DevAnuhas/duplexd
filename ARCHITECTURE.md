@@ -4,6 +4,8 @@ Target boundaries. Most of this describes the system as it should exist once the
 
 ## The shape in one paragraph
 
+*Planned. This is the system P02 through P05 build, described in the present tense for readability; none of it runs at this commit.*
+
 A project holds an API key and asks the control API to start a call against one of its assistants. The control API verifies the key, loads the assistant, writes a call row, and asks Pipecat Cloud to spawn an agent. The agent fetches the assistant's full record back from the control API over a short-lived token, opens a session with the voice model carrying instructions and no tools, and runs the call. When the voice model needs something done, a backend text model — owned by the platform, holding the assistant's tools — picks a tool and calls the customer's webhook with a signed request. The result is spoken back while the caller keeps talking. The agent reports transcript and tool events to the control API as it goes, and reports completion at the end.
 
 ## Components

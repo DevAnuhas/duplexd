@@ -22,12 +22,12 @@ Each is a ticket, each independently mergeable, in this order because each needs
 
 | # | Ticket | Ends when | State |
 | --- | --- | --- | --- |
-| P01 | Prune the retired engine and re-orient the docs | The repository describes the platform and the build commands are green on what remains | [#24](https://github.com/DevAnuhas/duplexd/issues/24) — this ticket |
+| P01 | Prune the retired engine and re-orient the docs | The repository describes the platform and the build commands are green on what remains | [#24](https://github.com/DevAnuhas/duplexd/issues/24) — this ticket, in review |
 | P02 | Workspace foundation: Next.js app, Better Auth, Drizzle, the schema, deploy configuration | A human signs in to an empty workspace | [#25](https://github.com/DevAnuhas/duplexd/issues/25) |
 | P03 | Assistants and API keys: CRUD, tool-list validation, key issue and revoke | An assistant with tools exists and a key can be minted and revoked | [#26](https://github.com/DevAnuhas/duplexd/issues/26) |
-| P04 | Agent runtime: the gate spike generalized, config fetched from the API, deployed to Pipecat Cloud | A real call runs against a real assistant record | not yet filed |
-| P05 | Control API: `POST /v1/calls`, room handoff, call rows, agent event ingest, completion, stale-call sweep | A call placed by API key is recorded start to finish | not yet filed |
-| P06 | Acceptance: a Boring Host page places a call against a real backend tool | The goal above | not yet filed |
+| P04 | Agent runtime: the gate spike generalized, config fetched from the API, deployed to Pipecat Cloud | A real call runs against a real assistant record | [#27](https://github.com/DevAnuhas/duplexd/issues/27) |
+| P05 | Control API: `POST /v1/calls`, room handoff, call rows, agent event ingest, completion, stale-call sweep | A call placed by API key is recorded start to finish | [#28](https://github.com/DevAnuhas/duplexd/issues/28) |
+| P06 | Acceptance: a Boring Host page places a call against a real backend tool | The goal above | [#29](https://github.com/DevAnuhas/duplexd/issues/29) |
 
 P04 and P05 can overlap: the agent can be exercised from the CLI before the control API exists, which is exactly how the gate spike ran.
 
@@ -40,7 +40,7 @@ Report each item as passed, failed, blocked, or not run.
 - An assistant is created with a voice, instructions, and a tool list, and round-trips through an edit without losing a field.
 - A tool list with a malformed `parameters` schema is rejected at save, with a message naming the offending tool, and the rest of the form survives the error.
 - An API key is minted, shown exactly once, and is not recoverable afterwards from the workspace or the database. Revoking it stops it authenticating.
-- A second account cannot read the first account's assistants, keys, or calls.
+- A second signup's account cannot read the first account's assistants, keys, or calls.
 - An assistant's webhook secret is encrypted at rest and appears in no API response, rendered page, log line, or error message.
 - A call placed by API key runs end to end and is recorded with its transcript and tool calls.
 - A call whose agent stops reporting is recorded as `incomplete`, not as `ended`.

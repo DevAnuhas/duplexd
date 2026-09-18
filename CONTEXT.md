@@ -54,7 +54,7 @@ Verify a candidate against a real compatibility check before committing to it. D
 
 ## Scope boundaries
 
-One assistant, one account, browser calls only in the first milestone. Multi-user accounts, live call watching, and a second provider are deliberately deferred so the first acceptance run stays reachable.
+One account per signup, one assistant, browser calls only in the first milestone. Accounts are isolated from each other from the first schema — that is a security boundary, not a feature — but *multi-user* accounts need an invite flow nobody has asked for, so a signup owns exactly one account. Live call watching and a second provider are deliberately deferred so the first acceptance run stays reachable.
 
 Recording retention, outbound calling compliance, and provider region placement are unresolved. Do not imply the platform handles a customer's regulatory obligations; that stays with the customer.
 

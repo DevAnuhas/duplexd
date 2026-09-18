@@ -4,7 +4,7 @@ Hosting and environments. Nothing here is deployed; this records the intended sh
 
 ## Local
 
-The workspace app and its database are what runs locally; the agent runs against Pipecat Cloud rather than on the developer's machine. Nothing runs locally at this commit — P02 adds the first thing that does.
+The workspace app is what runs locally; the agent runs against Pipecat Cloud rather than on the developer's machine, and the database is a Neon branch rather than a local server. Nothing runs locally at this commit — P02 adds the first thing that does.
 
 Tool webhooks are called from the agent, not from the developer's machine, so a locally developed webhook needs to be reachable from the internet. Use `ngrok` or `cloudflared`. Do not commit tunnel URLs.
 
@@ -14,7 +14,7 @@ Tool webhooks are called from the agent, not from the developer's machine, so a 
 
 **Agent: Pipecat Cloud.** The agent image is built and deployed by `pipecat cloud deploy`, with the provider key and the platform token held in a Pipecat Cloud secret set. `min_agents = 0` at launch, with `max_agents` set as a cost guard; cold start is measured on a real call rather than paid for in advance. Self-hosted regions are available if pricing or data residency demands them.
 
-**Database: Neon.** Postgres with Drizzle migrations. Branch per preview if useful.
+**Database: Neon.** Postgres with Drizzle migrations, and the database for local development too — a branch per developer, and a branch per preview if useful.
 
 **Secrets:** Fly secrets for the database URL and the encryption key that protects customers' webhook secrets at rest. Pipecat Cloud secrets for the provider key. Never in an image, never in the repository.
 
@@ -22,7 +22,7 @@ Tool webhooks are called from the agent, not from the developer's machine, so a 
 
 | Environment | Source | Purpose |
 | --- | --- | --- |
-| Preview | Each pull request, when CI exists | Ephemeral, synthetic tool webhooks, no real telephony |
+| Preview | Each pull request | Ephemeral, synthetic tool webhooks, no real telephony |
 | Staging | `main` | Shared verification with real provider access and test numbers |
 | Production | Tagged release | Human approval required |
 
