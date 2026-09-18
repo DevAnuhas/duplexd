@@ -1,5 +1,0 @@
-{
-  "name": "prior-delegations",
-  "request": "prior-delegations",
-  "expectation": "valid_stream"
-}

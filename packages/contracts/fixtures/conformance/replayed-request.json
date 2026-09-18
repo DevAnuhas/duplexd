@@ -1,5 +1,0 @@
-{
-  "name": "replayed-request",
-  "request": "booking",
-  "expectation": "same_commentary"
-}

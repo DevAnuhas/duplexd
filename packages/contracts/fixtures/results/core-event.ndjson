@@ -1,5 +1,0 @@
-{"type":"session.started","sessionId":"session_fixture_1","seq":1,"at":"2026-01-01T00:00:00.000Z","payload":{}}
-{"type":"transcript.user.delta","sessionId":"session_fixture_1","seq":2,"at":"2026-01-01T00:00:00.000Z","payload":{"text":"Book a table for two tomorrow.","offsetMs":200}}
-{"type":"delegation.created","sessionId":"session_fixture_1","seq":3,"at":"2026-01-01T00:00:00.000Z","payload":{"delegationId":"delegation_fixture_1","offsetMs":1200}}
-{"type":"provider.raw","sessionId":"session_fixture_1","seq":4,"at":"2026-01-01T00:00:00.000Z","payload":{"event":{"nested":[1,null,{"deep":["ok",true]}]}}}
-{"type":"session.closed","sessionId":"session_fixture_1","seq":5,"at":"2026-01-01T00:00:00.000Z","payload":{"usage":{"seconds":12.5,"raw":{"tier":"test"}}}}

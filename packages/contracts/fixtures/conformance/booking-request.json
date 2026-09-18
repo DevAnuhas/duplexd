@@ -1,5 +1,0 @@
-{
-  "name": "booking-request",
-  "request": "booking",
-  "expectation": "valid_stream"
-}

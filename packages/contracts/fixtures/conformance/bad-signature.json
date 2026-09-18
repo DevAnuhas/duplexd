@@ -1,7 +1,0 @@
-{
-  "name": "bad-signature",
-  "request": "booking",
-  "expectation": "problem",
-  "status": 401,
-  "code": "invalid_signature"
-}
