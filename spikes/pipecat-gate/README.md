@@ -22,6 +22,16 @@ uv run webhook.py            # terminal 1, listens on 127.0.0.1:8787
 uv run bot.py -t webrtc      # terminal 2, serves http://localhost:7860
 ```
 
+Before the voice run, prove the backend half without a microphone:
+
+```bash
+uv run smoke_backend.py      # with webhook.py running; prints SMOKE PASS
+```
+
+It feeds a fixed transcript to the same backend service and tools `bot.py` uses and checks that a tool was called through the webhook and a spoken answer came back.
+
+**Backend model.** The backend is called through the Responses API (`OpenAIResponsesHttpLLMService`), not chat completions. Current reasoning models such as `gpt-5.6-luna` reject function tools on `/v1/chat/completions` with a 400, and Pipecat's backend worker turns that into an empty result, which the voice model reports as "that didn't go through". The first gate run hit exactly that. `BACKEND_MODEL` must be a model your key can see (`gpt-5.5-mini` does not exist) that supports function tools on Responses.
+
 Open `http://localhost:7860`, connect, and say things like:
 
 1. "Hi, can you look up my latest invoice? My email is kevin at boring host dot ai." Then keep talking while it works.

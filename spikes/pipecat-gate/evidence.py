@@ -52,9 +52,15 @@ class EvidenceObserver(BaseObserver):
     def __init__(self, log: EvidenceLog) -> None:
         super().__init__()
         self._log = log
+        self._seen: set[int] = set()
 
     async def on_push_frame(self, data: FramePushed) -> None:
         frame = data.frame
+        # The same frame is pushed once per processor hop, so the observer sees
+        # it many times. Record each frame once.
+        if frame.id in self._seen:
+            return
+        self._seen.add(frame.id)
         if isinstance(frame, BotStartedSpeakingFrame):
             self._log.record("bot_speaking_start")
         elif isinstance(frame, BotStoppedSpeakingFrame):

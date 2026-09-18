@@ -42,7 +42,7 @@ from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.openai.live.llm import OpenAILiveLLMService
-from pipecat.services.openai.llm import OpenAILLMService
+from pipecat.services.openai.responses.llm import OpenAIResponsesHttpLLMService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.workers.llm import BackendLLMWorker
 from pipecat.workers.runner import WorkerRunner
@@ -52,7 +52,7 @@ from evidence import EvidenceLog, EvidenceObserver
 load_dotenv(override=True)
 
 ASSISTANT = json.loads((Path(__file__).parent / "assistant.json").read_text(encoding="utf-8"))
-BACKEND_MODEL = os.environ.get("BACKEND_MODEL", "gpt-5.5-mini")
+BACKEND_MODEL = os.environ.get("BACKEND_MODEL", "gpt-5.6-luna")
 DELEGATION_TIMEOUT_SECS = float(os.environ.get("DELEGATION_TIMEOUT_SECS", "30"))
 
 
@@ -105,6 +105,22 @@ def webhook_tools(assistant: dict, log: EvidenceLog) -> list[FunctionSchema]:
     return tools
 
 
+def backend_llm() -> OpenAIResponsesHttpLLMService:
+    """The backend text model, called through the Responses API.
+
+    Not the chat-completions service: current reasoning models (gpt-5.6-*) reject
+    function tools on /v1/chat/completions with a 400, which the backend worker
+    swallows into an empty result. Found on the first gate run.
+    """
+    return OpenAIResponsesHttpLLMService(
+        api_key=os.environ["OPENAI_API_KEY"],
+        settings=OpenAIResponsesHttpLLMService.Settings(
+            model=BACKEND_MODEL,
+            system_instruction=ASSISTANT["backendInstructions"],
+        ),
+    )
+
+
 transport_params = {
     "webrtc": lambda: TransportParams(audio_in_enabled=True, audio_out_enabled=True),
 }
@@ -116,13 +132,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     logger.info(f"Gate session {session}; evidence at {log.path}")
 
     backend = BackendLLMWorker(
-        llm=OpenAILLMService(
-            api_key=os.environ["OPENAI_API_KEY"],
-            settings=OpenAILLMService.Settings(
-                model=BACKEND_MODEL,
-                system_instruction=ASSISTANT["backendInstructions"],
-            ),
-        ),
+        llm=backend_llm(),
         context=LLMContext(tools=webhook_tools(ASSISTANT, log)),
     )
 
