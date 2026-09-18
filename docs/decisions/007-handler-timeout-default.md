@@ -1,6 +1,6 @@
 # 007: Handler timeout is one total budget, default 30 seconds
 
-Status: accepted
+Status: superseded by 010
 Date: 2026-09-16
 
 ## Context

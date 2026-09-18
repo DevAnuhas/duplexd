@@ -1,6 +1,6 @@
 # 008: Remote handler requests are HMAC-signed with a consumer-supplied secret
 
-Status: accepted
+Status: superseded by 010
 Date: 2026-09-16
 
 ## Context
