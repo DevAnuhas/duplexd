@@ -82,14 +82,14 @@ An agent's success narrative is not a check result. A blocked check is not a pas
 
 Format: `type(scope): summary`. Group by coherent change, not by file-count quota.
 
-Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `build`, `ci`. Scope is the workspace or area touched: `contracts`, `core`, `transports`, `server`, `console`, `examples`, `repo`.
+Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `build`, `ci`. Scope is the workspace or area touched: `workspace`, `api`, `agent`, `repo`.
 
 Pull request titles use the same format with the issue appended: `type(scope): summary (#N)`. This repository squash-merges with the PR title as the commit subject.
 
 ```text
-feat(core): add delegation broker with append budget enforcement (#4)
-feat(transports): twilio media streams inbound bridge (#11)
-docs(repo): record remote handler streaming decision (#7)
+feat(workspace): add assistant editor with tool-list validation (#26)
+feat(api): issue and revoke API keys (#26)
+docs(repo): record Pipecat as the voice runtime (#23)
 ```
 
 Agents commit with the repository's configured Git identity. Do not change global Git identity or rewrite existing commits.

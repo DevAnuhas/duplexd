@@ -1,41 +1,67 @@
 # Current context
 
-> **Direction change, 2026-09-18.** [ADR 010](docs/decisions/010-pipecat-runtime.md) makes Pipecat the voice runtime and this project the platform on top of it: a workspace for assistants and API keys, a control API, and one data-driven Pipecat agent. The sections below describe the engine milestone that decision retired and are kept until the rewrite ticket replaces them. Where they disagree with ADR 010, ADR 010 wins.
-
 ## What duplexd is
 
-duplexd sits between a full-duplex speech model and whatever system actually does the work. The speech model listens and talks; it does not think. When it needs a fact, a tool, or a decision, it signals for help. duplexd receives that signal, gathers the transcript and session context, hands it to a consumer backend, and streams whatever comes back into the conversation as spoken or silent context. The caller hears a conversation that keeps moving while work happens behind it.
+A hosted voice-AI platform. A customer creates an assistant in a workspace — a voice, an accent and style, instructions, a list of tools in the OpenAI function format, and a server URL — mints an API key, and places calls against that assistant from any project. The caller talks to the assistant; when the assistant needs a fact or an action, the platform calls the customer's webhook and speaks the result back while the conversation keeps moving.
 
-The first supported model is OpenAI `gpt-live-1` in client-delegation mode. The design keeps the provider behind an interface so a second full-duplex model can be added without changing the consumer contract.
+The first customers are the user's own products, Boring Host and Dorian. They are waiting on this, and their backends expose tool webhooks and nothing else.
+
+**The voice model never receives tool definitions.** A backend text model, owned by the platform, holds the assistant's tools, picks one, and calls the customer's webhook. This is the rule the gate spike proved and [ADR 010](docs/decisions/010-pipecat-runtime.md) records; [ADR 001](docs/decisions/001-client-delegation.md) is where it was first decided and it still stands.
+
+[Pipecat](https://github.com/pipecat-ai/pipecat) is the voice runtime — a pinned dependency of the Python agent, never vendored or forked. It already ships the hard parts: async function calls that keep the conversation going, client delegation with a backend worker that owns the tools, telephony transports, and a hosted runtime. Building those from scratch was the previous milestone, and ADR 010 retired it.
 
 ## What it is not
 
-- Not a cascade. There is no speech-to-text, no separate reasoning model, no text-to-speech pipeline. Projects that need provider mixing already exist; this is not one of them.
-- Not an agent framework. duplexd never runs tools, holds prompts for reasoning, or keeps memory beyond the current call. The consumer backend does all of that.
-- Not a workflow builder or a dashboard product. The console exists to observe sessions and demonstrate the loop, not to configure agents.
-- Not a media server. Telephony reaches duplexd through partner transports or direct SIP; duplexd does not terminate RTP itself.
+- **Not a voice framework.** Pipecat is the framework. This is the platform on top of it: the records, the keys, the API, the call history.
+- **Not a cascade.** No speech-to-text, separate reasoning model, and text-to-speech pipeline. The voice model is full-duplex.
+- **Not a tool executor.** The platform never runs a customer's tool. It calls a webhook and relays what comes back. Permissions, confirmations, and business state live in the customer's backend.
+- **Not a media server.** Audio reaches the agent through Pipecat's transports. Telephony, when it lands, goes through Pipecat's supported carriers.
+- **Not billing.** Metering yes, invoicing no.
 
 ## Direction
 
-- **Contract first.** Every wire shape lives in `packages/contracts` and is exported as JSON Schema. A consumer in any language integrates against that schema. Two example handlers, one Node and one Python, must pass the same contract tests.
-- **Two integration forms, one contract.** In-process (a TypeScript handler passed to the core) for consumers that embed duplexd; remote (an HTTP endpoint the server calls per delegation, streaming results back) for consumers in other languages or other processes. The remote form is what makes duplexd usable as a hosted service.
-- **Transports in stages.** WebRTC for browser sessions first, because it demos locally with no telephony. Twilio Media Streams second, inbound and outbound. Direct SIP third. LiveKit only if concurrency or multi-party listening demands it.
-- **Library first, service second.** The core is a library. The server wraps it with API keys, session records, and transport endpoints. A hosted offering is the server deployed with per-key metering, and it is not the first milestone.
+- **The workspace is the product surface.** A human configuring an assistant is the point, not a side observation panel. This is the sharpest reversal from the retired milestone, which explicitly disclaimed being a dashboard product.
+- **Two toolchains, one repository.** TypeScript for the workspace and control API; Python with `uv` for the agent. `spikes/pipecat-gate/` already proves a `uv` project lives inside this repo with CI green.
+- **API keys get the security care.** Two auth systems exist and only one is load-bearing: humans logging in, which just needs to work, and API keys, which are what integrating projects actually hold. Keys are hashed, scoped, rotatable and revocable.
+- **Honest states over tidy ones.** A call that stopped reporting is recorded as incomplete, not as finished. Nothing claims a clean ending it did not observe.
 
-## Defaults versus open questions
+## Settled, in the tech plan
 
-Settled enough to build on: TypeScript with Node 24 and pnpm workspaces; Fastify for the server; PostgreSQL through Drizzle for session and call records; a Vite and React console; the OpenAI Node SDK for the provider connection; Fly.io as the hosting target.
+Decided on 2026-09-18 and not worth reopening without new information:
 
-Deliberately open, to be decided against current APIs and recorded in `docs/decisions/`: exact package versions, the streaming shape of the remote handler (SSE versus WebSocket), whether the console shares a process with the server in production, the LiveKit transport, and any second provider.
+| Decision | Choice |
+| --- | --- |
+| Repo shape | Keep this repo. Add `agent/` (Python, `uv`) and `apps/workspace` (Next.js). The dead TypeScript packages and specs are pruned. |
+| Where the control API lives | Next.js route handlers under `/v1`, in the workspace app, deployed as a Node server. |
+| Backend model | A per-assistant field, called through the **Responses API** — reasoning models reject function tools on chat completions. |
+| Waiting behaviour | A per-assistant field folded into the voice model's instructions. The platform injects no filler of its own. |
+| Workspace auth | Better Auth on the platform's own Postgres. Not load-bearing; API keys are. |
+| API keys | 32 bytes of CSPRNG, shown once, stored as prefix plus SHA-256, compared in constant time, revocable. |
+| Webhook secrets | The customer's own secret, encrypted at rest with AES-256-GCM, decrypted only when the agent fetches config. Never returned, never logged. |
+| Tool webhook auth | HMAC-SHA256 over `"<t>." + raw body`, 300 s tolerance, per-assistant secret. The scheme from ADR 008 survives its contract. |
+| Database | Postgres on Neon, Drizzle for schema and migrations. |
+| Concurrency | `min_agents = 0` at launch; cold start is measured, not paid for in advance. |
+
+## Still open
+
+- **Product naming.** "duplexd" named a delegation daemon that no longer exists. The name becomes load-bearing when the workspace UI ships, not before; GitHub renames redirect.
+- **Telephony.** Browser calls first. Telephony through Pipecat's supported carriers once browser calls work.
+- **A second voice provider.** Gemini stays a candidate ([ADR 009](docs/decisions/009-gemini-live-candidate-provider.md)); Pipecat's adapter makes it cheap later.
+- **Self-hosted agent regions.** Start on Pipecat Cloud; move if pricing or data residency demands it.
+- **Custom cloned voices.** Gated by the provider; accent is by instruction until then.
 
 Verify a candidate against a real compatibility check before committing to it. Do not silently swap an architectural choice without an ADR.
 
 ## Scope boundaries
 
-A mock booking backend is the representative sample handler, not a chosen market. Any implementation must work for a second, contrasting handler without a separate hardcoded path.
+One assistant, one account, browser calls only in the first milestone. Multi-user accounts, live call watching, and a second provider are deliberately deferred so the first acceptance run stays reachable.
 
-Provider region placement, outbound calling compliance, recording retention, and custom voices are unresolved. Do not imply the product handles regulatory obligations for outbound calls; that stays with the consumer.
+Recording retention, outbound calling compliance, and provider region placement are unresolved. Do not imply the platform handles a customer's regulatory obligations; that stays with the customer.
 
 ## Status
 
-The engine milestone stopped at T02 (`packages/contracts` merged, `packages/core` a placeholder). The Pipecat gate spike under `spikes/pipecat-gate/` passed on 2026-09-18 and ADR 010 records the new direction. The executable pnpm/Turborepo workspace scaffold and CI exist. Six TypeScript package placeholders build, lint, typecheck, and run smoke tests; Docker Compose defines local PostgreSQL. There is still no application behavior or deployment. The current build target and its acceptance evidence are in [the milestone](docs/MILESTONE.md).
+The engine milestone is retired. Its packages, specs, and wire-contract documentation have been removed from the tree — `docs/decisions/` keeps every superseded ADR, and git history keeps the code.
+
+What exists at this commit: the documentation and decision trail, the CI workflow with its path classifier, and `spikes/pipecat-gate/` — the passing gate, kept as the regression test for a future Pipecat upgrade rather than as dead weight.
+
+**No platform code exists yet.** There is no workspace, no schema, no control API, no agent. The current build target and its acceptance evidence are in [the milestone](docs/MILESTONE.md).

@@ -4,25 +4,25 @@ Hosting and environments. Nothing here is deployed; this records the intended sh
 
 ## Local
 
-Everything in milestone 1 runs on one machine: the server, the console, a Postgres container, and an example handler. Only `OPENAI_API_KEY` is external. WebRTC from a local browser to the provider needs no tunnel.
+The workspace app and its database are what runs locally; the agent runs against Pipecat Cloud rather than on the developer's machine. Nothing runs locally at this commit — P02 adds the first thing that does.
 
-Telephony transports, when they exist, need the server reachable from the internet for webhooks and media streams. Use `ngrok` or `cloudflared` for development. Do not commit tunnel URLs.
+Tool webhooks are called from the agent, not from the developer's machine, so a locally developed webhook needs to be reachable from the internet. Use `ngrok` or `cloudflared`. Do not commit tunnel URLs.
 
 ## Hosted
 
-**Server: Fly.io.** Chosen because sessions are long-lived WebSocket and WebRTC signaling connections lasting minutes, which serverless platforms cannot hold; because a Dockerfile deploy is simple; because regions include the EU, which matters when a consumer or the provider requires EU data residency; and because idle cost is low. Sessions are pinned to the instance holding the provider connection, so scale by adding machines, not by moving sessions.
+**Workspace and control API: Fly.io.** A Node server rather than serverless, because the control API keeps live event streaming available later without a rewrite, because a Dockerfile deploy is simple, because regions include the EU for data residency, and because idle cost is low. [ADR 005](decisions/005-fly-hosting.md) is superseded as written — it chose Fly for the retired engine's server — but its choice survives for the app that replaces it.
 
-**Database: Neon.** Same Postgres, same Drizzle migrations as local. Branch per preview if useful.
+**Agent: Pipecat Cloud.** The agent image is built and deployed by `pipecat cloud deploy`, with the provider key and the platform token held in a Pipecat Cloud secret set. `min_agents = 0` at launch, with `max_agents` set as a cost guard; cold start is measured on a real call rather than paid for in advance. Self-hosted regions are available if pricing or data residency demands them.
 
-**Console:** static build served by the same Fly app in milestone 1. Splitting it to Vercel or a CDN is a later choice and an ADR.
+**Database: Neon.** Postgres with Drizzle migrations. Branch per preview if useful.
 
-**Secrets:** Fly secrets for the provider key and database URL. Never in the image, never in the repo.
+**Secrets:** Fly secrets for the database URL and the encryption key that protects customers' webhook secrets at rest. Pipecat Cloud secrets for the provider key. Never in an image, never in the repository.
 
 ## Environments
 
 | Environment | Source | Purpose |
 | --- | --- | --- |
-| Preview | Each pull request, when CI exists | Ephemeral, synthetic handlers, no real telephony |
+| Preview | Each pull request, when CI exists | Ephemeral, synthetic tool webhooks, no real telephony |
 | Staging | `main` | Shared verification with real provider access and test numbers |
 | Production | Tagged release | Human approval required |
 
@@ -34,4 +34,4 @@ Twilio numbers, SIP trunks, and the provider's SIP enablement are paid or extern
 
 ## Observability
 
-Session id from the provider is the join key across duplexd records, provider support, and any telephony provider's call id. Log it on every session event. Never log audio, transcripts in full, or API keys.
+The platform's own `call_id` is the join key across call records, agent logs, Pipecat Cloud sessions, and any telephony provider's call id. Log it on every call event. Never log audio, transcripts in full, API keys, or a customer's webhook secret.
