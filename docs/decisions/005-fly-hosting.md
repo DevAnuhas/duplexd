@@ -1,6 +1,6 @@
 # 005: Fly.io for the server
 
-Status: accepted
+Status: superseded by 010
 Date: 2026-09-15
 
 ## Context

@@ -39,11 +39,12 @@ Supersede rather than edit: mark the old record superseded and write a new one.
 ## Index
 
 - [001: Client delegation, not Responses delegation](001-client-delegation.md) — accepted
-- [002: Own the telephony bridges](002-own-telephony-bridges.md) — accepted
-- [003: One contract, two integration forms](003-contract-two-forms.md) — accepted
-- [004: TypeScript core with a language-neutral wire contract](004-typescript-core.md) — accepted
-- [005: Fly.io for the server](005-fly-hosting.md) — accepted
-- [006: Remote handler results stream as newline-delimited JSON](006-remote-handler-ndjson.md) — accepted
-- [007: Handler timeout is one total budget, default 30 seconds](007-handler-timeout-default.md) — accepted
-- [008: Remote handler requests are HMAC-signed with a consumer-supplied secret](008-handler-request-signing.md) — accepted
+- [002: Own the telephony bridges](002-own-telephony-bridges.md) — superseded by 010
+- [003: One contract, two integration forms](003-contract-two-forms.md) — superseded by 010
+- [004: TypeScript core with a language-neutral wire contract](004-typescript-core.md) — superseded by 010
+- [005: Fly.io for the server](005-fly-hosting.md) — superseded by 010
+- [006: Remote handler results stream as newline-delimited JSON](006-remote-handler-ndjson.md) — superseded by 010
+- [007: Handler timeout is one total budget, default 30 seconds](007-handler-timeout-default.md) — superseded by 010
+- [008: Remote handler requests are HMAC-signed with a consumer-supplied secret](008-handler-request-signing.md) — superseded by 010
 - [009: Gemini 3.8 Live is the candidate second provider; provider limits live in adapters](009-gemini-live-candidate-provider.md) — proposed
+- [010: Pipecat is the voice runtime; this project is the platform on top of it](010-pipecat-runtime.md) — accepted

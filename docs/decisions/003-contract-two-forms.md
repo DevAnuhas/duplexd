@@ -1,6 +1,6 @@
 # 003: One contract, two integration forms
 
-Status: accepted
+Status: superseded by 010
 Date: 2026-09-15
 
 ## Context

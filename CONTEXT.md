@@ -1,5 +1,7 @@
 # Current context
 
+> **Direction change, 2026-09-18.** [ADR 010](docs/decisions/010-pipecat-runtime.md) makes Pipecat the voice runtime and this project the platform on top of it: a workspace for assistants and API keys, a control API, and one data-driven Pipecat agent. The sections below describe the engine milestone that decision retired and are kept until the rewrite ticket replaces them. Where they disagree with ADR 010, ADR 010 wins.
+
 ## What duplexd is
 
 duplexd sits between a full-duplex speech model and whatever system actually does the work. The speech model listens and talks; it does not think. When it needs a fact, a tool, or a decision, it signals for help. duplexd receives that signal, gathers the transcript and session context, hands it to a consumer backend, and streams whatever comes back into the conversation as spoken or silent context. The caller hears a conversation that keeps moving while work happens behind it.
@@ -36,4 +38,4 @@ Provider region placement, outbound calling compliance, recording retention, and
 
 ## Status
 
-The executable pnpm/Turborepo workspace scaffold and CI now exist. Six TypeScript package placeholders build, lint, typecheck, and run smoke tests; Docker Compose defines local PostgreSQL. There is still no application behavior or deployment. The current build target and its acceptance evidence are in [the milestone](docs/MILESTONE.md).
+The engine milestone stopped at T02 (`packages/contracts` merged, `packages/core` a placeholder). The Pipecat gate spike under `spikes/pipecat-gate/` passed on 2026-09-18 and ADR 010 records the new direction. The executable pnpm/Turborepo workspace scaffold and CI exist. Six TypeScript package placeholders build, lint, typecheck, and run smoke tests; Docker Compose defines local PostgreSQL. There is still no application behavior or deployment. The current build target and its acceptance evidence are in [the milestone](docs/MILESTONE.md).

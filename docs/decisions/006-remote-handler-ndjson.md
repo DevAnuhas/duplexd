@@ -1,6 +1,6 @@
 # 006: Remote handler results stream as newline-delimited JSON
 
-Status: accepted
+Status: superseded by 010
 Date: 2026-09-16
 
 ## Context

@@ -1,6 +1,6 @@
 # 004: TypeScript core with a language-neutral wire contract
 
-Status: accepted
+Status: superseded by 010
 Date: 2026-09-15
 
 ## Context
