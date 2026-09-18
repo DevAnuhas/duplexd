@@ -74,7 +74,9 @@ jobs:
           DATABASE_URL: postgres://duplexd:duplexd@127.0.0.1:5432/duplexd_test
           BETTER_AUTH_SECRET: ci-not-a-real-secret
           BETTER_AUTH_URL: http://localhost:3000
-          ASSISTANT_SECRET_KEY: 0000000000000000000000000000000000000000000000000000000000000001
+          # Quoted: unquoted, YAML reads a digits-only value as an integer,
+          # so this arrives as the string "1" and the key guard rejects it.
+          ASSISTANT_SECRET_KEY: '0000000000000000000000000000000000000000000000000000000000000001'
         run: pnpm test
       # Deliberately no database environment: the production image must build
       # without one, so the build step proves it on every pull request rather
