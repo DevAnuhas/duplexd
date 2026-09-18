@@ -14,3 +14,5 @@ coverage/
 spikes/**/.venv/
 spikes/**/evidence/
 spikes/**/__pycache__/
+.next/
+next-env.d.ts

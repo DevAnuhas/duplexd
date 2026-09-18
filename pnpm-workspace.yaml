@@ -1,3 +1,12 @@
+packages:
+  - apps/*
+
+# esbuild ships prebuilt binaries and its postinstall script places them.
+# Recorded here so a frozen install in CI is deterministic rather than
+# depending on an interactive approval prompt.
+allowBuilds:
+  esbuild: true
+
 minimumReleaseAgeExclude:
   - '@types/node@24.13.5'
   - vitest@5.0.1
