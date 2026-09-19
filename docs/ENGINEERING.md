@@ -90,6 +90,26 @@ pnpm --filter workspace start                  # runs .next/standalone/apps/work
 
 *The Python agent lands in P04: `uv run --directory agent bot`.*
 
+### The assistant's webhook secret, and what the database layer will not log
+
+The secret a customer gives an assistant is theirs, held on the platform's
+behalf. It is encrypted with AES-256-GCM before it reaches an insert, and the
+read paths return a **boolean** saying whether one is set rather than the value
+— so nothing that renders a page could leak it even by accident.
+
+One consequence is less obvious and worth knowing before adding a query.
+Drizzle builds a failed query's error as `Failed query: <sql>` followed by
+`params: <bound values>`, which puts every parameter into whatever catches it.
+`src/db/redact.ts` wraps the client `getDb()` returns and strips those values
+from both `.message` and `.stack` — `.stack` because V8 caches it once
+formatted and it is the field loggers actually print.
+
+It sits on the client rather than on each call site deliberately: Better Auth's
+adapter receives the same client and runs its own queries through it, and could
+never opt into a per-call-site wrapper. **If you add a database call, you
+inherit this for free; if you add a second client, you do not.** See
+[#33](https://github.com/DevAnuhas/duplexd/issues/33).
+
 ## CI
 
 `.github/workflows/ci.yml` always starts for pull requests and pushes to `main`. Its `changes` job runs the repository's merge-base-aware path classifier. Code changes run frozen install, lint, typecheck, test, and build in `checks`; documentation-only changes run `pnpm lint:links` in `docs`. The unselected job reports skipped rather than disappearing, so later branch protection can require the stable check names recorded in [WORKFLOW.md](WORKFLOW.md).
