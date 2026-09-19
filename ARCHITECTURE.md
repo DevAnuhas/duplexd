@@ -99,7 +99,7 @@ Four parties, and the whole design is about keeping authority where it belongs.
 
 ## Persistence
 
-*Planned; the schema lands in P02.*
+*The schema exists and is applied by committed migrations. The tables below are real; the code that reads most of them is not written yet.*
 
 Postgres on Neon, through Drizzle, with migrations generated and committed. Everything is owned by an account; there is no global object. The tables are accounts and users, API keys, assistants, calls, and call events.
 

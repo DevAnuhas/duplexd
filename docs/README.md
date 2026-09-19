@@ -18,4 +18,4 @@ Start with `AGENTS.md`, then `CONTEXT.md` and `MILESTONE.md`. Read the rest when
 
 One authority per concern: product scope in `CONTEXT.md`, boundaries in `ARCHITECTURE.md`, decisions in `decisions/`, procedures in `WORKFLOW.md` and `ENGINEERING.md`, current behavior in code and tests.
 
-Implementation status: no platform code exists yet. What is in the repository is documentation, the decision trail, the CI workflow and its path classifier, and the passing Pipecat gate at `spikes/pipecat-gate/`. The workspace app is the next ticket.
+Implementation status: `apps/workspace` exists — a Next.js app with authentication and the full Drizzle schema. Assistants and API keys are the next ticket; the control API and agent come after. Also in the repository: the decision trail, the CI workflow and its path classifier, and the passing Pipecat gate at `spikes/pipecat-gate/`. Nothing is deployed.

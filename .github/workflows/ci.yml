@@ -35,6 +35,24 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
+    # The database-backed tests — cross-account isolation, migrate-from-empty,
+    # and encryption at rest — must RUN here, not skip. This job is the only
+    # thing gating a merge, so a suite that skips them without a connection
+    # string would leave those invariants unenforced while reporting green.
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: duplexd_test
+          POSTGRES_PASSWORD: duplexd
+          POSTGRES_USER: duplexd
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U duplexd -d duplexd_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Check out repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -52,7 +70,17 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
       - name: Test
+        env:
+          DATABASE_URL: postgres://duplexd:duplexd@127.0.0.1:5432/duplexd_test
+          BETTER_AUTH_SECRET: ci-not-a-real-secret
+          BETTER_AUTH_URL: http://localhost:3000
+          # Quoted: unquoted, YAML reads a digits-only value as an integer,
+          # so this arrives as the string "1" and the key guard rejects it.
+          ASSISTANT_SECRET_KEY: '0000000000000000000000000000000000000000000000000000000000000001'
         run: pnpm test
+      # Deliberately no database environment: the production image must build
+      # without one, so the build step proves it on every pull request rather
+      # than only when someone remembers to check.
       - name: Build
         run: pnpm build
 

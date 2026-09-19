@@ -5,11 +5,17 @@
   "type": "module",
   "packageManager": "pnpm@12.4.2+sha512.08adc6613180275c7c9edada39dcf08c9c61ad4e7eaf330a4f3461f102b0f907423454d117f98e72d47fef0616070644d7bffc973a6a57f5090a6d7c368b07c9",
   "scripts": {
-    "build": "node -e \"console.log('Nothing to build at this commit. The workspace app lands in P02 (#25).')\"",
-    "lint": "bash -n scripts/classify-docs-only.sh && eslint --max-warnings=0 eslint.config.js vitest.config.ts tests",
-    "lint:links": "find . -type f -name '*.md' -not -path './.git/*' -not -path './node_modules/*' -print0 | xargs -0 markdown-link-check --quiet --config .markdown-link-check.json",
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "build": "pnpm --filter workspace build",
+    "db:generate": "pnpm --filter workspace db:generate",
+    "db:migrate": "pnpm --filter workspace db:migrate",
+    "dev": "pnpm --filter workspace dev",
+    "lint": "pnpm run lint:root && pnpm --filter workspace lint",
+    "lint:links": "find . -type f -name '*.md' -not -path './.git/*' -not -path './node_modules/*' -not -path './**/node_modules/*' -not -path './**/.next/*' -print0 | xargs -0 markdown-link-check --quiet --config .markdown-link-check.json",
+    "lint:root": "bash -n scripts/classify-docs-only.sh && eslint --max-warnings=0 eslint.config.js vitest.config.ts tests",
+    "test": "pnpm run test:root && pnpm --filter workspace test",
+    "test:root": "vitest run",
+    "typecheck": "pnpm run typecheck:root && pnpm --filter workspace typecheck",
+    "typecheck:root": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

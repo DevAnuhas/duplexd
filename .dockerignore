@@ -1,0 +1,25 @@
+# Keep the build context minimal, and keep secrets out of it entirely.
+#
+# The build stage copies the repository, so anything matched here never
+# reaches the builder or its cache. `.env*` is first because a local
+# connection string must never be baked into an image layer.
+.env
+.env.*
+!.env.example
+
+node_modules
+**/node_modules
+.next
+**/.next
+.git
+.github
+coverage
+**/coverage
+*.log
+.DS_Store
+
+# Not needed to build or run the app.
+docs
+spikes
+tests
+**/test

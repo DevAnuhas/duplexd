@@ -34,7 +34,7 @@ Three parts:
 
 Direction is settled and recorded in [ADR 010](docs/decisions/010-pipecat-runtime.md): Pipecat is the voice runtime, pinned as a dependency and never forked, and this project is the platform on top of it. A gate spike proved the loop end to end — a real call, a real webhook, honest results and honest failures — and it is kept at [`spikes/pipecat-gate/`](spikes/pipecat-gate/) as the regression test for a future Pipecat upgrade.
 
-**No platform code exists yet.** The workspace and its schema are the next ticket. What is in the repository today is the documentation, the decision trail, the CI workflow, and that spike.
+**The workspace app exists and runs.** `apps/workspace` is a Next.js app with sign-up, sign-in and an authenticated shell, backed by Postgres through Drizzle with the full schema applied. There is no assistant or API-key interface yet — that is the next ticket — and no call has ever been placed, because the agent runtime and control API come after it. Nothing is deployed.
 
 An earlier milestone built a delegation engine from scratch — a TypeScript core, a wire contract, transports. ADR 010 retired it, and it has been removed. The ADRs that decided it are kept, superseded rather than deleted, because why a direction was abandoned is worth as much as why it was chosen.
 
