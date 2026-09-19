@@ -190,12 +190,20 @@ The `checks` job runs a PostgreSQL 18 service container and sets `DATABASE_URL` 
 
 `.env.example` lists every variable the app reads and nothing else. Copy it to `.env.local`, which is gitignored.
 
-**The server exits if any of them is missing, naming the one it wants, before it binds the port.** That check lives in `src/instrumentation.ts`, which Next runs when the server boots and not during `next build`, so the image still builds with nothing set. Validating at first use instead would be too late in the way that matters: `ASSISTANT_SECRET_KEY` is only read when an assistant's webhook secret is encrypted, so a deploy missing it would boot green, serve every page, and fail on the first customer who saves a secret. It exits rather than merely throwing: Next catches a throw from that hook, and the process would stay alive holding the port and answering 500s — which anything watching the port reads as a healthy machine serving nothing. Nothing is ever defaulted — a defaulted database URL connects somewhere unintended, and a defaulted encryption key is the same as no encryption.
+**Four of them are required, and the server exits if any is missing, naming the one it wants, before it binds the port.** That check lives in `src/instrumentation.ts`, which Next runs when the server boots and not during `next build`, so the image still builds with nothing set. Validating at first use instead would be too late in the way that matters: `ASSISTANT_SECRET_KEY` is only read when an assistant's webhook secret is encrypted, so a deploy missing it would boot green, serve every page, and fail on the first customer who saves a secret. It exits rather than merely throwing: Next catches a throw from that hook, and the process would stay alive holding the port and answering 500s — which anything watching the port reads as a healthy machine serving nothing. Nothing is ever defaulted — a defaulted database URL connects somewhere unintended, and a defaulted encryption key is the same as no encryption.
 
 - `DATABASE_URL` — PostgreSQL connection string
 - `BETTER_AUTH_SECRET` — session signing secret
 - `BETTER_AUTH_URL` — the public origin the app is served from
 - `ASSISTANT_SECRET_KEY` — 32 bytes hex, encrypts assistants' webhook secrets at rest
+
+One more is **optional**, and it is the one an operator can set wrongly:
+
+- `ALLOW_LOOPBACK_SERVER_URL` — set to the literal `true` to let an assistant's server URL point at loopback (`http://localhost`, `127.0.0.1`, `[::1]`) for local development.
+
+It must **not** join the list above, and the server must not exit without it: unset means off, which is the safe behaviour. That is why the exit check covers four variables and not five, and a test asserts the absent-safety rather than describing it — with the flag unset or empty, a loopback URL is refused.
+
+**Setting it in a hosted environment opens the private-network exception in production.** A webhook is called from the platform's own network, so a loopback target there is not the customer's service but ours. See [OPERATIONS.md](OPERATIONS.md#webhook-targets) for what the rule protects.
 
 Never commit values.
 

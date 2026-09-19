@@ -13,8 +13,14 @@ import Ajv from 'ajv';
 /**
  * Where a webhook may point.
  *
- * Reproduced byte-for-byte from the retired contracts package, recoverable at
- * `67e48c3^:packages/contracts/src/constants.ts`. It was adversarially
+ * Reproduced byte-for-byte from the constants module of the retired contracts
+ * package, recoverable at commit `67e48c3^` —
+ * `git ls-tree -r 67e48c3^ --name-only | grep constants` names the file, and
+ * `git show` on that path prints it. The commit is cited rather than the old
+ * path written out, because the path no longer exists and spelling it here is
+ * indistinguishable from a live reference to a directory this repository
+ * deleted. (`--stat` does *not* find it: that lists what the commit changed,
+ * not what its tree holds.) It was adversarially
  * reviewed there, and it is reused rather than rewritten because the ways a
  * loopback check fails open are not obvious: `localhost.evil.example` and
  * `127.0.0.1.nip.io` both resolve to attacker-controlled hosts while reading

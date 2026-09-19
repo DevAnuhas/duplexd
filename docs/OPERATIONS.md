@@ -34,6 +34,16 @@ All four are required and none is defaulted. The server exits at boot naming any
 
 Preview environments never hold production keys or real phone numbers.
 
+## Webhook targets
+
+**An assistant's server URL is rejected at save if it points inside a private network.** The webhook is called by the platform, from the platform's network, so a private, loopback or link-local target is not the customer's service — it is ours, reached with our credentials from inside our perimeter. `169.254.169.254` is the cloud instance metadata endpoint on every major provider, and reaching it from a server-side fetch is how credentials walk out of a deployment.
+
+Refused: `127.0.0.0/8`, `10/8`, `172.16/12`, `192.168/16`, `169.254/16`, `0/8`, and for IPv6 `::1`, `::`, `fc00::/7` and `fe80::/10`. An IPv4 address wearing an IPv6 spelling — IPv4-mapped, NAT64 or 6to4 — is unwrapped first and judged by the address it carries, not the notation.
+
+**`ALLOW_LOOPBACK_SERVER_URL` is the one knob that opens this, and it must never be set in a hosted environment.** Set to the literal `true`, it permits loopback targets for local development. It is off unless set, and a deployment that sets nothing refuses them — a default-on development exception is a production hole waiting for someone to not set the variable, and it fails silently, looking like working software.
+
+This check covers **literal addresses only and performs no DNS**. A hostname that resolves to a private address is not caught here, deliberately: a save-time lookup stops no attacker, because anyone aiming the platform's egress at internal infrastructure controls their own record and can point it public for the save and private a minute later. The defence that works is at egress — resolve, refuse non-globally-routable addresses, and pin the connection to the address that was checked — and it lives with the agent runtime. This is the earlier, cheaper half, not a substitute.
+
 ## Telephony provisioning
 
 Twilio numbers, SIP trunks, and the provider's SIP enablement are paid or externally gated. Provisioning them is an authorized human step, recorded in the relevant issue. Test numbers stay in staging.
