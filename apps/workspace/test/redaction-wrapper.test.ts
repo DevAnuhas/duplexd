@@ -380,3 +380,100 @@ describe('a frozen error', () => {
     expect(redactQueryParams(error)).toBe(error);
   });
 });
+
+/**
+ * **The sweep must not destroy the error it is cleaning.**
+ *
+ * Stated as a property rather than inferred from a canary, because absence is
+ * the one thing a leak check cannot distinguish: "the canary is not in the
+ * message" is satisfied by a redacted message *and* by a message that has been
+ * replaced with the literal string `[redacted]`, and the second is how a
+ * database error stops naming the table, the columns, or the call site.
+ *
+ * That is not hypothetical. Switching the own-property sweep from
+ * `Object.keys` to `Reflect.ownKeys` — to catch symbol keys, which was correct
+ * — also caught `message` and `stack`, because they are own **non-enumerable**
+ * properties on every `Error` and `Object.keys` had been skipping them for
+ * free. Both became `[redacted]` in full, and every leak assertion in the
+ * suite still passed.
+ *
+ * These are unit-level and need no database, so they fire the moment such a
+ * line is written rather than after a database-backed file gets that far.
+ */
+describe('what the redaction must leave intact', () => {
+  /** Shaped like a `DrizzleQueryError`: query text, bound params, a cause. */
+  function queryError() {
+    const error = new Error(
+      'Failed query: select "id" from "widgets" where "name" = $1\nparams: secret-value',
+      { cause: new Error('duplicate key value violates unique constraint') },
+    ) as Error & { query?: string; params?: unknown[] };
+
+    error.query = 'select "id" from "widgets" where "name" = $1';
+    error.params = ['secret-value'];
+
+    return error;
+  }
+
+  it('keeps the query text in the message', () => {
+    const redacted = redactQueryParams(queryError()) as Error;
+
+    expect(redacted.message).toContain('widgets');
+    expect(redacted.message).toContain('select');
+    expect(redacted.message).not.toBe('[redacted]');
+  });
+
+  it('keeps the stack’s frames and its header', () => {
+    const redacted = redactQueryParams(queryError()) as Error;
+    const stack = String(redacted.stack);
+
+    expect(stack, 'the stack was replaced wholesale').not.toBe('[redacted]');
+    expect(stack).toContain('widgets');
+    expect(stack, 'the stack has no frames left').toMatch(/\n\s+at /);
+  });
+
+  it('still removes the bound values from both', () => {
+    const redacted = redactQueryParams(queryError()) as Error;
+
+    expect(redacted.message).not.toContain('secret-value');
+    expect(String(redacted.stack)).not.toContain('secret-value');
+    expect(
+      (redacted as Error & { params?: unknown }).params,
+      'the params property kept its values',
+    ).toBe('[redacted]');
+  });
+
+  it('keeps the query property, which carries placeholders and no values', () => {
+    const redacted = redactQueryParams(queryError()) as Error & { query?: string };
+
+    expect(redacted.query).toContain('widgets');
+    expect(redacted.query).not.toBe('[redacted]');
+  });
+
+  /**
+   * The same property one level down. `cause` is recursed into rather than
+   * blanked, so a sweep that flattened it would lose why the query failed
+   * while still reporting no leak.
+   */
+  it('keeps the cause’s own message', () => {
+    const redacted = redactQueryParams(queryError()) as Error;
+    const cause = redacted.cause as Error;
+
+    expect(cause).toBeInstanceOf(Error);
+    expect(cause.message).toContain('unique constraint');
+    expect(cause.message).not.toBe('[redacted]');
+  });
+
+  /**
+   * An error with no parameters at all must come back untouched. A sweep that
+   * rewrote every error it saw would corrupt failures that never carried a
+   * value — a connection refusal, a timeout — and those are the ones read at
+   * three in the morning.
+   */
+  it('leaves an error that never carried parameters alone', () => {
+    const plain = new Error('connect ECONNREFUSED 127.0.0.1:5432');
+    const redacted = redactQueryParams(plain) as Error;
+
+    expect(redacted.message).toBe('connect ECONNREFUSED 127.0.0.1:5432');
+    expect(String(redacted.stack)).toMatch(/\n\s+at /);
+  });
+});
