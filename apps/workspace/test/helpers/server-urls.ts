@@ -56,8 +56,43 @@ export const REJECTED_SERVER_URLS: readonly UrlCase[] = [
  * The contract requires at least seventeen cases; the count is asserted rather
  * than trusted, because a matrix silently shrinking to its easy cases is
  * exactly the failure a hand-maintained list invites.
+ *
+ * **Port cases are deliberately not in here.** Every case above is decided by
+ * `SERVER_URL_PATTERN` alone, which is what lets one test assert that the
+ * pattern and `validateServerUrl` agree on all of them — the check that the
+ * recovered regex is the thing actually in use. Ports are decided by a
+ * *second* gate that the pattern knows nothing about, so the validator is
+ * strictly stronger than the pattern there and the equivalence deliberately
+ * does not hold. Folding them in would break that test for a reason that has
+ * nothing to do with what it is testing.
  */
 export const SERVER_URL_MATRIX: readonly (UrlCase & { accepted: boolean })[] = [
   ...ACCEPTED_SERVER_URLS.map((entry) => ({ ...entry, accepted: true })),
   ...REJECTED_SERVER_URLS.map((entry) => ({ ...entry, accepted: false })),
 ];
+
+/**
+ * Ports, judged by the second gate rather than by the pattern.
+ *
+ * `(?::[0-9]+)?` accepts any run of digits, so the pattern says yes to
+ * `:65536` and `:99999` — strings `new URL` refuses to parse at all, which
+ * means the customer would have saved a webhook the runtime cannot even
+ * construct and found out with a caller on the line. Port `0` is the
+ * subtler one: it parses cleanly and means "any free port" to something
+ * binding a socket, so it is never a destination.
+ */
+export const REJECTED_PORTS: readonly UrlCase[] = [
+  { label: 'one past the maximum port', url: 'http://127.0.0.1:65536/hook' },
+  { label: 'a wildly out-of-range port', url: 'https://example.invalid:99999/hook' },
+  { label: 'port zero, which parses but is not a destination', url: 'https://example.invalid:0/hook' },
+  { label: 'port zero on loopback', url: 'http://localhost:0/hook' },
+] as const;
+
+/** Ports that are genuine destinations and must keep saving. */
+export const ACCEPTED_PORTS: readonly UrlCase[] = [
+  { label: 'a common TLS port', url: 'https://example.invalid:8443/hook' },
+  { label: 'a common development port', url: 'http://localhost:3000/hook' },
+  { label: 'the lowest usable port', url: 'https://example.invalid:1/hook' },
+  { label: 'the highest usable port', url: 'https://example.invalid:65535/hook' },
+  { label: 'no port at all', url: 'https://example.invalid/hook' },
+] as const;

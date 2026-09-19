@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closeDb, getDb } from '@/db/client';
 import { createAssistant } from '@/data/assistants';
 import { withRedactedQueryErrors } from '@/db/redact';
+import * as schema from '@/db/schema';
 import { assistants } from '@/db/schema';
 
 import { openTestPool, withTestPool } from './helpers/database.ts';
@@ -103,6 +104,23 @@ function errorText(error: unknown): string {
  */
 function stackFrames(error: unknown): number {
   return (String((error as Error)?.stack ?? '').match(/\n\s+at /g) ?? []).length;
+}
+
+/** One diagnostic field, from the error or anywhere in its `cause` chain. */
+function diagnostic(error: unknown, field: string): unknown {
+  let current: unknown = error;
+
+  for (let depth = 0; depth < 10 && current instanceof Error; depth += 1) {
+    const value = (current as unknown as Record<string, unknown>)[field];
+
+    if (value !== undefined) {
+      return value;
+    }
+
+    current = current.cause;
+  }
+
+  return undefined;
 }
 
 /** Runs `body`, returning the error it threw. Fails loudly if it did not throw. */
@@ -415,6 +433,72 @@ describeDatabase('every route into the client is redacted', () => {
   });
 
   /**
+   * The control for the three route tests below, and it was missing.
+   *
+   * Each of those asserts a canary is *absent* after a failure on its route.
+   * Absence passes for two reasons: the redaction worked, or the route never
+   * carried the canary in the first place — because Drizzle changed what its
+   * relational errors contain, or because the query stopped failing the way it
+   * used to. Without this, all three would go quietly green on the day the
+   * thing they guard stopped being reachable, which is the same defect the
+   * `leaks its bound parameters through an unwrapped client` control was
+   * written to prevent for the insert path.
+   *
+   * So: the identical failures through an **unwrapped** client must leak.
+   */
+  it('leaks through all three routes when the client is not wrapped', async () => {
+    const canary = `canary-unwrapped-routes-${randomUUID()}`;
+
+    await withTestPool(async (pool) => {
+      const bare = drizzle(pool, { schema });
+
+      const relational = await captureFailure(() =>
+        bare.query.calls.findFirst({
+          where: (table, { and, eq }) =>
+            and(
+              eq(table.id, canary),
+              eq(table.durationSecs, 'not-an-integer' as unknown as number),
+            ),
+        }),
+      );
+
+      const viaCatch = await bare
+        .insert(assistants)
+        .values({
+          id: randomUUID(),
+          accountId: 'no-such-account-forcing-a-constraint-failure',
+          name: canary,
+        })
+        .catch((error: unknown) => error);
+
+      const viaFinally = await captureFailure(() =>
+        bare
+          .insert(assistants)
+          .values({
+            id: randomUUID(),
+            accountId: 'no-such-account-forcing-a-constraint-failure',
+            name: canary,
+          })
+          .finally(() => undefined),
+      );
+
+      expect(
+        errorText(relational),
+        'an unwrapped relational query no longer carries its parameters, so the ' +
+          'db.query test below has stopped proving anything',
+      ).toContain(canary);
+      expect(
+        errorText(viaCatch),
+        'an unwrapped .catch() no longer carries its parameters',
+      ).toContain(canary);
+      expect(
+        errorText(viaFinally),
+        'an unwrapped .finally() no longer carries its parameters',
+      ).toContain(canary);
+    });
+  });
+
+  /**
    * A relational read, failed on a bad integer cast while the canary rides
    * along as a second bound parameter.
    *
@@ -443,6 +527,28 @@ describeDatabase('every route into the client is redacted', () => {
       errorText(failure),
       'db.query routed around the redaction — it is a property, not a method',
     ).not.toContain(canary);
+  });
+
+  /**
+   * Identity on the **real** client, not a toy object.
+   *
+   * `test/redaction-wrapper.test.ts` pins the property in general; this pins it
+   * on the thing that actually broke. `getDb()` returns a memoised client, so
+   * these are repeated reads through the same proxy — exactly the shape that
+   * produced five distinct objects before the wrappers were memoised, and
+   * exactly what Drizzle and Better Auth rely on when they key schema and
+   * table objects by identity.
+   */
+  it('returns a stable reference for db.query on the real client', () => {
+    const db = getDb();
+
+    expect(db.query).toBe(db.query);
+    expect(db.query.assistants).toBe(db.query.assistants);
+
+    const registry = new WeakMap<object, string>();
+    registry.set(db.query, 'registered');
+
+    expect(registry.get(db.query)).toBe('registered');
   });
 
   it('redacts a failure consumed with .catch()', async () => {
@@ -526,5 +632,100 @@ describeDatabase('every route into the client is redacted', () => {
       'the finally callback did not run on failure — cleanup is skipped on ' +
         'exactly the path it exists for',
     ).toBe(true);
+  });
+});
+
+/**
+ * pg's structural diagnostics survive; the field that echoes a value does not.
+ *
+ * The allowlist blanks everything it does not name, which is the right default
+ * — a future library version attaching a value-bearing property is covered
+ * without anybody noticing it appeared. But it went too far once: it kept
+ * `query` because "it names tables and columns" while blanking the field
+ * literally called `table`, so a unique violation arrived as
+ * `code="[redacted]" constraint="[redacted]" table="[redacted]"` and was
+ * undiagnosable.
+ *
+ * `detail` is the counter-example that makes the rule real rather than a
+ * preference: pg builds it as `Key (prefix)=(dk_live_605b21) already exists.`,
+ * so it **echoes the value** and has to go even though it reads like a
+ * diagnostic. Keeping `code` and dropping `detail` is the whole distinction
+ * between structure and content, and this test is what stops someone
+ * "simplifying" the allowlist back in either direction.
+ */
+describeDatabase('a unique violation', () => {
+  let failure: unknown;
+  const prefix = `dk_live_${randomUUID().replaceAll('-', '').slice(0, 6)}`;
+
+  beforeAll(async () => {
+    const accountId = randomUUID();
+
+    await withTestPool(async (pool) => {
+      await pool.query('INSERT INTO accounts (id, name) VALUES ($1, $2)', [
+        accountId,
+        'diagnostics probe',
+      ]);
+      await pool.query(
+        `INSERT INTO api_keys (id, account_id, name, prefix, key_hash)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [randomUUID(), accountId, 'first', prefix, 'a'.repeat(64)],
+      );
+    });
+
+    // The same prefix again, through the application's own client, so the
+    // unique index rejects it and pg's diagnostics come back through the
+    // chokepoint.
+    failure = await captureFailure(() =>
+      getDb().insert(schema.apiKeys).values({
+        id: randomUUID(),
+        accountId,
+        name: 'second',
+        prefix,
+        keyHash: 'b'.repeat(64),
+      }),
+    );
+  });
+
+  afterAll(async () => {
+    await closeDb();
+  });
+
+  /** Without this the assertions below could be inspecting the wrong error. */
+  it('is a unique violation and not some other failure', () => {
+    expect(failure).toBeInstanceOf(Error);
+    expect(diagnostic(failure, 'code'), 'not a unique violation').toBe('23505');
+  });
+
+  it.each([
+    ['code', 'the only way a caller tells a unique violation from a dropped connection'],
+    ['table', 'which table rejected the write'],
+    ['constraint', 'which constraint rejected it'],
+  ])('keeps %s — %s', (field) => {
+    const value = diagnostic(failure, field);
+
+    expect(value, `${field} is missing entirely`).toBeDefined();
+    expect(value, `${field} was blanked; the error is undiagnosable`).not.toBe(
+      '[redacted]',
+    );
+  });
+
+  it('names the table it actually failed on', () => {
+    expect(diagnostic(failure, 'table')).toBe('api_keys');
+  });
+
+  /**
+   * And the one that has to go, because pg builds it by interpolating the
+   * offending value. It is the reason the allowlist cannot simply be "keep
+   * anything that looks like a diagnostic".
+   */
+  it('blanks detail, which echoes the value that collided', () => {
+    expect(diagnostic(failure, 'detail')).toBe('[redacted]');
+    expect(errorText(failure), 'the colliding prefix reached the error text').not.toContain(
+      prefix,
+    );
+  });
+
+  it('keeps the error’s name, so it does not log as [redacted]: Rollback', () => {
+    expect((failure as Error).name).not.toBe('[redacted]');
   });
 });

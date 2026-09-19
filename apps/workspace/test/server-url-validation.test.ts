@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { SERVER_URL_PATTERN, validateServerUrl } from '@/lib/validate';
 
 import {
+  ACCEPTED_PORTS,
   ACCEPTED_SERVER_URLS,
+  REJECTED_PORTS,
   REJECTED_SERVER_URLS,
   SERVER_URL_MATRIX,
 } from './helpers/server-urls.ts';
@@ -59,6 +61,24 @@ describe('validateServerUrl rejects', () => {
       expect(issue, `${url} was accepted`).not.toBeNull();
       expect(issue?.field).toBe('serverUrl');
       expect(issue?.message).not.toBe('');
+
+      // **And rejected by the pattern specifically.**
+      //
+      // `validateServerUrl` grew a second gate — `new URL` — and four of these
+      // cases (`/hook`, `https://:`, `https://host:abc`, `https://[garbage`)
+      // are strings the parser also refuses. Without this line those four
+      // would keep passing if the pattern stopped rejecting them, because the
+      // parser would quietly cover for it: the assertion says "rejected" and
+      // stops caring why.
+      //
+      // Measured, not supposed: neutering the pattern to `/^[\s\S]*$/` left
+      // exactly those four green before this line existed. Every case in the
+      // matrix is a pattern decision, so pinning it here keeps each case
+      // self-contained rather than leaning on a sibling test to notice.
+      expect(
+        SERVER_URL_PATTERN.test(url),
+        `${url} is no longer rejected by the pattern — only by the parser`,
+      ).toBe(false);
     },
   );
 });
@@ -88,6 +108,13 @@ describe('an absent server URL', () => {
  */
 describe('the exported pattern', () => {
   it('is the one the validator uses, on every case in the matrix', () => {
+    // Guarded here rather than relying on the count test above. A loop whose
+    // collection is empty passes every assertion inside it, so a matrix that
+    // shrank to nothing would leave this test green while checking no URL at
+    // all — and a cross-test guarantee is not a guarantee, because either test
+    // can be deleted without the other noticing.
+    expect(SERVER_URL_MATRIX.length).toBeGreaterThanOrEqual(17);
+
     for (const { url, accepted } of SERVER_URL_MATRIX) {
       expect(SERVER_URL_PATTERN.test(url), `pattern disagrees on ${url}`).toBe(
         accepted,
@@ -112,5 +139,73 @@ describe('the exported pattern', () => {
     expect(validateServerUrl(url)).toBeNull();
     expect(validateServerUrl(url)).toBeNull();
     expect(validateServerUrl(url)).toBeNull();
+  });
+});
+
+/**
+ * Port bounds, which the pattern does not govern.
+ *
+ * `(?::[0-9]+)?` accepts any run of digits, so `https://example.invalid:99999`
+ * satisfies the pattern and is still a string `new URL` refuses to parse. A
+ * validator whose whole thesis is "rejected at save, never at call time" was
+ * accepting a webhook the runtime cannot construct — statically knowable, and
+ * discovered with a caller on the line.
+ */
+describe('port bounds', () => {
+  it.each(REJECTED_PORTS.map((entry) => [entry.label, entry.url]))(
+    'rejects %s — %s',
+    (_label, url) => {
+      const issue = validateServerUrl(url);
+
+      expect(issue, `${url} was accepted`).not.toBeNull();
+      expect(issue?.field).toBe('serverUrl');
+    },
+  );
+
+  it.each(ACCEPTED_PORTS.map((entry) => [entry.label, entry.url]))(
+    'accepts %s — %s',
+    (_label, url) => {
+      expect(validateServerUrl(url)).toBeNull();
+    },
+  );
+
+  /**
+   * **The test that proves the second gate is what does this work.**
+   *
+   * Every port above is *accepted* by `SERVER_URL_PATTERN` and rejected by
+   * `validateServerUrl`, so the two deliberately disagree here. That makes this
+   * the one assertion that goes red if the parser check is removed — the
+   * `it.each` above would too, but this one also fails if somebody "fixes" it
+   * by widening the regex instead, which the module explicitly does not want:
+   * the pattern's provenance from the reviewed original is worth more than
+   * another clause in it.
+   */
+  it('rejects them at the parser, not at the pattern', () => {
+    const outOfRange = REJECTED_PORTS.filter((entry) => !entry.url.includes(':0/'));
+
+    expect(outOfRange.length).toBeGreaterThan(0);
+
+    for (const { url } of outOfRange) {
+      expect(
+        SERVER_URL_PATTERN.test(url),
+        `${url} is now rejected by the pattern — the regex was widened, and its ` +
+          'byte-for-byte provenance from the reviewed original is gone',
+      ).toBe(true);
+
+      expect(
+        validateServerUrl(url),
+        `${url} reached the parser check and was not rejected`,
+      ).not.toBeNull();
+    }
+  });
+
+  /**
+   * Port 0 is the one that parses. It is rejected by an explicit rule rather
+   * than by the parser throwing, so it is pinned separately — a fix that only
+   * caught parse failures would let it through.
+   */
+  it('rejects port zero even though it parses cleanly', () => {
+    expect(() => new URL('https://example.invalid:0/hook')).not.toThrow();
+    expect(validateServerUrl('https://example.invalid:0/hook')).not.toBeNull();
   });
 });

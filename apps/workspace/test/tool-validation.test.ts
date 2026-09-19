@@ -401,4 +401,88 @@ describe('duplicate tool names', () => {
       validateTools([named('alpha_tool'), named('beta_tool'), named('gamma_tool')]),
     ).toStrictEqual([]);
   });
+
+  /**
+   * One issue per repeated name, not one per repetition. Twelve tools sharing
+   * a name is one mistake, and eleven identical messages is a worse way to be
+   * told about it than one.
+   */
+  it('report a repeated name once however many times it repeats', () => {
+    const issues = validateTools(
+      Array.from({ length: 12 }, () => named('lookup_order')),
+    );
+
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.message).toContain('lookup_order');
+  });
+
+  it('report each repeated name separately when several repeat', () => {
+    const issues = validateTools([
+      named('alpha_tool'),
+      named('alpha_tool'),
+      named('beta_tool'),
+      named('beta_tool'),
+      named('gamma_tool'),
+    ]);
+
+    expect(issues).toHaveLength(2);
+
+    const messages = issues.map((issue) => issue.message).join('\n');
+
+    expect(messages).toContain('alpha_tool');
+    expect(messages).toContain('beta_tool');
+    expect(messages).not.toContain('gamma_tool');
+  });
+
+  /**
+   * Compared exactly, with no case folding, and that is a deliberate choice
+   * rather than an oversight: `lookup_order` and `Lookup_Order` are two
+   * distinct identifiers to a provider, so folding here would reject a tool
+   * list that works. Pinned so a future "helpful" case-insensitive comparison
+   * is a decision somebody makes on purpose.
+   */
+  it('are compared exactly, so names differing only in case are distinct', () => {
+    expect(
+      validateTools([named('lookup_order'), named('Lookup_Order')]),
+    ).toStrictEqual([]);
+  });
+
+  /**
+   * A name that is both malformed and repeated earns **one** complaint, not
+   * two overlapping ones. A malformed name never enters the seen-names set, so
+   * the customer is told the thing they can act on — fix the name — rather than
+   * also being told it collides with the other broken one.
+   */
+  it('do not pile a duplicate complaint on top of a malformed name', () => {
+    const issues = validateTools([
+      { ...named('lookup order'), name: 'lookup order' },
+      { ...named('lookup order'), name: 'lookup order' },
+    ]);
+
+    expect(issues).toHaveLength(2);
+
+    for (const issue of issues) {
+      expect(issue.message).toMatch(/needs a name/i);
+      expect(issue.message).not.toMatch(/must be unique/i);
+    }
+  });
+
+  /**
+   * And the sibling: a valid name repeated alongside an unrelated malformed
+   * one still reports both problems, so the case above is not passing because
+   * the duplicate rule stopped working.
+   */
+  it('still report a duplicate when an unrelated tool is also malformed', () => {
+    const issues = validateTools([
+      named('lookup_order'),
+      named('lookup_order'),
+      { ...named('bad'), name: 'bad name' },
+    ]);
+
+    const messages = issues.map((issue) => issue.message).join('\n');
+
+    expect(messages).toMatch(/must be unique/i);
+    expect(messages).toContain('lookup_order');
+    expect(messages).toMatch(/needs a name/i);
+  });
 });

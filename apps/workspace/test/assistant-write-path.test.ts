@@ -45,9 +45,12 @@ const { getAssistantForAccount, listAssistantsForAccount } = await import(
 const { signUpNewAccount } = await import('./helpers/auth.ts');
 const { withTestPool } = await import('./helpers/database.ts');
 const { isDatabaseConfigured } = await import('./helpers/environment.ts');
-const { ACCEPTED_SERVER_URLS, REJECTED_SERVER_URLS } = await import(
-  './helpers/server-urls.ts'
-);
+const {
+  ACCEPTED_PORTS,
+  ACCEPTED_SERVER_URLS,
+  REJECTED_PORTS,
+  REJECTED_SERVER_URLS,
+} = await import('./helpers/server-urls.ts');
 
 type Account = SignedUpUser;
 
@@ -134,6 +137,50 @@ describeDatabase('the server URL matrix, through the real save path', () => {
 
       // The assertion that matters: not "it said no" but "nothing was written".
       expect(await countByName(name), `${url} was rejected and written anyway`).toBe(0);
+    },
+  );
+
+  /**
+   * Ports, through the same real save path as the matrix.
+   *
+   * These are decided by a second gate the pattern knows nothing about — a
+   * `new URL` parse plus an explicit rule for port `0` — so they are separate
+   * from the matrix in the helper. They belong here for the same reason the
+   * matrix does: a rule that only exists in a unit test says nothing about
+   * what the save surface actually enforces.
+   */
+  it.each(REJECTED_PORTS.map((entry) => [entry.label, entry.url]))(
+    'refuses to save an assistant with %s — %s',
+    async (_label, url) => {
+      const name = `rejected port ${randomUUID()}`;
+
+      const result = await createAssistantAction(
+        formDataFor({ name, serverUrl: url }),
+      );
+
+      expect(result.ok, `${url} was saved`).toBe(false);
+      expect(
+        result.ok === false && result.issues.some((issue) => issue.field === 'serverUrl'),
+      ).toBe(true);
+      expect(await countByName(name), `${url} was rejected and written anyway`).toBe(0);
+    },
+  );
+
+  it.each(ACCEPTED_PORTS.map((entry) => [entry.label, entry.url]))(
+    'saves an assistant with %s — %s',
+    async (_label, url) => {
+      const name = `accepted port ${randomUUID()}`;
+
+      expect(
+        await createAssistantAction(formDataFor({ name, serverUrl: url })),
+      ).toStrictEqual({ ok: true });
+
+      const saved = (await listAssistantsForAccount(account.accountId)).find(
+        (row) => row.name === name,
+      );
+
+      expect(saved, `${url} was accepted but nothing was written`).toBeDefined();
+      expect(saved?.serverUrl).toBe(url);
     },
   );
 
