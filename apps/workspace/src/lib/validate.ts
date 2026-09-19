@@ -39,7 +39,16 @@ export function validateServerUrl(value: string | null | undefined): ValidationI
     return null;
   }
 
-  if (!SERVER_URL_PATTERN.test(value)) {
+  // URL schemes are case-insensitive by specification, and the pattern is
+  // written in lower case, so `HTTPS://example.com` was rejected with a message
+  // telling the customer to use https — which they had. Only the scheme is
+  // folded: a path is case-sensitive and lowercasing the whole string would
+  // silently change where the webhook points.
+  const normalised = value.replace(/^[A-Za-z][A-Za-z0-9+.-]*:/, (scheme) =>
+    scheme.toLowerCase(),
+  );
+
+  if (!SERVER_URL_PATTERN.test(normalised)) {
     return {
       field: 'serverUrl',
       message:
@@ -64,12 +73,18 @@ export function validateServerUrl(value: string | null | undefined): ValidationI
   let parsed: URL;
 
   try {
-    parsed = new URL(value);
+    parsed = new URL(normalised);
   } catch {
+    // Deliberately does not name a cause. This catches an out-of-range port,
+    // a malformed IPv6 literal like `https://[0:0:0:0:0:0:0:0:0:0]`, and
+    // anything else the parser refuses — an earlier version said "a port must
+    // be between 1 and 65535" for all of them, which is a false statement to
+    // put in front of a customer whose URL has no port at all.
     return {
       field: 'serverUrl',
       message:
-        'Server URL is not a valid URL. A port must be between 1 and 65535.',
+        'Server URL is not a valid URL. Check the host and, if there is one, ' +
+        'that the port is between 1 and 65535.',
     };
   }
 
@@ -82,27 +97,88 @@ export function validateServerUrl(value: string | null | undefined): ValidationI
     };
   }
 
+  // The unspecified addresses. `0.0.0.0` and `::` mean "every interface" to
+  // something binding a socket and are not destinations — and `http://0.0.0.0`
+  // was already rejected as not-loopback while `https://0.0.0.0` sailed
+  // through, which is the two halves of one rule disagreeing.
+  if (
+    parsed.hostname === '0.0.0.0' ||
+    parsed.hostname === '[::]' ||
+    parsed.hostname === '::'
+  ) {
+    return {
+      field: 'serverUrl',
+      message:
+        'That address means "every interface" and is not somewhere a webhook ' +
+        'can be delivered. Use the hostname the service answers on.',
+    };
+  }
+
+  // An empty DNS label — `.example.com` or `example..com`. `new URL` preserves
+  // both and they resolve nowhere. A single *trailing* dot is deliberately
+  // allowed: `example.com.` is a root-anchored FQDN and resolves correctly, so
+  // rejecting it would be the false-rejection-at-save this module exists to
+  // prevent.
+  if (/^\.|\.\./.test(parsed.hostname)) {
+    return {
+      field: 'serverUrl',
+      message: 'That hostname has an empty part. Check for a stray or doubled dot.',
+    };
+  }
+
   return null;
 }
 
 /**
- * Used for `validateSchema` only, never `compile`.
+ * Is this a valid JSON Schema? Returns the reason if not.
  *
- * `compile` **registers** the schema under its `$id`, and a second
- * registration of the same `$id` throws. Each save parses the tool list fresh,
- * so the objects differ and Ajv's identity cache does not absorb it: a
- * customer who includes `$id` — normal, and likely for exactly the people
- * hand-writing JSON Schema — saves once and is then told their schema is
- * invalid on every subsequent save, for the life of the process. The registry
- * is per-instance and this instance is module-level, so one account could burn
- * an `$id` for another.
+ * Three constraints pull against each other here, and all three have already
+ * been got wrong once in this file:
  *
- * `validateSchema` answers the only question being asked — is this valid JSON
- * Schema — and registers nothing. It also avoids retaining every schema and
- * generated validator ever submitted, which `compile` does through a strong
- * cache that would grow on form input.
+ *  1. **It must not burn `$id`.** A module-level Ajv instance registers each
+ *     compiled schema under its `$id`, and a second registration of the same
+ *     one throws. Every save parses the tool list fresh, so the objects differ
+ *     and Ajv's identity cache does not absorb it: a customer using `$id` —
+ *     normal, and likely for the people hand-writing JSON Schema — saved once
+ *     and was then told their schema was invalid forever after. The registry is
+ *     per-instance, so one account could burn an `$id` for another.
+ *  2. **It must still resolve `$ref`.** Switching to `validateSchema` fixed (1)
+ *     and silently dropped this: `validateSchema` checks the schema against its
+ *     meta-schema and never resolves references, so `{"$ref":
+ *     "#/definitions/missing"}` — the most common hand-written mistake there is
+ *     — started passing and reaching call time. `compile` resolves, which is
+ *     what had been catching it.
+ *  3. **It must not throw.** `compile` *and* `validateSchema` both throw on an
+ *     unresolvable reference or an unusable `$schema`, and the `try`/`catch`
+ *     that used to contain that was dropped along with `compile`, turning
+ *     ordinary textarea input into a 500.
+ *
+ * A **throwaway instance per call** satisfies all three: it resolves refs, it
+ * has no cross-save registry to burn, and it is collected. Roughly 1.5 ms per
+ * schema, on a path that already does a database write.
+ *
+ * `$schema` is dropped before compiling. It selects a meta-schema dialect, and
+ * Ajv 8 ships draft-07 — so `"$schema": "https://json-schema.org/draft/2020-12/schema"`,
+ * which is exactly what a customer copying a schema from anywhere else will
+ * have, is not registered and throws. Rejecting a valid 2020-12 schema is a
+ * false rejection at save, which is the failure this module exists to prevent,
+ * and the field is advisory for a tool's `parameters` anyway — providers ignore
+ * it. So it is ignored here too, and everything under it is still validated.
  */
-const ajv = new Ajv({ strict: false, allErrors: true });
+function schemaProblem(parameters: object): string | null {
+  const withoutDialect: Record<string, unknown> = {
+    ...(parameters as Record<string, unknown>),
+  };
+
+  delete withoutDialect.$schema;
+
+  try {
+    new Ajv({ strict: false, allErrors: true }).compile(withoutDialect);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : 'schema is not valid';
+  }
+}
 
 /**
  * Validates a tool list in the OpenAI function format.
@@ -191,14 +267,14 @@ export function validateTools(value: unknown): ValidationIssue[] {
 
     // Ajv's verdict is the operational definition of "valid JSON Schema" —
     // two implementations can disagree about the phrase, but not about whether
-    // Ajv accepted it. `validateSchema`, never `compile`: see the note on the
-    // instance above.
-    if (!ajv.validateSchema(parameters as object)) {
-      const detail = ajv.errors?.[0]?.message ?? 'schema is not valid';
+    // Ajv accepted it. See `schemaProblem` for why it compiles on a throwaway
+    // instance rather than validating on a shared one.
+    const problem = schemaProblem(parameters as object);
 
+    if (problem !== null) {
       issues.push({
         field: 'tools',
-        message: `${named}: parameters is not valid JSON Schema — ${detail}`,
+        message: `${named}: parameters is not valid JSON Schema — ${problem}`,
       });
     }
   });
