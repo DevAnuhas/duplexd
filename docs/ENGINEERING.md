@@ -101,8 +101,31 @@ One consequence is less obvious and worth knowing before adding a query.
 Drizzle builds a failed query's error as `Failed query: <sql>` followed by
 `params: <bound values>`, which puts every parameter into whatever catches it.
 `src/db/redact.ts` wraps the client `getDb()` returns and strips those values
-from both `.message` and `.stack` — `.stack` because V8 caches it once
-formatted and it is the field loggers actually print.
+from **three** places, because a value that survives in any one of them reaches
+a log:
+
+- `.message`, which is where Drizzle writes them.
+- `.stack`, because V8 formats it once and caches it, so anything that read it
+  before redaction would have kept the original. It is repaired by splicing the
+  redacted message over the original's span rather than by matching a pattern —
+  a boundary guessed from content is guessed from *customer free text*, and an
+  `instructions` field containing a wrapped sentence is indistinguishable from a
+  stack frame.
+- **Own enumerable properties.** `DrizzleQueryError` does not only build its
+  message from the parameters, it keeps them as `query` and `params`. Those are
+  what `util.inspect` prints, which is what `console.error(err)` does, which is
+  what Next's logger does with a caught error. Redacting the first two alone was
+  cosmetic against the field frameworks actually emit. The rule is an allowlist:
+  `query` is kept because it is parameterised SQL with no values in it, and
+  anything a future version attaches is blanked without anyone having to notice
+  it appeared.
+
+Coverage is by route as well as by field. `await`, `.catch()`, `.finally()` and
+`db.query` — Drizzle's relational API, which `getDb()` enables by passing
+`{ schema }` — all reach the client by different paths, and the last three
+originally bypassed the wrapper entirely because they are not `then` on the
+proxy. Nothing in the repository uses them today, which is exactly why they
+would have been missed.
 
 It sits on the client rather than on each call site deliberately: Better Auth's
 adapter receives the same client and runs its own queries through it, and could

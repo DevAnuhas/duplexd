@@ -1,16 +1,16 @@
 # Architecture
 
-Target boundaries. Most of this describes the system as it should exist once the platform milestone lands, not what exists today — `CONTEXT.md` owns status. Every section that describes machinery is marked *Planned* where it is not yet built; the two that state trust rules and what would reopen the design are not marked, because they are constraints on whatever gets built rather than claims about what exists. What exists at this commit is the decision trail, the CI workflow, and the Pipecat gate spike.
+Target boundaries. Most of this describes the system as it should exist once the platform milestone lands, not what exists today — `CONTEXT.md` owns status. Every section that describes machinery is marked *Planned* where it is not yet built; the two that state trust rules and what would reopen the design are not marked, because they are constraints on whatever gets built rather than claims about what exists. What exists at this commit is the decision trail, the CI workflow, the Pipecat gate spike, and `apps/workspace` — sign-in, assistants, and API keys. There is no control API and no agent, so no call has been placed.
 
 ## The shape in one paragraph
 
-*Planned. This is the system P02 through P05 build, described in the present tense for readability; none of it runs at this commit.*
+*Partly built. This is the system P02 through P05 build, described in the present tense for readability. The workspace half runs — an assistant with its tools and webhook secret can be created and edited, and a key minted and revoked. Everything from "asks the control API to start a call" onwards is planned: there is no control API, no agent, and no call has been placed.*
 
 A project holds an API key and asks the control API to start a call against one of its assistants. The control API verifies the key, loads the assistant, writes a call row, and asks Pipecat Cloud to spawn an agent. The agent fetches the assistant's full record back from the control API over a short-lived token, opens a session with the voice model carrying instructions and no tools, and runs the call. When the voice model needs something done, a backend text model — owned by the platform, holding the assistant's tools — picks a tool and calls the customer's webhook with a signed request. The result is spoken back while the caller keeps talking. The agent reports transcript and tool events to the control API as it goes, and reports completion at the end.
 
 ## Components
 
-*Planned. None of this exists at this commit.*
+*Partly built. `apps/workspace` exists, with its assistants and keys interfaces and the Neon Postgres behind it. Its calls UI, the `/v1` control API route handlers, the agent and Pipecat Cloud do not.*
 
 ```
                         ┌──────────────────────────────────────────┐
