@@ -1,0 +1,55 @@
+[project]
+name = "duplexd-agent"
+version = "0.1.0"
+description = "Data-driven Pipecat runtime for duplexd calls"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "httpcore==1.0.9",
+    "httpx==0.28.1",
+    "loguru==0.7.3",
+    "pipecat-ai[daily,openai,runner,webrtc]==1.11.0",
+    "pydantic==2.12.5",
+]
+
+[project.scripts]
+bot = "duplexd_agent.bot:main"
+config-stub = "duplexd_agent.stub_server:main"
+
+[dependency-groups]
+dev = [
+    "mypy==1.18.2",
+    "pipecat-ai[cli]==1.11.0",
+    "pipecatcloud==0.4.4",
+    "pytest==8.4.2",
+    "pytest-asyncio==1.2.0",
+    "ruff==0.13.2",
+]
+
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["duplexd_agent"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["pipecat.*"]
+ignore_missing_imports = true

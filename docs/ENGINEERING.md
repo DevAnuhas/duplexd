@@ -7,13 +7,14 @@ Setup, verification, CI, and releases. This file owns supported commands and act
 - Node `24.21.0` (`.node-version`) and pnpm `12.4.2` (including its Corepack integrity hash in `package.json`). Use `corepack enable` or install that exact pnpm version.
 - TypeScript `6.0.3`, ESLint `10.10.0`, typescript-eslint `8.70.0`, Prettier `3.9.6`, and Vitest `5.0.1`.
 - Markdown links are checked by `markdown-link-check` `3.15.0` through `pnpm lint:links`.
-- Python 3.12+ and `uv` for `spikes/pipecat-gate/`, and later for `agent/`.
+- Python 3.12 and `uv` for `agent/` and `spikes/pipecat-gate/`.
 - `pnpm install --frozen-lockfile` locally and in CI. Exact pins, one committed lockfile.
 
 ## Layout
 
 ```
 apps/workspace/   the Next.js app: workspace UI now, /v1 control API in P05
+agent/             the deployable, data-driven Pipecat runtime
 scripts/          classify-docs-only.sh, the CI path classifier
 tests/            the classifier's suite, run by the root Vitest runner
 spikes/pipecat-gate/   the passing Pipecat gate (Python, uv), kept as a regression test
@@ -22,11 +23,49 @@ docs/             documentation and the decision trail
 
 `apps/workspace` is the only pnpm workspace package. Root scripts run the root target and then the package, so a check cannot pass at root while ignoring the app.
 
-### The Python side, planned
+### The Python agent
 
-`agent/` **does not exist yet — it lands in P04.** When it does, it will be a Python project managed by `uv`, sitting *outside* the pnpm workspace, following the layout `spikes/pipecat-gate/` already proves works here: its own `pyproject.toml` and `uv.lock`, no entry in `pnpm-workspace.yaml`, and no pnpm script wrapping it.
+`agent/` is a Python 3.12 project managed by `uv`, outside the pnpm workspace. It has its own `pyproject.toml` and `uv.lock`, no entry in `pnpm-workspace.yaml`, and no pnpm wrapper. Pipecat is pinned at `1.11.0`; the spike remains separate as the provider-upgrade regression test.
 
-The Python toolchain gets its own CI job with its own `uv` cache, independent of the pnpm job. Two toolchains in one repository is a decision, not an accident; the existing path classifier already routes documentation-only changes away from both.
+Install and run its complete local gate with:
+
+```bash
+uv sync --frozen --directory agent
+uv run --directory agent ruff check .
+uv run --directory agent mypy duplexd_agent tests
+uv run --directory agent pytest -q
+docker build agent/
+```
+
+The Python toolchain has its own `agent` CI job and `uv` cache, independent of the pnpm job. Two toolchains in one repository is a decision, not an accident; the path classifier routes documentation-only changes away from both.
+
+#### Local call stub
+
+The committed stub is synthetic and serves both the future P05 config shape and a signature-verifying customer webhook:
+
+```bash
+uv run --directory agent config-stub
+DUPLEXD_ALLOW_LOCAL_WEBHOOKS=1 OPENAI_API_KEY=... \
+  uv run --directory agent bot -t webrtc
+```
+
+Use the runner body `{"callId":"stub-call","apiBase":"http://127.0.0.1:8787","agentToken":"stub-agent-token"}`. The local-webhook flag is off by default and only the exact value `1` enables non-global customer webhook addresses; startup logs a warning when it is enabled. It does not enable redirects. Platform `apiBase` is supplied by duplexd and is not subject to the customer-webhook egress rule.
+
+The config response uses camelCase consistently. Required keys are `assistantId`, `voice`, `instructions`, `accentStyle`, `waitingBehavior`, `backendModel`, `backendInstructions`, `serverUrl`, `serverSecret`, `tools`, `webhookTimeoutSecs`, `functionCallTimeoutSecs`, and `delegationTimeoutSecs`. The webhook timeout must be lower than both other timeouts so the customer receives the runtime's structured failure before Pipecat cancels the function or delegation.
+
+Reported event names are `bot_speech_started`, `bot_speech_stopped`, `tool_started`, `tool_finished`, `delegation_created`, `transcript_user`, `transcript_assistant`, and `interruption`. Tool events carry the tool name and invocation id; the terminal event additionally carries outcome, duration, and optional status/error category. Completion reasons are `client_disconnected`, `pipeline_error`, and `idle_timeout`.
+
+#### Provider and deployment verification
+
+Unit and integration tests use injected HTTP seams and do not claim to be a provider call. A real call requires `OPENAI_API_KEY`; absence is a blocked live-path check, not a passing fixture. Configure the `duplexd-agent-secrets` Pipecat Cloud secret set from a local file containing `OPENAI_API_KEY` and `DUPLEXD_PLATFORM_CREDENTIAL`, then deploy manually:
+
+```bash
+cd agent
+uv run pipecat cloud secrets set duplexd-agent-secrets --file .env --skip
+uv run pipecat cloud deploy
+```
+
+CI builds the image but never pushes or deploys it. `pcc-deploy.toml` keeps zero warm agents and a finite `max_agents` cost guard. A cold-start figure must come from a real `min_agents = 0` start; without Pipecat Cloud credentials it is blocked, never estimated.
 
 ## Verification
 
@@ -51,6 +90,10 @@ What each one actually does at this commit — stated plainly, because a command
 | `pnpm test` | `vitest run` for the 41 classifier tests, then the `apps/workspace` suite | yes |
 | `pnpm build` | The production Next.js build of `apps/workspace`. **Runs with no database** — see below. | yes |
 | `pnpm lint:links` | `markdown-link-check` over every Markdown file | yes |
+| `uv run --directory agent ruff check .` | Ruff over runtime and tests | yes |
+| `uv run --directory agent mypy duplexd_agent tests` | Strict Python typecheck | yes |
+| `uv run --directory agent pytest -q` | Agent unit and integration suite | yes |
+| `docker build agent/` | Deployable agent image build, without push | yes |
 
 ### Why Turbo is gone
 
@@ -88,11 +131,11 @@ pnpm --filter workspace start                  # runs .next/standalone/apps/work
 
 `pnpm build` deliberately needs **no** database: the database and auth clients are constructed on first use rather than at module import, and every page that reads the database is dynamic. A build that required `DATABASE_URL` would make every deploy depend on the database being reachable from the builder. CI proves this on every pull request by running the build step with no database environment.
 
-*The Python agent lands in P04: `uv run --directory agent bot`.*
+Run the Python agent with `uv run --directory agent bot` and a Pipecat runner transport argument.
 
 ## CI
 
-`.github/workflows/ci.yml` always starts for pull requests and pushes to `main`. Its `changes` job runs the repository's merge-base-aware path classifier. Code changes run frozen install, lint, typecheck, test, and build in `checks`; documentation-only changes run `pnpm lint:links` in `docs`. The unselected job reports skipped rather than disappearing, so later branch protection can require the stable check names recorded in [WORKFLOW.md](WORKFLOW.md).
+`.github/workflows/ci.yml` always starts for pull requests and pushes to `main`. Its `changes` job runs the repository's merge-base-aware path classifier. Code changes run the Node checks in `checks` and the independent frozen Python lint, typecheck, tests, and Docker build in `agent`; documentation-only changes run `pnpm lint:links` in `docs`. Unselected jobs report skipped rather than disappearing, so branch protection can require the stable check names recorded in [WORKFLOW.md](WORKFLOW.md).
 
 The classifier is covered by 41 tests in `tests/classify-docs-only.test.ts`, run by `pnpm test`. They are the reason a change to the routing rules cannot land silently.
 
