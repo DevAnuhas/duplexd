@@ -18,7 +18,26 @@
  * covered, not only the two this ticket happens to add.
  */
 
-/** The parameter section Drizzle appends to a failed query's message. */
+/**
+ * The parameter section Drizzle appends to a failed query's message.
+ *
+ * **Before loosening this to keep parameters for debuggability, read on.** The
+ * temptation is real — a failed insert is much easier to diagnose with its
+ * values — and the answer is that this schema carries things that must never
+ * reach a log at all.
+ *
+ * Today that is the ciphertext of a customer's webhook secret, which is one
+ * key compromise away from the plaintext. From P05 it is worse: `call_events`
+ * payloads carry **transcripts**, and `docs/OPERATIONS.md` says in terms never
+ * to log those in full. A failing insert there would put the caller's own
+ * words into the log aggregator.
+ *
+ * So this strips every bound value and keeps only the query text, which names
+ * tables and columns and is what makes the error useful in the first place.
+ * If a specific value is genuinely needed to debug something, log it
+ * deliberately at that call site where a reviewer can see what is being
+ * exposed — do not widen the chokepoint for everything.
+ */
 const PARAMS_SECTION = /\nparams:[\s\S]*$/;
 
 /**

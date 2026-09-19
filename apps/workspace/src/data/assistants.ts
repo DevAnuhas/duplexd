@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 
 import { getDb } from '@/db/client';
 import { assistants } from '@/db/schema';
@@ -42,6 +42,13 @@ const publicColumns = {
   tools: assistants.tools,
   createdAt: assistants.createdAt,
   updatedAt: assistants.updatedAt,
+  /**
+   * Whether a secret is set — derived in SQL, so the ciphertext never leaves
+   * the database. The UI needs to show *that* one exists; it must never be
+   * able to show *what* it is, and a masked value of the real length or a
+   * placeholder that round-trips would be the same leak wearing a costume.
+   */
+  hasServerSecret: sql<boolean>`jsonb_array_length(${assistants.serverSecrets}) > 0`,
 } as const;
 
 export type AssistantInput = {
@@ -68,8 +75,8 @@ export type AssistantInput = {
  */
 export type Assistant = Pick<
   typeof assistants.$inferSelect,
-  keyof typeof publicColumns
->;
+  Exclude<keyof typeof publicColumns, 'hasServerSecret'>
+> & { hasServerSecret: boolean };
 
 /**
  * Creates an assistant owned by `accountId`.
@@ -150,7 +157,7 @@ export async function getAssistantForAccount(
   return rows[0] ?? null;
 }
 
-/** Every live assistant owned by `accountId`. */
+/** Every live assistant owned by `accountId`, newest first. */
 export async function listAssistantsForAccount(
   accountId: string,
 ): Promise<Assistant[]> {
@@ -159,5 +166,91 @@ export async function listAssistantsForAccount(
     .from(assistants)
     .where(
       and(eq(assistants.accountId, accountId), isNull(assistants.archivedAt)),
-    );
+    )
+    .orderBy(desc(assistants.createdAt));
+}
+
+/**
+ * Updates an assistant, scoped to its account. Returns `null` if it is not
+ * this account's, so a caller cannot tell "not yours" from "does not exist".
+ *
+ * **The secret is only touched when a new one is supplied.** An absent or
+ * empty `serverSecret` leaves the stored entry exactly as it was — saving an
+ * unrelated field must never destroy a customer's credential, and an empty
+ * input is "I did not type anything", not "delete it". Clearing is a separate,
+ * explicit act (`clearServerSecret`), because destroying a credential should
+ * require saying so.
+ */
+export async function updateAssistantForAccount(
+  accountId: string,
+  assistantId: string,
+  input: AssistantInput & { clearServerSecret?: boolean },
+): Promise<Assistant | null> {
+  const replacement =
+    input.serverSecret === undefined ||
+    input.serverSecret === null ||
+    input.serverSecret === ''
+      ? null
+      : input.serverSecret;
+
+  const secretChange =
+    replacement !== null
+      ? {
+          serverSecrets: [
+            { id: randomUUID(), ciphertext: encryptSecret(replacement) },
+          ],
+        }
+      : input.clearServerSecret === true
+        ? { serverSecrets: [] }
+        : {};
+
+  const rows = await getDb()
+    .update(assistants)
+    .set({
+      name: input.name,
+      voice: input.voice ?? null,
+      accentStyle: input.accentStyle ?? null,
+      instructions: input.instructions ?? null,
+      backendInstructions: input.backendInstructions ?? null,
+      backendModel: input.backendModel ?? null,
+      waitingBehavior: input.waitingBehavior ?? null,
+      serverUrl: input.serverUrl ?? null,
+      tools: input.tools ?? [],
+      updatedAt: new Date(),
+      ...secretChange,
+    })
+    .where(
+      and(
+        eq(assistants.id, assistantId),
+        eq(assistants.accountId, accountId),
+        isNull(assistants.archivedAt),
+      ),
+    )
+    .returning(publicColumns);
+
+  return rows[0] ?? null;
+}
+
+/**
+ * Archives an assistant. A soft delete: it leaves the list, but calls that ran
+ * against it keep pointing at something real, and it stays unreachable by its
+ * own edit URL rather than merely hidden.
+ */
+export async function archiveAssistantForAccount(
+  accountId: string,
+  assistantId: string,
+): Promise<boolean> {
+  const rows = await getDb()
+    .update(assistants)
+    .set({ archivedAt: new Date() })
+    .where(
+      and(
+        eq(assistants.id, assistantId),
+        eq(assistants.accountId, accountId),
+        isNull(assistants.archivedAt),
+      ),
+    )
+    .returning({ id: assistants.id });
+
+  return rows.length > 0;
 }
