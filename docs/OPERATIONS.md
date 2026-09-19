@@ -41,3 +41,7 @@ Twilio numbers, SIP trunks, and the provider's SIP enablement are paid or extern
 ## Observability
 
 The platform's own `call_id` is the join key across call records, agent logs, Pipecat Cloud sessions, and any telephony provider's call id. Log it on every call event. Never log audio, transcripts in full, API keys, or a customer's webhook secret.
+
+**The database layer enforces the last part of that rule rather than trusting it.** A failing query carries its bound parameters into the error it throws, so `src/db/redact.ts` wraps the client and strips every bound value from the error's message, its stack, and its own properties before anything can log it — keeping the parameterised SQL and pg's diagnostics, which carry no values. It strips *all* parameters rather than secret-shaped ones, because from P05 the payloads written to `call_events` are transcripts, and a failing insert there would otherwise put a caller's own words into the log aggregator. If you add a database client rather than using `getDb()`, you leave that protection behind.
+
+An API key cannot be recovered. The row holds a prefix and a hash, so support cannot read a customer's key back to them — a lost key is replaced by minting a new one and revoking the old. Revocation is a soft delete: the row survives so calls already made with it stay attributable.
