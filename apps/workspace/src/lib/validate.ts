@@ -49,6 +49,39 @@ export function validateServerUrl(value: string | null | undefined): ValidationI
     };
   }
 
+  // The pattern governs scheme and authority; it does not bound the port,
+  // because `(?::[0-9]+)?` accepts any run of digits. `https://example.com:99999`
+  // and `http://127.0.0.1:65536` both satisfy it and are both rejected outright
+  // by `new URL` — so the pattern alone would accept a string the runtime cannot
+  // even parse, let alone reach, and the customer would find out with a caller
+  // on the line. That is precisely the failure this module exists to move to
+  // save time.
+  //
+  // The pattern is deliberately not widened to cover this: it is reproduced
+  // byte-for-byte from the reviewed original and that provenance is worth more
+  // than folding one more rule into an already dense regex. The parser is the
+  // better authority for "is this a URL at all" anyway.
+  let parsed: URL;
+
+  try {
+    parsed = new URL(value);
+  } catch {
+    return {
+      field: 'serverUrl',
+      message:
+        'Server URL is not a valid URL. A port must be between 1 and 65535.',
+    };
+  }
+
+  // Port 0 parses, and means "any free port" to something binding a socket. As
+  // a destination it is never connectable.
+  if (parsed.port === '0') {
+    return {
+      field: 'serverUrl',
+      message: 'Port 0 is not a destination. Use a port between 1 and 65535.',
+    };
+  }
+
   return null;
 }
 

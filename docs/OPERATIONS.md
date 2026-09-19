@@ -18,7 +18,9 @@ Tool webhooks are called from the agent, not from the developer's machine, so a 
 
 **Database: Neon.** Postgres with Drizzle migrations. A branch per preview if useful. See the local section above for what development uses.
 
-**Secrets:** Fly secrets for `DATABASE_URL`, `BETTER_AUTH_SECRET`, and `ASSISTANT_SECRET_KEY` — the last of which protects customers' webhook secrets at rest. Pipecat Cloud secrets for the provider key. Never in an image, never in the repository.
+**Secrets:** Fly secrets for `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, and `ASSISTANT_SECRET_KEY` — the last of which protects customers' webhook secrets at rest. Pipecat Cloud secrets for the provider key. Never in an image, never in the repository.
+
+All four are required and none is defaulted. The server exits at boot naming any that is missing, before it binds the port, so a deploy missing one fails visibly rather than serving 500s from a machine that looks healthy. `BETTER_AUTH_URL` belongs on that list and was previously omitted from it: it is the public origin, never derived from the request, because behind a proxy the `Host` header would decide what the deployment thinks it is.
 
 **Migrations run as a Fly release command**, before any new machine serves traffic, so a deploy cannot serve a schema that has not been applied. The image deliberately does not migrate on boot: every container in a deploy would race the others.
 
