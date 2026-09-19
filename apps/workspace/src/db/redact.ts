@@ -106,6 +106,35 @@ export function redactQueryParams(error: unknown): unknown {
           stack.slice(start + original.length);
   }
 
+  // **The third place a value hides, and the one that actually gets logged.**
+  // `DrizzleQueryError` does not only build its message from the parameters,
+  // it keeps them: `this.query`, `this.params`. Those are own enumerable
+  // properties, so `util.inspect` prints them — and `console.error(err)`,
+  // `JSON.stringify(err)`, Sentry and pino all serialise own properties. Next
+  // logs a caught error with `console.error(prefix, err)`, which means the
+  // values reach the log through inspect even when `.message` and `.stack` are
+  // spotless. Redacting only those two was cosmetic against the field the
+  // framework actually emits.
+  //
+  // The rule is an allowlist, not a list of things to strip. `query` is kept
+  // because it is the parameterised SQL — placeholders, no values — and it is
+  // what makes the error diagnosable. Everything else is blanked, so a future
+  // library version that attaches a new value-bearing property is covered
+  // without anyone noticing it appeared. That is the same reason item 22c
+  // gives for stripping all parameters rather than secret-shaped ones.
+  for (const key of Object.keys(error)) {
+    if (key === 'query' || key === 'cause') {
+      continue;
+    }
+
+    try {
+      (error as unknown as Record<string, unknown>)[key] = '[redacted]';
+    } catch {
+      // A getter-only or frozen property cannot be blanked. Skipping is the
+      // honest outcome; the message and stack are still clean.
+    }
+  }
+
   if (error.cause !== undefined && error.cause !== null) {
     redactQueryParams(error.cause);
   }
@@ -138,19 +167,63 @@ function redacting<T extends object>(target: T): T {
     get(object, property, receiver) {
       const value = Reflect.get(object, property, receiver) as unknown;
 
-      if (property === 'then' && typeof value === 'function') {
-        return function chainedThen(
-          onFulfilled?: (v: unknown) => unknown,
-          onRejected?: (e: unknown) => unknown,
-        ) {
-          return (value as (...a: unknown[]) => unknown).call(
-            object,
-            onFulfilled,
+      // `then`, `catch` and `finally` all need intercepting. Drizzle's
+      // `QueryPromise.catch(fn)` is `this.then(undefined, fn)` — but `this`
+      // there is the raw target, not the proxy, so a caller using `.catch()`
+      // or `.finally()` instead of `await` would route around the redaction
+      // entirely.
+      if (
+        (property === 'then' || property === 'catch' || property === 'finally') &&
+        typeof value === 'function'
+      ) {
+        return function settled(...handlers: unknown[]) {
+          const redact = (handler: unknown) => (error: unknown) => {
+            const redacted = redactQueryParams(error);
+
+            if (typeof handler === 'function') {
+              return (handler as (e: unknown) => unknown)(redacted);
+            }
+
+            throw redacted;
+          };
+
+          if (property === 'then') {
+            return (value as (...a: unknown[]) => unknown).call(
+              object,
+              handlers[0],
+              redact(handlers[1]),
+            );
+          }
+
+          if (property === 'catch') {
+            return (object as { then: (...a: unknown[]) => unknown }).then(
+              undefined,
+              redact(handlers[0]),
+            );
+          }
+
+          // `finally` does not receive the error, so the redaction has to be
+          // attached alongside the callback rather than through it.
+          //
+          // **The callback runs on BOTH settlements, and that is the entire
+          // contract.** An earlier version of this branch passed
+          // `redact(undefined)` as the rejection handler, which redacted and
+          // rethrew but never called the callback — so cleanup that exists
+          // precisely for the failure path (a released lock, a closed span)
+          // was skipped on exactly that path. The leak was closed and a
+          // property nobody was asserting was traded away for it; that trade
+          // is the recurring shape of this file's history, so it is now
+          // asserted rather than assumed.
+          const onFinally = handlers[0] as (() => unknown) | undefined;
+
+          return (object as { then: (...a: unknown[]) => unknown }).then(
+            (result: unknown) => {
+              onFinally?.();
+              return result;
+            },
             (error: unknown) => {
               const redacted = redactQueryParams(error);
-              if (onRejected) {
-                return onRejected(redacted);
-              }
+              onFinally?.();
               throw redacted;
             },
           );
@@ -168,6 +241,15 @@ function redacting<T extends object>(target: T): T {
             ? redacting(result)
             : result;
         };
+      }
+
+      // A plain object property is wrapped too. `db.query` — Drizzle's
+      // relational read API, which `getDb()` enables by passing `{ schema }` —
+      // is an own property rather than a method, so it fell straight through
+      // and every query made through it was unprotected. Nothing uses it
+      // today, which is precisely why it would have been missed.
+      if (typeof value === 'object' && value !== null) {
+        return redacting(value);
       }
 
       return value;
