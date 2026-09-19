@@ -61,6 +61,17 @@ function errorText(error: unknown): string {
   return parts.join('\n');
 }
 
+/**
+ * How many stack frames an error still carries.
+ *
+ * Counted rather than eyeballed because the property it guards is a count: the
+ * redaction must remove values and nothing else, and "nothing else" is only
+ * checkable against the frames the unredacted error had.
+ */
+function stackFrames(error: unknown): number {
+  return (String((error as Error)?.stack ?? '').match(/\n\s+at /g) ?? []).length;
+}
+
 /** Runs `body`, returning the error it threw. Fails loudly if it did not throw. */
 async function captureFailure(body: () => Promise<unknown>): Promise<unknown> {
   try {
@@ -146,6 +157,41 @@ describeDatabase('a failing query', () => {
     expect(text).toMatch(/\[redacted\]/);
   });
 
+  /**
+   * The redaction removes values and **nothing else**.
+   *
+   * This is asserted as a frame count rather than as "the canary is gone",
+   * because the canary check passed throughout the period when the redaction
+   * was destroying every stack frame it touched and told nobody. `.stack` is
+   * what `console.error(err)` and Next's own logger print, so an error whose
+   * frames have been eaten reports no call site at all — which is the opposite
+   * of the promise this module makes two paragraphs into its own docstring.
+   *
+   * The unwrapped count is the control. Without it "the wrapped error has
+   * frames" could pass on an error that never had any.
+   */
+  it('keeps every stack frame the unredacted error had', () => {
+    const control = stackFrames(unwrappedFailure);
+
+    expect(
+      control,
+      'the control error carries no stack frames, so the assertion below proves nothing',
+    ).toBeGreaterThan(0);
+
+    expect(
+      stackFrames(wrappedFailure),
+      'the redaction ate the stack frames — every database error now reports no call site',
+    ).toBe(control);
+  });
+
+  it('leaves a stack that still reads as a stack', () => {
+    const stack = String((wrappedFailure as Error).stack);
+
+    expect(stack).toContain('assistants');
+    expect(stack).toContain('[redacted]');
+    expect(stack).toMatch(/\n\s+at /);
+  });
+
   /** Nothing was written, so the failure was a failure rather than a slow success. */
   it('wrote no row', async () => {
     const hits = await withTestPool(async (inspection) => {
@@ -158,6 +204,90 @@ describeDatabase('a failing query', () => {
     });
 
     expect(hits).toBe(0);
+  });
+});
+
+/**
+ * A bound parameter whose own text looks like a stack frame.
+ *
+ * The redaction has to find where the parameter section ends. If it decides
+ * that by looking for the first line that reads like a stack frame, then the
+ * boundary is **decided by the very data it is redacting** — and that data is
+ * customer-controlled free text. `instructions` is a box a customer types
+ * prose into, and prose wraps:
+ *
+ *     Greet the caller.
+ *         at all times be polite.
+ *
+ * is an entirely ordinary thing to write and is indistinguishable, to a regex,
+ * from a `    at Object.<anonymous> (...)` frame. The redaction stops there,
+ * and every parameter bound *after* that column survives into the message —
+ * which for `assistants` means `server_secrets`, the customer's encrypted
+ * webhook secret, two columns later.
+ *
+ * So this is not a corner case dressed up: it is the leak item 22a exists to
+ * close, reachable by typing a wrapped sentence into a textarea.
+ *
+ * Both halves are asserted together on purpose. Keeping the frames and
+ * containing the values are simultaneous requirements, and any boundary
+ * derived from the message's *content* trades one against the other. Finding
+ * the boundary structurally — the stack's head is exactly the error's own
+ * message, so splicing the redacted message back over it preserves the frames
+ * byte-for-byte without ever guessing — satisfies both at once.
+ */
+describeDatabase('a parameter whose own text looks like a stack frame', () => {
+  /** Prose that wraps. Nothing exotic, and nothing a customer would think twice about. */
+  const FRAME_SHAPED = 'Greet the caller.\n    at all times be polite.';
+
+  afterAll(async () => {
+    await closeDb();
+  });
+
+  it('does not let the parameters after it escape the redaction', async () => {
+    const canary = `canary-injection-${randomUUID()}`;
+
+    const failure = await captureFailure(() =>
+      createAssistant('no-such-account-forcing-a-constraint-failure', {
+        name: `injection probe ${randomUUID()}`,
+        instructions: FRAME_SHAPED,
+        serverUrl: `https://${canary}.example.invalid/hook`,
+        serverSecret: `canary-secret-${randomUUID()}`,
+      }),
+    );
+
+    const text = errorText(failure);
+
+    expect(
+      text,
+      'a parameter bound after the frame-shaped one survived the redaction',
+    ).not.toContain(canary);
+
+    // The one that matters: the customer's encrypted webhook secret is bound
+    // two columns after `instructions`, so it is downstream of the boundary.
+    expect(
+      text,
+      'the customer’s webhook ciphertext reached the error text — this is the ' +
+        'leak item 22a closed, reopened by a content-derived redaction boundary',
+    ).not.toMatch(/v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]/);
+  });
+
+  /**
+   * And the frames still survive. Stated as its own test so a fix that
+   * contained the leak by going back to an end-anchored regex fails here
+   * rather than trading one defect for the other.
+   */
+  it('still keeps its stack frames', async () => {
+    const failure = await captureFailure(() =>
+      createAssistant('no-such-account-forcing-a-constraint-failure', {
+        name: `injection frames ${randomUUID()}`,
+        instructions: FRAME_SHAPED,
+      }),
+    );
+
+    expect(
+      stackFrames(failure),
+      'the redaction ate the stack frames on the frame-shaped parameter',
+    ).toBeGreaterThan(0);
   });
 });
 
