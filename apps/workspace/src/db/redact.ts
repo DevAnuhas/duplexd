@@ -60,6 +60,53 @@
 const PARAMS_SECTION = /\nparams:[\s\S]*$/;
 
 /**
+ * Own properties that survive redaction, because none of them can carry a
+ * bound value.
+ *
+ * The original list was `query` and `cause` alone, which blanked the fields
+ * that make a database error diagnosable in the first place. On a real unique
+ * violation it produced this:
+ *
+ * ```
+ * code="[redacted]" constraint="[redacted]" table="[redacted]" severity="[redacted]"
+ * ```
+ *
+ * `query` was kept on the grounds that it "names tables and columns" while the
+ * field literally named `table` was being blanked — and `name` going with it
+ * meant every rollback logged as `[redacted]: Rollback`.
+ *
+ * Each entry here is a pg or Drizzle field whose content is structural: an
+ * error code, an identifier from the schema, a position in the statement.
+ * Nothing customer-supplied reaches any of them.
+ *
+ * **`detail` is deliberately absent.** pg builds it as
+ * `Key (prefix)=(dk_live_605b21) already exists.` — it echoes the offending
+ * value, which is the whole thing this file exists to keep out of logs. Same
+ * for `where`, `hint` and `internalQuery`, which can quote statement text.
+ */
+const KEPT_PROPERTIES = new Set([
+  // The parameterised SQL. Placeholders, never values.
+  'query',
+  // Recursed into separately rather than blanked.
+  'cause',
+  // Without this, every DrizzleError logs as `[redacted]: Rollback`.
+  'name',
+  // pg's structural diagnostics. `23505` is how a caller distinguishes a
+  // unique violation from a connection failure.
+  'code',
+  'severity',
+  'constraint',
+  'table',
+  'schema',
+  'column',
+  'dataType',
+  'routine',
+  'file',
+  'line',
+  'position',
+]);
+
+/**
  * Returns `error` with any bound parameters removed from its message and from
  * every error in its `cause` chain.
  *
@@ -78,8 +125,20 @@ export function redactQueryParams(error: unknown): unknown {
   // original message, which is exactly the span we need to find below.
   const stack = typeof error.stack === 'string' ? error.stack : null;
 
+  // A frozen error cannot be assigned to, and this assignment used to sit
+  // outside any `try`. `Object.freeze(err)` anywhere upstream turned the
+  // redaction itself into a `TypeError: Cannot assign to read only property
+  // 'message'`, thrown from inside a rejection handler — which replaces the
+  // database error with an unrelated one *and* leaves the original message
+  // uncleaned wherever it was already captured. Failing to redact is bad;
+  // exploding while trying to is worse.
   if (PARAMS_SECTION.test(original)) {
-    error.message = original.replace(PARAMS_SECTION, '\nparams: [redacted]');
+    try {
+      error.message = original.replace(PARAMS_SECTION, '\nparams: [redacted]');
+    } catch {
+      // Frozen. The own-property pass below still runs, and the caller still
+      // gets its original error rather than a TypeError about this one.
+    }
   }
 
   // `.stack` matters as much as `.message`: `console.error(err)` and Next's
@@ -98,12 +157,16 @@ export function redactQueryParams(error: unknown): unknown {
   if (stack !== null && error.message !== original) {
     const start = stack.indexOf(original);
 
-    error.stack =
-      start === -1
-        ? stack
-        : stack.slice(0, start) +
-          error.message +
-          stack.slice(start + original.length);
+    try {
+      error.stack =
+        start === -1
+          ? stack
+          : stack.slice(0, start) +
+            error.message +
+            stack.slice(start + original.length);
+    } catch {
+      // Frozen, as above.
+    }
   }
 
   // **The third place a value hides, and the one that actually gets logged.**
@@ -116,22 +179,28 @@ export function redactQueryParams(error: unknown): unknown {
   // spotless. Redacting only those two was cosmetic against the field the
   // framework actually emits.
   //
-  // The rule is an allowlist, not a list of things to strip. `query` is kept
-  // because it is the parameterised SQL — placeholders, no values — and it is
-  // what makes the error diagnosable. Everything else is blanked, so a future
-  // library version that attaches a new value-bearing property is covered
-  // without anyone noticing it appeared. That is the same reason item 22c
-  // gives for stripping all parameters rather than secret-shaped ones.
-  for (const key of Object.keys(error)) {
-    if (key === 'query' || key === 'cause') {
+  // The rule is an allowlist, not a list of things to strip. Everything not
+  // named below is blanked, so a future library version that attaches a new
+  // value-bearing property is covered without anyone noticing it appeared —
+  // the same reasoning item 22c gives for stripping all parameters rather than
+  // secret-shaped ones.
+  //
+  // `Reflect.ownKeys`, not `Object.keys`: the latter sees neither symbol keys
+  // nor non-enumerable ones. Nothing in this chain carries a value under a
+  // symbol today, which is exactly the argument that was made for `db.query`
+  // before it turned out to be a hole.
+  for (const key of Reflect.ownKeys(error)) {
+    if (KEPT_PROPERTIES.has(key as string)) {
       continue;
     }
 
     try {
-      (error as unknown as Record<string, unknown>)[key] = '[redacted]';
+      (error as unknown as Record<string | symbol, unknown>)[key] =
+        '[redacted]';
     } catch {
-      // A getter-only or frozen property cannot be blanked. Skipping is the
-      // honest outcome; the message and stack are still clean.
+      // A getter-only property, a throwing setter, or a frozen error. Skipping
+      // is the honest outcome: this pass is best-effort, and the message and
+      // stack have already been handled above on their own terms.
     }
   }
 
@@ -212,6 +281,20 @@ function redacting<T extends object>(target: T): T {
     get(object, property, receiver) {
       const value = Reflect.get(object, property, receiver) as unknown;
 
+      // A proxy may not report a different value for a non-configurable,
+      // non-writable own data property — doing so is a `TypeError` thrown by
+      // the engine, not by us, and it fires on a plain property read. Nothing
+      // in Drizzle's `pg-core` or pg's `lib` is frozen today, so this is a
+      // landmine rather than a live bug; it costs three lines to not step on
+      // it later. Such a property is returned as-is, which means it is not
+      // wrapped — acceptable, because a frozen object cannot be a query
+      // builder whose rejection we would need to catch.
+      const own = Reflect.getOwnPropertyDescriptor(object, property);
+
+      if (own !== undefined && own.writable === false && own.configurable === false) {
+        return value;
+      }
+
       // `then`, `catch` and `finally` all need intercepting. Drizzle's
       // `QueryPromise.catch(fn)` is `this.then(undefined, fn)` — but `this`
       // there is the raw target, not the proxy, so a caller using `.catch()`
@@ -250,26 +333,40 @@ function redacting<T extends object>(target: T): T {
           // `finally` does not receive the error, so the redaction has to be
           // attached alongside the callback rather than through it.
           //
-          // **The callback runs on BOTH settlements, and that is the entire
-          // contract.** An earlier version of this branch passed
-          // `redact(undefined)` as the rejection handler, which redacted and
-          // rethrew but never called the callback — so cleanup that exists
-          // precisely for the failure path (a released lock, a closed span)
-          // was skipped on exactly that path. The leak was closed and a
-          // property nobody was asserting was traded away for it; that trade
-          // is the recurring shape of this file's history, so it is now
-          // asserted rather than assumed.
+          // **This property has now been traded away three times, so it is
+          // stated as a rule: this must be indistinguishable from native
+          // `finally` in ordering and in settlement.** "The callback ran" is
+          // not the bar — that was the second version, and it was still wrong
+          // twice over. Measured against a native control:
+          //
+          //   NATIVE async cb     cleanup-start -> cleanup-end -> settled
+          //   NAIVE  async cb     cleanup-start -> settled
+          //   NATIVE rejecting cb settles with "from-cleanup"
+          //   NAIVE  rejecting cb unhandledRejection -> process terminates
+          //
+          // So the callback's result is **awaited**, because
+          // `await db.x().finally(async () => releaseLock())` otherwise
+          // resumes with the lock still held — cleanup that nominally ran and
+          // was not finished. And a callback returning a rejected promise is
+          // adopted rather than orphaned: unhandled, it kills the process
+          // under Node's default `--unhandled-rejections=throw`, which is
+          // worse than any wrong settlement.
+          //
+          // Native `finally` discards a callback's fulfilment value and keeps
+          // the original settlement; only a throw or rejection from the
+          // callback replaces it. `Promise.resolve(...).then(() => result)`
+          // is exactly that behaviour.
           const onFinally = handlers[0] as (() => unknown) | undefined;
 
           return (object as { then: (...a: unknown[]) => unknown }).then(
-            (result: unknown) => {
-              onFinally?.();
-              return result;
-            },
+            (result: unknown) =>
+              Promise.resolve(onFinally?.()).then(() => result),
             (error: unknown) => {
               const redacted = redactQueryParams(error);
-              onFinally?.();
-              throw redacted;
+
+              return Promise.resolve(onFinally?.()).then(() => {
+                throw redacted;
+              });
             },
           );
         });
