@@ -155,4 +155,41 @@ export const PUBLIC_BOUNDARY_CONTROLS: readonly UrlCase[] = [
   { label: 'a public IPv6 literal', url: 'https://[2606:4700:4700::1111]/hook' },
   { label: 'just below the unique-local block', url: 'https://[fb00::1]/hook' },
   { label: 'just below the link-local block', url: 'https://[fe00::1]/hook' },
+  { label: 'NAT64 wrapping a public address', url: 'https://[64:ff9b::808:808]/hook' },
+  { label: '6to4 wrapping a public address', url: 'https://[2002:b00:5::]/hook' },
+  { label: 'IPv4-mapped wrapping a public address', url: 'https://[::ffff:b00:5]/hook' },
+] as const;
+
+/**
+ * An IPv4 address wearing an IPv6 spelling.
+ *
+ * Three transition formats put a v4 address inside a v6 one, and all three
+ * reach the same machine the dotted spelling does. `new URL` normalises
+ * IPv4-mapped addresses to **hex** — `::ffff:10.0.0.5` becomes `::ffff:a00:5`
+ * — so a check written against the dotted form never fires on what the parser
+ * actually produces, while the dotted form itself is refused by the *pattern*
+ * for an unrelated reason. Right answer, wrong rule, reads as coverage.
+ *
+ * **These are judged by unwrapping, not by refusing the prefix.** Blanket
+ * rejection would be a bug of its own: `64:ff9b::<public v4>` is how an
+ * IPv6-only network legitimately reaches the IPv4 internet, so refusing the
+ * prefix wholesale turns away real targets — the false-rejection-at-save this
+ * module exists to prevent. What makes an address unacceptable is the machine
+ * it reaches, never the spelling.
+ *
+ * The matching accepts live in `PUBLIC_BOUNDARY_CONTROLS`, and they are
+ * load-bearing: against this list alone, "unwraps and range-checks" and
+ * "rejects every transition format" are indistinguishable.
+ */
+export const REJECTED_TRANSITION_FORMATS: readonly UrlCase[] = [
+  { label: 'IPv4-mapped, the metadata endpoint', url: 'https://[::ffff:a9fe:a9fe]/hook' },
+  { label: 'IPv4-mapped loopback', url: 'https://[::ffff:7f00:1]/hook' },
+  { label: 'IPv4-mapped RFC1918 10.0.0.5', url: 'https://[::ffff:a00:5]/hook' },
+  { label: 'IPv4-mapped RFC1918 192.168.0.1', url: 'https://[::ffff:c0a8:1]/hook' },
+  { label: 'IPv4-mapped, fully expanded', url: 'https://[0:0:0:0:0:ffff:a00:5]/hook' },
+  { label: '6to4 wrapping RFC1918 10.0.0.5', url: 'https://[2002:a00:5::]/hook' },
+  { label: '6to4 wrapping loopback', url: 'https://[2002:7f00:1::]/hook' },
+  { label: '6to4 wrapping the metadata endpoint', url: 'https://[2002:a9fe:a9fe::]/hook' },
+  { label: 'NAT64 wrapping RFC1918 10.0.0.5', url: 'https://[64:ff9b::a00:5]/hook' },
+  { label: 'NAT64 wrapping the metadata endpoint', url: 'https://[64:ff9b::a9fe:a9fe]/hook' },
 ] as const;

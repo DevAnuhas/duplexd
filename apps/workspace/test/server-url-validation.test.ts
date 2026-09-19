@@ -7,6 +7,7 @@ import {
   FLAG_GATED_LOOPBACK,
   PUBLIC_BOUNDARY_CONTROLS,
   REJECTED_PRIVATE_ADDRESSES,
+  REJECTED_TRANSITION_FORMATS,
   ACCEPTED_SERVER_URLS,
   REJECTED_PORTS,
   REJECTED_SERVER_URLS,
@@ -386,55 +387,101 @@ describe('addresses inside the platform’s network', () => {
 });
 
 /**
- * **Currently red. An IPv4 address wearing an IPv6 spelling bypasses the range
- * check, including the cloud metadata endpoint.**
+ * An IPv4 address wearing an IPv6 spelling reaches the same machine.
  *
- * `privateAddressReason` has a branch for exactly this — it matches
- * `^::ffff:(.+)$` and feeds the remainder to `ipv4Octets`. That branch never
- * fires, because it expects the **dotted** form `::ffff:10.0.0.5`, and
- * `new URL` normalises IPv4-mapped addresses to **hex**: `::ffff:a00:5`.
- * `ipv4Octets` returns null on that, the code falls through to the plain IPv6
- * checks, none of which match, and the address is accepted.
+ * `privateAddressReason` had a branch for exactly this and it never fired: it
+ * matched the **dotted** form `::ffff:10.0.0.5`, while `new URL` normalises
+ * IPv4-mapped addresses to **hex**, `::ffff:a00:5`. What hid it is that the
+ * dotted spelling *is* refused — but by the *scheme* rule, because the
+ * pattern's IPv6 class is `[0-9a-fA-F:]+` and rejects the dots. So the one
+ * spelling a person checks by hand was turned away for an unrelated reason
+ * while the spelling the parser produces went through, and the metadata
+ * endpoint was reachable as `[::ffff:a9fe:a9fe]`.
  *
- * The dotted form is refused, which is what hides it — but by the *scheme*
- * rule, not the range rule, because the pattern's IPv6 class is
- * `[0-9a-fA-F:]+` and rejects the dots. So the one spelling anybody would
- * test by hand is turned away for an unrelated reason while the spelling the
- * parser actually produces sails through.
- *
- * Measured on `96b16f2`:
- *
- *     ACCEPT  host=[::ffff:a9fe:a9fe]  https://[::ffff:a9fe:a9fe]/hook   <- 169.254.169.254
- *     ACCEPT  host=[::ffff:7f00:1]     https://[::ffff:7f00:1]/hook      <- 127.0.0.1
- *     ACCEPT  host=[::ffff:a00:5]      https://[::ffff:a00:5]/hook       <- 10.0.0.5
- *
- * This is the hole the rule was added to close, still open under a different
- * spelling of the same address.
+ * **The rule is unwrap-then-judge, not refuse-the-prefix**, and the accepts
+ * below are what prove it. `64:ff9b::<public v4>` is how an IPv6-only network
+ * reaches the IPv4 internet; rejecting that prefix wholesale would turn away
+ * real targets, which is the false-rejection-at-save this module exists to
+ * prevent.
  */
-describe('IPv4-mapped IPv6 addresses', () => {
-  it.each([
-    ['the cloud metadata endpoint as ::ffff:a9fe:a9fe', 'https://[::ffff:a9fe:a9fe]/hook'],
-    ['loopback as ::ffff:7f00:1', 'https://[::ffff:7f00:1]/hook'],
-    ['RFC1918 10.0.0.5 as ::ffff:a00:5', 'https://[::ffff:a00:5]/hook'],
-    ['RFC1918 192.168.0.1 as ::ffff:c0a8:1', 'https://[::ffff:c0a8:1]/hook'],
-    ['10.0.0.5 fully expanded', 'https://[0:0:0:0:0:ffff:a00:5]/hook'],
-  ])('refuses %s — %s', (_label, url) => {
-    allowLoopback(false);
+describe('IPv4 addresses in IPv6 clothing', () => {
+  it.each(REJECTED_TRANSITION_FORMATS.map((entry) => [entry.label, entry.url]))(
+    'refuses %s by the range rule — %s',
+    (_label, url) => {
+      allowLoopback(false);
 
-    expect(
-      rejectionRule(url),
-      `${url} reaches the same machine as its dotted spelling and was accepted`,
-    ).toBe('range');
+      expect(
+        rejectionRule(url),
+        `${url} reaches the same machine as its dotted spelling and was accepted`,
+      ).toBe('range');
+    },
+  );
+
+  /**
+   * With the flag on, the exemption follows the **unwrapped address**, not the
+   * spelling — so the ones wrapping a non-loopback private address are still
+   * refused. The loopback-wrapping ones are handled below, where being exempt
+   * is the correct behaviour rather than a hole.
+   */
+  it.each(
+    REJECTED_TRANSITION_FORMATS.filter(
+      (entry) => !entry.label.includes('loopback'),
+    ).map((entry) => [entry.label, entry.url]),
+  )('still refuses %s with the loopback flag on — %s', (_label, url) => {
+    allowLoopback(true);
+
+    expect(rejectionRule(url), `the flag exempted ${url}`).toBe('range');
   });
 
   /**
-   * The control, and the reason this is a bug rather than a scope question:
-   * the dotted spelling *is* refused, so the intent is not in doubt — only the
-   * spelling the URL parser actually hands the validator was missed.
+   * And the flag's exemption is about the address, not the notation. A
+   * developer writing `[::ffff:7f00:1]` has written `127.0.0.1`, so the flag
+   * has to treat it the same way — a rule that exempted only the dotted
+   * spelling would be the same inconsistency that made `https://localhost`
+   * accepted while `https://127.0.0.1` was refused.
    */
-  it('already refuses the dotted spelling, so the intent is clear', () => {
+  it.each([
+    ['IPv4-mapped loopback', 'https://[::ffff:7f00:1]/hook'],
+    ['6to4 wrapping loopback', 'https://[2002:7f00:1::]/hook'],
+  ])('exempts %s with the flag on, like any other loopback spelling — %s', (_label, url) => {
+    allowLoopback(true);
+
+    expect(validateServerUrl(url), `${url} unwraps to loopback and was refused`).toBeNull();
+
     allowLoopback(false);
 
-    expect(validateServerUrl('https://[::ffff:10.0.0.5]/hook')).not.toBeNull();
+    expect(rejectionRule(url), `${url} was not refused with the flag off`).toBe('range');
+  });
+
+  /**
+   * The controls, and they are the whole argument. Against the rejected list
+   * alone, "unwraps and range-checks" is indistinguishable from "rejects every
+   * transition format" — and the second is a bug, because it refuses
+   * legitimate IPv6-only egress to the IPv4 internet.
+   */
+  it.each([
+    ['NAT64 wrapping 8.8.8.8', 'https://[64:ff9b::808:808]/hook'],
+    ['6to4 wrapping 11.0.0.5', 'https://[2002:b00:5::]/hook'],
+    ['IPv4-mapped 11.0.0.5', 'https://[::ffff:b00:5]/hook'],
+  ])('accepts %s, which reaches a public address — %s', (_label, url) => {
+    allowLoopback(false);
+
+    expect(
+      validateServerUrl(url),
+      `${url} reaches a public address and was refused — the prefix is being ` +
+        'rejected wholesale rather than unwrapped',
+    ).toBeNull();
+  });
+
+  /**
+   * The dotted spelling is refused too, but by the pattern rather than the
+   * range rule. Pinned so the asymmetry is recorded rather than rediscovered:
+   * it is the reason this went unnoticed.
+   */
+  it('refuses the dotted spelling at the pattern, not the range rule', () => {
+    allowLoopback(false);
+
+    expect(SERVER_URL_PATTERN.test('https://[::ffff:10.0.0.5]/hook')).toBe(false);
+    expect(rejectionRule('https://[::ffff:10.0.0.5]/hook')).toBe('scheme');
   });
 });
