@@ -27,6 +27,122 @@ export const SERVER_URL_PATTERN =
 /** Provider identifier rules for a tool name. */
 const TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 
+/**
+ * Opens the local-development exception for loopback webhook targets.
+ *
+ * **Defaulted off, deliberately.** A deployment that sets nothing rejects
+ * loopback, because a default-on dev exception is a production hole waiting for
+ * someone to not set the variable — the failure is silent and looks like
+ * working software.
+ *
+ * Read inside the function rather than at module load so a test can set it, and
+ * never `NEXT_PUBLIC_`: this module is server-only (the form imports only its
+ * *type*, which is erased), and a client-readable flag would be one a caller
+ * could reason about.
+ */
+function loopbackAllowed(): boolean {
+  return process.env.ALLOW_LOOPBACK_SERVER_URL === 'true';
+}
+
+/** The four octets of a dotted-quad, or `null` if it is not one. */
+function ipv4Octets(host: string): number[] | null {
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+
+  if (match === null) {
+    return null;
+  }
+
+  const octets = match.slice(1).map(Number);
+
+  return octets.every((octet) => octet <= 255) ? octets : null;
+}
+
+/**
+ * Why this host must not be a webhook target, or `null` if it may be.
+ *
+ * **Literal addresses only. This does no DNS, by explicit decision.** A
+ * save-time lookup stops no attacker — anyone deliberately aiming the platform's
+ * egress at internal infrastructure controls the record, points it public for
+ * the save and private a minute later on a short TTL — while adding a network
+ * dependency to a synchronous save path and a production failure mode where
+ * slow DNS means nobody can save an assistant. It would read as protection
+ * while providing none against an adversary, which is the worst kind of
+ * control to ship.
+ *
+ * The defence that works is at egress: resolve, refuse non-globally-routable
+ * addresses, and pin the connection to the address that was checked so DNS
+ * cannot change between the check and the connect. That lives with the agent,
+ * in #27, and this function is not a substitute for it.
+ *
+ * What this *does* stop is the careless and the obvious: a literal
+ * `169.254.169.254` aimed at cloud instance metadata, a literal `10.0.0.5`
+ * aimed at something on the private network.
+ */
+function privateAddressReason(hostname: string): string | null {
+  // `new URL` brackets IPv6 literals and lower-cases the host.
+  const bare = hostname.startsWith('[') && hostname.endsWith(']')
+    ? hostname.slice(1, -1)
+    : hostname;
+
+  // `::ffff:10.0.0.5` is an IPv4 address wearing an IPv6 spelling, and reaches
+  // exactly the same machine.
+  const mapped = /^::ffff:(.+)$/i.exec(bare);
+  const octets = ipv4Octets(mapped === null ? bare : mapped[1]!);
+
+  if (octets !== null) {
+    const [a, b] = octets as [number, number, number, number];
+
+    if (a === 127) {
+      return 'a loopback address';
+    }
+
+    if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) {
+      return 'a private network address';
+    }
+
+    if (a === 169 && b === 254) {
+      // 169.254.169.254 is the cloud instance metadata endpoint on every major
+      // provider, and reaching it from a server-side fetch is the classic way
+      // credentials walk out of a deployment.
+      return 'a link-local address, which includes the cloud metadata endpoint';
+    }
+
+    if (a === 0) {
+      return 'an unspecified address';
+    }
+
+    return null;
+  }
+
+  if (!bare.includes(':')) {
+    // A DNS name. Not our business here — see the note above on why this does
+    // not resolve it.
+    return null;
+  }
+
+  const ipv6 = bare.toLowerCase();
+
+  if (ipv6 === '::1') {
+    return 'a loopback address';
+  }
+
+  if (ipv6 === '::') {
+    return 'an unspecified address';
+  }
+
+  // fc00::/7 unique-local: the IPv6 equivalent of RFC 1918.
+  if (/^f[cd][0-9a-f]{0,2}:/.test(ipv6)) {
+    return 'a unique-local address';
+  }
+
+  // fe80::/10 link-local.
+  if (/^fe[89ab][0-9a-f]?:/.test(ipv6)) {
+    return 'a link-local address';
+  }
+
+  return null;
+}
+
 export type ValidationIssue = {
   /** Which field the customer needs to look at. */
   field: string;
@@ -123,6 +239,35 @@ export function validateServerUrl(value: string | null | undefined): ValidationI
     return {
       field: 'serverUrl',
       message: 'That hostname has an empty part. Check for a stray or doubled dot.',
+    };
+  }
+
+  // The webhook is called by the platform, from the platform's network. A
+  // target inside that network is not the customer's own service — it is ours,
+  // reached with our credentials and from inside our perimeter.
+  //
+  // The loopback spellings the pattern allows for local development are part of
+  // this: `http://localhost` used to be accepted unconditionally, which meant
+  // production accepted it too. It now needs the flag, and the flag is off
+  // unless a deployment says otherwise.
+  const isLoopback =
+    parsed.hostname === 'localhost' ||
+    privateAddressReason(parsed.hostname) === 'a loopback address';
+
+  if (isLoopback && loopbackAllowed()) {
+    return null;
+  }
+
+  const reason = isLoopback
+    ? 'a loopback address'
+    : privateAddressReason(parsed.hostname);
+
+  if (reason !== null) {
+    return {
+      field: 'serverUrl',
+      message:
+        `That is ${reason}. A webhook is called from the platform's own ` +
+        'network, so it must point at a publicly reachable host.',
     };
   }
 
