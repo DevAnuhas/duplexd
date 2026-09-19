@@ -10,7 +10,7 @@
     "db:migrate": "pnpm --filter workspace db:migrate",
     "dev": "pnpm --filter workspace dev",
     "lint": "pnpm run lint:root && pnpm --filter workspace lint",
-    "lint:links": "find . -type f -name '*.md' -not -path './.git/*' -not -path './node_modules/*' -not -path './**/node_modules/*' -not -path './**/.next/*' -print0 | xargs -0 markdown-link-check --quiet --config .markdown-link-check.json",
+    "lint:links": "find . -type f -name '*.md' -not -path './.git/*' -not -path './node_modules/*' -not -path './**/node_modules/*' -not -path './**/.venv/*' -not -path './**/.next/*' -print0 | xargs -0 markdown-link-check --quiet --config .markdown-link-check.json",
     "lint:root": "bash -n scripts/classify-docs-only.sh && eslint --max-warnings=0 eslint.config.js vitest.config.ts tests",
     "test": "pnpm run test:root && pnpm --filter workspace test",
     "test:root": "vitest run",
