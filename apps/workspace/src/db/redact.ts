@@ -59,6 +59,21 @@ export function redactQueryParams(error: unknown): unknown {
     );
   }
 
+  // `.stack` must be rewritten too, and this is structural rather than
+  // belt-and-braces. V8 formats the stack string once, lazily, and caches it
+  // — so if anything read `.stack` before this ran, that string still holds
+  // the original message with its parameters. `console.error(err)` and Next's
+  // own logger print `.stack`, not `.message`, so redacting only the message
+  // leaves the values in the exact field most loggers emit.
+  //
+  // Verified on Node 24.21.0: mutate the message without touching `.stack`
+  // first and the stack is clean; read `.stack` first and the parameters
+  // survive there. Whether that happens depends on who touched the error
+  // before us, which is not a property to rely on.
+  if (typeof error.stack === 'string' && PARAMS_SECTION.test(error.stack)) {
+    error.stack = error.stack.replace(PARAMS_SECTION, '\nparams: [redacted]');
+  }
+
   if (error.cause !== undefined && error.cause !== null) {
     redactQueryParams(error.cause);
   }

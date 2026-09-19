@@ -30,22 +30,36 @@ const BASE62 =
   '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 
 /**
- * 32 bytes from the CSPRNG, rendered base62.
+ * 32 characters drawn uniformly from a 62-character alphabet, via the CSPRNG.
  *
  * `randomBytes`, never `Math.random` — which is seeded, predictable, and has
- * no business anywhere near a credential — and never a UUID, which is mostly
- * version and variant bits rather than entropy.
+ * no business near a credential — and never a UUID, which is mostly version
+ * and variant bits rather than entropy.
  *
- * Bytes are mapped by rejection-free modulo over a 62-character alphabet. The
- * slight bias that introduces is irrelevant against 256 bits of input; what
- * matters is that every byte comes from the CSPRNG.
+ * **Rejection sampling, not modulo.** 256 is not a multiple of 62, so
+ * `byte % 62` makes the first eight symbols 5/4 as likely as the rest. The
+ * remaining entropy would still be ample here, which is exactly why it is
+ * tempting to leave — but "base62 from a CSPRNG" is read as uniform, and a
+ * credential primitive that quietly is not is the kind of thing that gets
+ * copied into somewhere the margin is thinner. Bytes at or above the largest
+ * multiple of 62 are discarded and redrawn.
  */
 function generateKey(): string {
-  const bytes = randomBytes(32);
+  const LIMIT = Math.floor(256 / BASE62.length) * BASE62.length; // 248
   let rendered = '';
 
-  for (const byte of bytes) {
-    rendered += BASE62[byte % BASE62.length];
+  while (rendered.length < 32) {
+    for (const byte of randomBytes(32)) {
+      if (byte >= LIMIT) {
+        continue;
+      }
+
+      rendered += BASE62[byte % BASE62.length];
+
+      if (rendered.length === 32) {
+        break;
+      }
+    }
   }
 
   return `${KEY_PREFIX}${rendered}`;
