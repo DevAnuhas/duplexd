@@ -23,7 +23,7 @@ Each is a ticket, each independently mergeable, in this order because each needs
 | # | Ticket | Ends when | State |
 | --- | --- | --- | --- |
 | P01 | Prune the retired engine and re-orient the docs | The repository describes the platform and the build commands are green on what remains | [#24](https://github.com/DevAnuhas/duplexd/issues/24) — done |
-| P02 | Workspace foundation: Next.js app, Better Auth, Drizzle, the schema, deploy configuration | A human signs in to an empty workspace | [#25](https://github.com/DevAnuhas/duplexd/issues/25) |
+| P02 | Workspace foundation: Next.js app, Better Auth, Drizzle, the schema, deploy configuration | A human signs in to an empty workspace | [#25](https://github.com/DevAnuhas/duplexd/issues/25) — in review |
 | P03 | Assistants and API keys: CRUD, tool-list validation, key issue and revoke | An assistant with tools exists and a key can be minted and revoked | [#26](https://github.com/DevAnuhas/duplexd/issues/26) |
 | P04 | Agent runtime: the gate spike generalized, config fetched from the API, deployed to Pipecat Cloud | A real call runs against a real assistant record | [#27](https://github.com/DevAnuhas/duplexd/issues/27) |
 | P05 | Control API: `POST /v1/calls`, room handoff, call rows, agent event ingest, completion, stale-call sweep | A call placed by API key is recorded start to finish | [#28](https://github.com/DevAnuhas/duplexd/issues/28) |

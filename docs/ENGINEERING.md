@@ -100,7 +100,9 @@ The `checks` job runs a PostgreSQL 18 service container and sets `DATABASE_URL` 
 
 ## Environment variables
 
-`.env.example` lists every variable the app reads and nothing else. Copy it to `.env.local`, which is gitignored. The app fails at server start naming any that is missing — it never falls back to a default, because a defaulted database URL connects somewhere unintended and a defaulted encryption key is the same as no encryption.
+`.env.example` lists every variable the app reads and nothing else. Copy it to `.env.local`, which is gitignored.
+
+**The server refuses to start if any of them is missing, naming the one it wants.** That check lives in `src/instrumentation.ts`, which Next runs when the server boots and not during `next build`, so the image still builds with nothing set. Validating at first use instead would be too late in the way that matters: `ASSISTANT_SECRET_KEY` is only read when an assistant's webhook secret is encrypted, so a deploy missing it would boot green, serve every page, and fail on the first customer who saves a secret. Nothing is ever defaulted — a defaulted database URL connects somewhere unintended, and a defaulted encryption key is the same as no encryption.
 
 - `DATABASE_URL` — PostgreSQL connection string
 - `BETTER_AUTH_SECRET` — session signing secret

@@ -10,7 +10,7 @@
     "db:migrate": "node --experimental-strip-types src/db/migrate.ts",
     "dev": "next dev",
     "lint": "eslint --max-warnings=0 .",
-    "start": "cp -R .next/static .next/standalone/apps/workspace/.next/static && node .next/standalone/apps/workspace/server.js",
+    "start": "rm -rf .next/standalone/apps/workspace/.next/static && cp -R .next/static .next/standalone/apps/workspace/.next/static && node .next/standalone/apps/workspace/server.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

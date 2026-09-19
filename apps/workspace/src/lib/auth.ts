@@ -84,6 +84,12 @@ function createAuth() {
        *
        * This is why the list is one header rather than a fallback chain: a
        * fallback is only as trustworthy as its weakest entry.
+       *
+       * The trust is in Fly Proxy, not in the header's name. `fly-client-ip`
+       * is believable here only because Fly overwrites it on every proxied
+       * request. Deployed anywhere that does not, a client can set it freely
+       * and the limiter stops holding — so moving off Fly means revisiting
+       * this line, not just the hostname.
        */
       ipAddress: {
         ipAddressHeaders: ['fly-client-ip'],
