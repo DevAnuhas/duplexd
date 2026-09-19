@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
 import { getCurrentAccount } from '@/lib/account';
@@ -25,7 +26,10 @@ export default async function HomePage() {
       <p>
         Signed in. Account <code>{account.accountId}</code>.
       </p>
-      <p>Assistants and API keys land in the next ticket.</p>
+      <p>
+        <Link href="/assistants">Assistants</Link> ·{' '}
+        <Link href="/keys">API keys</Link>
+      </p>
       <SignOutButton />
     </main>
   );

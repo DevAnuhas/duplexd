@@ -34,6 +34,12 @@ export const DATABASE_BACKED_FILES = [
   'api-keys-schema',
   'signup-account',
   'account-resolver',
+  // P03.
+  'api-keys',
+  'assistant-write-path',
+  'cross-account-writes',
+  'query-param-redaction',
+  'server-secret-lifecycle',
 ] as const;
 
 export default async function setup(): Promise<void> {

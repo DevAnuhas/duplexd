@@ -14,9 +14,28 @@ import * as schema from '@/db/schema';
  * import would pull `DATABASE_URL` and `BETTER_AUTH_SECRET` into `next build`,
  * and the production image must build with no database and no secrets.
  *
- * Login is the half of authentication that just needs to work. The half that
- * gets the care is API keys, which is what an integrating project actually
- * holds — those are P03, and they are deliberately not this.
+ * **The session is security-critical, and an earlier version of this comment
+ * said the opposite.** It read "login is the half of authentication that just
+ * needs to work", on the reasoning that API keys are what an integrating
+ * project actually holds. That is wrong, and it is wrong in the way that
+ * propagates: the next reader deprioritises the thing it dismisses.
+ *
+ * A session mints API keys and edits webhook targets and secrets. Its blast
+ * radius is therefore every key it can issue and every webhook it can
+ * redirect — a stolen session is worth strictly more than any single key,
+ * because it can mint more.
+ *
+ * Two consequences worth knowing before changing anything here:
+ *
+ *  - **Session posture is not observable from the test suite.** Better Auth
+ *    derives `skipOriginCheck` from `isTest()`, so under Vitest the origin
+ *    check returns before comparing anything. A probe run there reports a
+ *    cross-origin sign-in succeeding whether or not production would reject
+ *    it — measuring the absence of a check that is switched off. Assert this
+ *    against a running server, or not at all.
+ *  - `Secure` and the `__Secure-` cookie prefix follow `BETTER_AUTH_URL`'s
+ *    scheme, which is why that variable is required and validated at boot
+ *    rather than derived from the request.
  */
 
 function createAuth() {

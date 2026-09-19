@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "ajv": "8.20.0",
     "better-auth": "1.7.5",
     "drizzle-orm": "0.45.2",
     "next": "16.3.5",

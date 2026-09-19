@@ -2,6 +2,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 
 import { requireDatabaseUrl } from './env.ts';
+import { withRedactedQueryErrors } from './redact.ts';
 import * as schema from './schema.ts';
 
 /**
@@ -25,7 +26,9 @@ let db: ReturnType<typeof drizzle<typeof schema>> | undefined;
 export function getDb(): ReturnType<typeof drizzle<typeof schema>> {
   if (db === undefined) {
     pool = new Pool({ connectionString: requireDatabaseUrl() });
-    db = drizzle(pool, { schema });
+    // Wrapped here so every caller is covered, including Better Auth's
+    // adapter, which receives this same client and cannot opt in itself.
+    db = withRedactedQueryErrors(drizzle(pool, { schema }));
   }
 
   return db;

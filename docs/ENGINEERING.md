@@ -135,6 +135,49 @@ pnpm --filter workspace start                  # runs .next/standalone/apps/work
 
 Run the Python agent with `uv run --directory agent bot` and a Pipecat runner transport argument.
 
+### The assistant's webhook secret, and what the database layer will not log
+
+The secret a customer gives an assistant is theirs, held on the platform's
+behalf. It is encrypted with AES-256-GCM before it reaches an insert, and the
+read paths return a **boolean** saying whether one is set rather than the value
+— so nothing that renders a page could leak it even by accident.
+
+One consequence is less obvious and worth knowing before adding a query.
+Drizzle builds a failed query's error as `Failed query: <sql>` followed by
+`params: <bound values>`, which puts every parameter into whatever catches it.
+`src/db/redact.ts` wraps the client `getDb()` returns and strips those values
+from **three** places, because a value that survives in any one of them reaches
+a log:
+
+- `.message`, which is where Drizzle writes them.
+- `.stack`, because V8 formats it once and caches it, so anything that read it
+  before redaction would have kept the original. It is repaired by splicing the
+  redacted message over the original's span rather than by matching a pattern —
+  a boundary guessed from content is guessed from *customer free text*, and an
+  `instructions` field containing a wrapped sentence is indistinguishable from a
+  stack frame.
+- **Own enumerable properties.** `DrizzleQueryError` does not only build its
+  message from the parameters, it keeps them as `query` and `params`. Those are
+  what `util.inspect` prints, which is what `console.error(err)` does, which is
+  what Next's logger does with a caught error. Redacting the first two alone was
+  cosmetic against the field frameworks actually emit. The rule is an allowlist:
+  `query` is kept because it is parameterised SQL with no values in it, and
+  anything a future version attaches is blanked without anyone having to notice
+  it appeared.
+
+Coverage is by route as well as by field. `await`, `.catch()`, `.finally()` and
+`db.query` — Drizzle's relational API, which `getDb()` enables by passing
+`{ schema }` — all reach the client by different paths, and the last three
+originally bypassed the wrapper entirely because they are not `then` on the
+proxy. Nothing in the repository uses them today, which is exactly why they
+would have been missed.
+
+It sits on the client rather than on each call site deliberately: Better Auth's
+adapter receives the same client and runs its own queries through it, and could
+never opt into a per-call-site wrapper. **If you add a database call, you
+inherit this for free; if you add a second client, you do not.** See
+[#33](https://github.com/DevAnuhas/duplexd/issues/33).
+
 ## CI
 
 `.github/workflows/ci.yml` always starts for pull requests and pushes to `main`. Its `changes` job runs the repository's merge-base-aware path classifier. Code changes run the Node checks in `checks` and the independent frozen Python lint, typecheck, tests, and Docker build in `agent`; documentation-only changes run `pnpm lint:links` in `docs`. Unselected jobs report skipped rather than disappearing, so branch protection can require the stable check names recorded in [WORKFLOW.md](WORKFLOW.md).
@@ -147,12 +190,20 @@ The `checks` job runs a PostgreSQL 18 service container and sets `DATABASE_URL` 
 
 `.env.example` lists every variable the app reads and nothing else. Copy it to `.env.local`, which is gitignored.
 
-**The server exits if any of them is missing, naming the one it wants, before it binds the port.** That check lives in `src/instrumentation.ts`, which Next runs when the server boots and not during `next build`, so the image still builds with nothing set. Validating at first use instead would be too late in the way that matters: `ASSISTANT_SECRET_KEY` is only read when an assistant's webhook secret is encrypted, so a deploy missing it would boot green, serve every page, and fail on the first customer who saves a secret. It exits rather than merely throwing: Next catches a throw from that hook, and the process would stay alive holding the port and answering 500s — which anything watching the port reads as a healthy machine serving nothing. Nothing is ever defaulted — a defaulted database URL connects somewhere unintended, and a defaulted encryption key is the same as no encryption.
+**Four of them are required, and the server exits if any is missing, naming the one it wants, before it binds the port.** That check lives in `src/instrumentation.ts`, which Next runs when the server boots and not during `next build`, so the image still builds with nothing set. Validating at first use instead would be too late in the way that matters: `ASSISTANT_SECRET_KEY` is only read when an assistant's webhook secret is encrypted, so a deploy missing it would boot green, serve every page, and fail on the first customer who saves a secret. It exits rather than merely throwing: Next catches a throw from that hook, and the process would stay alive holding the port and answering 500s — which anything watching the port reads as a healthy machine serving nothing. Nothing is ever defaulted — a defaulted database URL connects somewhere unintended, and a defaulted encryption key is the same as no encryption.
 
 - `DATABASE_URL` — PostgreSQL connection string
 - `BETTER_AUTH_SECRET` — session signing secret
 - `BETTER_AUTH_URL` — the public origin the app is served from
 - `ASSISTANT_SECRET_KEY` — 32 bytes hex, encrypts assistants' webhook secrets at rest
+
+One more is **optional**, and it is the one an operator can set wrongly:
+
+- `ALLOW_LOOPBACK_SERVER_URL` — set to the literal `true` to let an assistant's server URL point at loopback (`http://localhost`, `127.0.0.1`, `[::1]`) for local development.
+
+It must **not** join the list above, and the server must not exit without it: unset means off, which is the safe behaviour. That is why the exit check covers four variables and not five, and a test asserts the absent-safety rather than describing it — with the flag unset or empty, a loopback URL is refused.
+
+**Setting it in a hosted environment opens the private-network exception in production.** A webhook is called from the platform's own network, so a loopback target there is not the customer's service but ours. See [OPERATIONS.md](OPERATIONS.md#webhook-targets) for what the rule protects.
 
 Never commit values.
 
