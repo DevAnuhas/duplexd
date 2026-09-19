@@ -161,7 +161,52 @@ export function redactQueryParams(error: unknown): unknown {
  *
  * Everything else is forwarded untouched, and any object a method returns is
  * wrapped the same way so the chain keeps its shape.
+ *
+ * **Wrappers are memoised, and that is a correctness requirement rather than a
+ * performance one.** Building a fresh wrapper per property read makes
+ * `client.x === client.x` evaluate to `false`, because the two reads return
+ * two different proxies. Anything that compares by identity, or keys a `Map`,
+ * `Set` or `WeakMap` on a value read through the client, then silently misses
+ * — and Drizzle and Better Auth both hold schema and table objects, which are
+ * exactly the kind of thing keyed by identity. Measured before fixing: five
+ * reads of one property produced five distinct proxies.
+ *
+ * The cache is keyed by target and property **and stores the raw value it
+ * wrapped**, so a property that is later reassigned gets a fresh wrapper
+ * instead of a stale one pointing at the old value. Keying on the property
+ * alone would cache a wrapper around a value that is no longer there; keying
+ * on the value alone would hand a `then` wrapper to a non-`then` property that
+ * happened to share a function.
  */
+type Wrapped = { source: unknown; wrapper: unknown };
+
+const wrapperCache = new WeakMap<object, Map<string | symbol, Wrapped>>();
+
+function memoise(
+  object: object,
+  property: string | symbol,
+  source: unknown,
+  build: () => unknown,
+): unknown {
+  let byProperty = wrapperCache.get(object);
+
+  if (byProperty === undefined) {
+    byProperty = new Map();
+    wrapperCache.set(object, byProperty);
+  }
+
+  const cached = byProperty.get(property);
+
+  if (cached !== undefined && cached.source === source) {
+    return cached.wrapper;
+  }
+
+  const wrapper = build();
+  byProperty.set(property, { source, wrapper });
+
+  return wrapper;
+}
+
 function redacting<T extends object>(target: T): T {
   return new Proxy(target, {
     get(object, property, receiver) {
@@ -176,7 +221,7 @@ function redacting<T extends object>(target: T): T {
         (property === 'then' || property === 'catch' || property === 'finally') &&
         typeof value === 'function'
       ) {
-        return function settled(...handlers: unknown[]) {
+        return memoise(object, property, value, () => function settled(...handlers: unknown[]) {
           const redact = (handler: unknown) => (error: unknown) => {
             const redacted = redactQueryParams(error);
 
@@ -227,11 +272,11 @@ function redacting<T extends object>(target: T): T {
               throw redacted;
             },
           );
-        };
+        });
       }
 
       if (typeof value === 'function') {
-        return function forwarded(...args: unknown[]) {
+        return memoise(object, property, value, () => function forwarded(...args: unknown[]) {
           const result = (value as (...a: unknown[]) => unknown).apply(
             object,
             args,
@@ -240,7 +285,7 @@ function redacting<T extends object>(target: T): T {
           return typeof result === 'object' && result !== null
             ? redacting(result)
             : result;
-        };
+        });
       }
 
       // A plain object property is wrapped too. `db.query` — Drizzle's
@@ -249,7 +294,7 @@ function redacting<T extends object>(target: T): T {
       // and every query made through it was unprotected. Nothing uses it
       // today, which is precisely why it would have been missed.
       if (typeof value === 'object' && value !== null) {
-        return redacting(value);
+        return memoise(object, property, value, () => redacting(value));
       }
 
       return value;
