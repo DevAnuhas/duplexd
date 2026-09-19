@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { validateServerUrl } from '@/lib/validate';
+
 import {
   requireAuthSecret,
   requireAuthUrl,
@@ -32,6 +34,16 @@ const VARIABLES = [
   'BETTER_AUTH_SECRET',
   'BETTER_AUTH_URL',
 ] as const;
+
+/**
+ * Documented in `.env.example`, read directly, and deliberately unguarded.
+ *
+ * Each one must be **absent-safe**: unset has to mean the safe behaviour, not
+ * an error and not the permissive behaviour. That is what justifies it having
+ * no `require…()` guard, and it is asserted rather than asserted about — see
+ * the absent-safe test below.
+ */
+const OPTIONAL_VARIABLES = ['ALLOW_LOOPBACK_SERVER_URL'] as const;
 
 describe('environment guards', () => {
   let saved: Partial<Record<(typeof VARIABLES)[number], string | undefined>> = {};
@@ -260,11 +272,25 @@ describe('environment guards', () => {
 
   /**
    * `.env.example` is the app's account of what it needs, and item 19 requires
-   * it to be complete and to contain nothing else. This pins the two halves
-   * together: every variable with a guard is listed, and the file lists no
-   * variable that has no guard.
+   * it to be complete and to contain nothing else.
+   *
+   * **This was "exactly the guarded variables" and is now "guarded plus
+   * declared-optional", which is a weakening, so it is worth saying what was
+   * kept.** The original invariant's real value was that nothing could sit in
+   * this file unvalidated — a variable the app reads but nothing checks is a
+   * trap. `ALLOW_LOOPBACK_SERVER_URL` genuinely has no guard and should not
+   * have one: a `require…()` guard exists to fail closed when *required*
+   * config is missing, and an optional flag whose absence means "off" is
+   * already closed.
+   *
+   * So the teeth move rather than come out. An optional variable has to earn
+   * its place by being **absent-safe** — with it unset the application must
+   * behave as the safe default — and that is asserted below rather than
+   * asserted about. A new *required* variable still has to have a guard,
+   * because it will not be in `OPTIONAL_VARIABLES` and the set comparison will
+   * fail.
    */
-  it('lists exactly the guarded variables in .env.example', () => {
+  it('lists exactly the guarded and declared-optional variables in .env.example', () => {
     const example = readFileSync(
       fileURLToPath(new URL('../../../.env.example', import.meta.url)),
       'utf8',
@@ -274,6 +300,56 @@ describe('environment guards', () => {
       .map((match) => match[1] ?? '')
       .sort();
 
-    expect(listed).toStrictEqual([...VARIABLES].sort());
+    expect(listed).toStrictEqual(
+      [...VARIABLES, ...OPTIONAL_VARIABLES].sort(),
+    );
+  });
+});
+
+/**
+ * The obligation that comes with being optional.
+ *
+ * A variable listed in `.env.example` without a guard is only acceptable while
+ * its absence is the safe outcome. `ALLOW_LOOPBACK_SERVER_URL` unset must mean
+ * loopback is **refused** — a default-on dev exception is a production hole
+ * waiting for someone not to set the variable, which is exactly what this flag
+ * was introduced to close.
+ */
+describe('declared-optional variables are absent-safe', () => {
+  const savedFlag = process.env.ALLOW_LOOPBACK_SERVER_URL;
+
+  afterEach(() => {
+    if (savedFlag === undefined) {
+      delete process.env.ALLOW_LOOPBACK_SERVER_URL;
+    } else {
+      process.env.ALLOW_LOOPBACK_SERVER_URL = savedFlag;
+    }
+  });
+
+  it.each([
+    ['unset', undefined],
+    ['the empty string', ''],
+  ])('refuses loopback when ALLOW_LOOPBACK_SERVER_URL is %s', (_label, value) => {
+    if (value === undefined) {
+      delete process.env.ALLOW_LOOPBACK_SERVER_URL;
+    } else {
+      process.env.ALLOW_LOOPBACK_SERVER_URL = value;
+    }
+
+    expect(
+      validateServerUrl('http://localhost:3000/hook'),
+      'loopback was accepted with the flag unset — the dev exception is on by default',
+    ).not.toBeNull();
+  });
+
+  it('accepts loopback only when it is exactly "true"', () => {
+    process.env.ALLOW_LOOPBACK_SERVER_URL = 'true';
+
+    expect(validateServerUrl('http://localhost:3000/hook')).toBeNull();
+  });
+
+  /** Every optional variable is covered above; this fails if one is added. */
+  it('has an absent-safe assertion for every declared-optional variable', () => {
+    expect([...OPTIONAL_VARIABLES]).toStrictEqual(['ALLOW_LOOPBACK_SERVER_URL']);
   });
 });

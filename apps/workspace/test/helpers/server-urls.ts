@@ -25,11 +25,8 @@ export type UrlCase = {
 export const ACCEPTED_SERVER_URLS: readonly UrlCase[] = [
   { label: 'https with a path, a port and a query', url: 'https://hooks.example.invalid:8443/inbound?event=call' },
   { label: 'https with a path', url: 'https://example.invalid/hook' },
-  { label: 'loopback http spelled localhost', url: 'http://localhost:3000/hook' },
-  { label: 'loopback http spelled 127.0.0.1', url: 'http://127.0.0.1:3000/hook' },
-  { label: 'loopback http spelled [::1]', url: 'http://[::1]:3000/hook' },
-  { label: 'loopback http with no port or path', url: 'http://127.0.0.1' },
-  { label: 'https on localhost', url: 'https://localhost' },
+  { label: 'a public IPv4 literal', url: 'https://93.184.216.34/hook' },
+  { label: 'a public IPv6 literal', url: 'https://[2606:4700:4700::1111]/hook' },
 ] as const;
 
 /** Every one of these must be refused before anything is written. */
@@ -91,8 +88,71 @@ export const REJECTED_PORTS: readonly UrlCase[] = [
 /** Ports that are genuine destinations and must keep saving. */
 export const ACCEPTED_PORTS: readonly UrlCase[] = [
   { label: 'a common TLS port', url: 'https://example.invalid:8443/hook' },
-  { label: 'a common development port', url: 'http://localhost:3000/hook' },
   { label: 'the lowest usable port', url: 'https://example.invalid:1/hook' },
   { label: 'the highest usable port', url: 'https://example.invalid:65535/hook' },
   { label: 'no port at all', url: 'https://example.invalid/hook' },
+] as const;
+
+/**
+ * Loopback, which now needs `ALLOW_LOOPBACK_SERVER_URL=true`.
+ *
+ * These were unconditionally accepted, which meant **production** accepted
+ * them too — a webhook pointing at `localhost` from the platform's own network
+ * reaches the platform, not the customer. The dev exception is still available,
+ * behind a flag that is off unless a deployment says otherwise.
+ *
+ * `https://localhost` is in here rather than in the accepted list, and that is
+ * a decision rather than an oversight. RFC 6761 reserves the name to loopback,
+ * so treating it as an unresolved hostname would be pretending not to know
+ * something the standard guarantees — and `https://localhost` accepted while
+ * `https://127.0.0.1` is refused is the same machine answering to two rules,
+ * which is exactly the split that made `http://0.0.0.0` rejected while
+ * `https://0.0.0.0` sailed through.
+ */
+export const FLAG_GATED_LOOPBACK: readonly UrlCase[] = [
+  { label: 'loopback http spelled localhost', url: 'http://localhost:3000/hook' },
+  { label: 'loopback http spelled 127.0.0.1', url: 'http://127.0.0.1:3000/hook' },
+  { label: 'loopback http spelled [::1]', url: 'http://[::1]:3000/hook' },
+  { label: 'loopback http with no port or path', url: 'http://127.0.0.1' },
+  { label: 'https on localhost', url: 'https://localhost' },
+  { label: 'https on localhost with a port', url: 'https://localhost:8443/hook' },
+] as const;
+
+/**
+ * Addresses inside the platform's own network. Refused **whatever the flag
+ * says** — the flag exempts loopback and nothing else.
+ *
+ * The headline is not the dev exception: `https://169.254.169.254` is the
+ * cloud instance metadata endpoint on every major provider, it was accepted
+ * outright before this rule, and reaching it from a server-side fetch is the
+ * classic way credentials walk out of a deployment.
+ */
+export const REJECTED_PRIVATE_ADDRESSES: readonly UrlCase[] = [
+  { label: 'RFC1918 10/8', url: 'https://10.0.0.5/hook' },
+  { label: 'RFC1918 172.16/12 at its lower bound', url: 'https://172.16.0.1/hook' },
+  { label: 'RFC1918 172.16/12 at its upper bound', url: 'https://172.31.255.254/hook' },
+  { label: 'RFC1918 192.168/16', url: 'https://192.168.1.10/hook' },
+  { label: 'the cloud metadata endpoint', url: 'https://169.254.169.254/latest/meta-data/' },
+  { label: 'IPv6 unique-local', url: 'https://[fd00::1]/hook' },
+  { label: 'IPv6 link-local', url: 'https://[fe80::1]/hook' },
+] as const;
+
+/**
+ * Just outside every boundary, and public. **These are what make the rejections
+ * above mean something**: a mutation that deleted the range check entirely and
+ * one that widened it by a single octet produce identical output against the
+ * rejected list alone. Only a control that must stay accepted tells them apart.
+ */
+export const PUBLIC_BOUNDARY_CONTROLS: readonly UrlCase[] = [
+  { label: 'one below 10/8', url: 'https://9.255.255.255/hook' },
+  { label: 'one above 10/8', url: 'https://11.0.0.5/hook' },
+  { label: 'one below 172.16/12', url: 'https://172.15.0.1/hook' },
+  { label: 'one above 172.16/12', url: 'https://172.32.0.1/hook' },
+  { label: 'one below 192.168/16', url: 'https://192.167.1.1/hook' },
+  { label: 'one above 192.168/16', url: 'https://192.169.1.1/hook' },
+  { label: 'one below 169.254/16', url: 'https://169.253.0.1/hook' },
+  { label: 'one above 169.254/16', url: 'https://169.255.0.1/hook' },
+  { label: 'a public IPv6 literal', url: 'https://[2606:4700:4700::1111]/hook' },
+  { label: 'just below the unique-local block', url: 'https://[fb00::1]/hook' },
+  { label: 'just below the link-local block', url: 'https://[fe00::1]/hook' },
 ] as const;

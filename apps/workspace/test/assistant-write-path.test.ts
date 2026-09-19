@@ -48,7 +48,9 @@ const { isDatabaseConfigured } = await import('./helpers/environment.ts');
 const {
   ACCEPTED_PORTS,
   ACCEPTED_SERVER_URLS,
+  FLAG_GATED_LOOPBACK,
   REJECTED_PORTS,
+  REJECTED_PRIVATE_ADDRESSES,
   REJECTED_SERVER_URLS,
 } = await import('./helpers/server-urls.ts');
 
@@ -181,6 +183,48 @@ describeDatabase('the server URL matrix, through the real save path', () => {
 
       expect(saved, `${url} was accepted but nothing was written`).toBeDefined();
       expect(saved?.serverUrl).toBe(url);
+    },
+  );
+
+  /**
+   * The private-address rule, through the save path rather than only the
+   * validator. `https://169.254.169.254` was accepted outright before it — a
+   * webhook the platform would call from its own network, against its own
+   * metadata endpoint — so the thing worth proving is that the **save surface**
+   * refuses it, not that a function nobody calls would have.
+   */
+  it.each(REJECTED_PRIVATE_ADDRESSES.map((entry) => [entry.label, entry.url]))(
+    'refuses to save an assistant pointing at %s — %s',
+    async (_label, url) => {
+      const name = `rejected private ${randomUUID()}`;
+
+      const result = await createAssistantAction(
+        formDataFor({ name, serverUrl: url }),
+      );
+
+      expect(result.ok, `${url} was saved`).toBe(false);
+      expect(
+        result.ok === false && result.issues.some((issue) => issue.field === 'serverUrl'),
+      ).toBe(true);
+      expect(await countByName(name), `${url} was rejected and written anyway`).toBe(0);
+    },
+  );
+
+  /**
+   * Loopback needs `ALLOW_LOOPBACK_SERVER_URL`, which is off here as it is in
+   * production. These used to save unconditionally.
+   */
+  it.each(FLAG_GATED_LOOPBACK.map((entry) => [entry.label, entry.url]))(
+    'refuses to save %s while the loopback flag is off — %s',
+    async (_label, url) => {
+      const name = `rejected loopback ${randomUUID()}`;
+
+      const result = await createAssistantAction(
+        formDataFor({ name, serverUrl: url }),
+      );
+
+      expect(result.ok, `${url} was saved with the flag off`).toBe(false);
+      expect(await countByName(name)).toBe(0);
     },
   );
 
@@ -430,7 +474,7 @@ describeDatabase('an assistant round-trips every field', () => {
       backendInstructions: 'Never invent a stock level.',
       backendModel: 'gpt-4.1',
       waitingBehavior: 'Stay silent while a tool runs.',
-      serverUrl: 'http://localhost:3000/hook',
+      serverUrl: 'https://edited.example.invalid:8443/hook?v=2',
     };
 
     expect(
