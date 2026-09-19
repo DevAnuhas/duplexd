@@ -286,5 +286,21 @@ export function validateTools(value: unknown): ValidationIssue[] {
     });
   }
 
-  return issues;
+  // Identical messages are collapsed. Every issue above names its tool, so two
+  // issues with the same text are two tools with the same name and the same
+  // fault — and the customer cannot tell them apart from the text anyway.
+  // Showing `"a" needs a description.` twice reads as a rendering bug rather
+  // than as two problems.
+  const seen = new Set<string>();
+
+  return issues.filter((issue) => {
+    const key = `${issue.field} ${issue.message}`;
+
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
 }

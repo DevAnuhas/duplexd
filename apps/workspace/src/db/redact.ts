@@ -113,10 +113,24 @@ const KEPT_PROPERTIES = new Set([
  * The query text is kept: it names tables and columns, which is what makes the
  * error useful, and contains no values.
  */
-export function redactQueryParams(error: unknown): unknown {
+export function redactQueryParams(
+  error: unknown,
+  seen: WeakSet<object> = new WeakSet(),
+): unknown {
   if (!(error instanceof Error)) {
     return error;
   }
+
+  // A `cause` chain that loops back on itself recursed until the stack ran
+  // out, turning the redaction into a `RangeError` thrown from a rejection
+  // handler — the same failure mode as the frozen error above, reached a
+  // different way. Nothing constructs such a cycle today; it costs one line
+  // not to depend on that.
+  if (seen.has(error)) {
+    return error;
+  }
+
+  seen.add(error);
 
   const original = error.message;
 
@@ -205,7 +219,7 @@ export function redactQueryParams(error: unknown): unknown {
   }
 
   if (error.cause !== undefined && error.cause !== null) {
-    redactQueryParams(error.cause);
+    redactQueryParams(error.cause, seen);
   }
 
   return error;
