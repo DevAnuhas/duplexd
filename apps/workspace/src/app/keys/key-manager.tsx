@@ -30,15 +30,28 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  /**
+   * A rejected action must not leave the form unusable — see the same note on
+   * the assistant form. Without the `finally`, a server throw left the button
+   * disabled forever with nothing said.
+   */
   async function onMint(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setError(null);
 
     const form = event.currentTarget;
-    const result = await mintApiKeyAction(new FormData(form));
 
-    setBusy(false);
+    let result: Awaited<ReturnType<typeof mintApiKeyAction>>;
+
+    try {
+      result = await mintApiKeyAction(new FormData(form));
+    } catch {
+      setError('Something went wrong. No key was created — try again.');
+      return;
+    } finally {
+      setBusy(false);
+    }
 
     if (!result.ok) {
       setError(result.issues[0]?.message ?? 'That key was not created.');
@@ -113,8 +126,19 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
                     <button
                       type="button"
                       onClick={async () => {
-                        await revokeApiKeyAction(key.id);
-                        router.refresh();
+                        // A rejection here was a silent no-op: the key stayed
+                        // live, the row did not change, and nothing said so.
+                        // Revocation failing silently is the worst of the
+                        // three, because the customer believes a leaked key
+                        // is dead when it is not.
+                        try {
+                          await revokeApiKeyAction(key.id);
+                          router.refresh();
+                        } catch {
+                          setError(
+                            `Could not revoke ${key.prefix}. It is still active — try again.`,
+                          );
+                        }
                       }}
                     >
                       Revoke

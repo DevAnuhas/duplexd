@@ -107,6 +107,38 @@ const KEPT_PROPERTIES = new Set([
 ]);
 
 /**
+ * Blanks every own property of `holder` that is not on the keep list.
+ *
+ * `Reflect.ownKeys`, not `Object.keys`: the latter sees neither symbol keys nor
+ * non-enumerable ones, and a symbol-keyed value survived because of it.
+ * Nothing in this chain carries a value under a symbol today — which is the
+ * same argument that was made for `db.query` and then for `cause`, and it was
+ * wrong both times.
+ *
+ * Best-effort by design: a getter-only property, a throwing setter or a frozen
+ * object cannot be written, and skipping is the honest outcome. It is shared by
+ * the error path and the plain-object `cause` path so the two cannot drift into
+ * disagreeing about what counts as value-bearing.
+ *
+ * It does not recurse, so it needs no cycle guard of its own — the caller owns
+ * that for the `cause` chain.
+ */
+function blankOwnValues(holder: object): void {
+  for (const key of Reflect.ownKeys(holder)) {
+    if (KEPT_PROPERTIES.has(key as string)) {
+      continue;
+    }
+
+    try {
+      (holder as Record<string | symbol, unknown>)[key] = '[redacted]';
+    } catch {
+      // Not writable. The message and stack are handled above on their own
+      // terms, so this pass failing does not leave them dirty.
+    }
+  }
+}
+
+/**
  * Returns `error` with any bound parameters removed from its message and from
  * every error in its `cause` chain.
  *
@@ -199,27 +231,21 @@ export function redactQueryParams(
   // the same reasoning item 22c gives for stripping all parameters rather than
   // secret-shaped ones.
   //
-  // `Reflect.ownKeys`, not `Object.keys`: the latter sees neither symbol keys
-  // nor non-enumerable ones. Nothing in this chain carries a value under a
-  // symbol today, which is exactly the argument that was made for `db.query`
-  // before it turned out to be a hole.
-  for (const key of Reflect.ownKeys(error)) {
-    if (KEPT_PROPERTIES.has(key as string)) {
-      continue;
-    }
+  blankOwnValues(error);
 
-    try {
-      (error as unknown as Record<string | symbol, unknown>)[key] =
-        '[redacted]';
-    } catch {
-      // A getter-only property, a throwing setter, or a frozen error. Skipping
-      // is the honest outcome: this pass is best-effort, and the message and
-      // stack have already been handled above on their own terms.
-    }
-  }
-
+  // `cause` is allowlisted above rather than blanked, so it has to be swept
+  // here or it survives verbatim. A `cause` that is an `Error` recurses. A
+  // `cause` that is a **plain object** used to be returned untouched by the
+  // `instanceof` guard at the top — so `cause = { query, params: ['SECRET'] }`
+  // went straight into `util.inspect`. Nothing attaches one today; that is the
+  // same argument that was made for `db.query` and for symbol keys, and it was
+  // wrong both times.
   if (error.cause !== undefined && error.cause !== null) {
-    redactQueryParams(error.cause, seen);
+    if (error.cause instanceof Error) {
+      redactQueryParams(error.cause, seen);
+    } else if (typeof error.cause === 'object') {
+      blankOwnValues(error.cause as object);
+    }
   }
 
   return error;

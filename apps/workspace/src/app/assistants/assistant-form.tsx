@@ -49,14 +49,42 @@ export function AssistantForm({
   const [issues, setIssues] = useState<ValidationIssue[]>([]);
   const [busy, setBusy] = useState(false);
 
+  /**
+   * A rejected action must not leave the form unusable.
+   *
+   * A server action can reject rather than return — an expired session, a
+   * database that went away, a constraint that fired. Without this, `setBusy`
+   * never ran again: the submit button stayed disabled forever, with no
+   * message, holding everything the customer had typed and no way to send it.
+   * Reloading is the only exit and it costs them the form, which for a
+   * twelve-tool assistant is the whole of their work.
+   *
+   * `finally` rather than a second `setBusy(false)`, so it cannot drift out of
+   * one of the paths. The message is deliberately generic: it goes to a
+   * customer who can do nothing with a stack trace, and anything more specific
+   * risks putting server detail on a page.
+   */
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setIssues([]);
 
-    const result = await action(new FormData(event.currentTarget));
+    let result: ActionResult;
 
-    setBusy(false);
+    try {
+      result = await action(new FormData(event.currentTarget));
+    } catch {
+      setIssues([
+        {
+          field: 'name',
+          message:
+            'Something went wrong saving this assistant. Nothing was changed — try again.',
+        },
+      ]);
+      return;
+    } finally {
+      setBusy(false);
+    }
 
     if (!result.ok) {
       setIssues(result.issues);
