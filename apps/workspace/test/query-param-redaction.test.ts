@@ -73,10 +73,33 @@ function errorText(error: unknown): string {
     parts.push(current.message, String(current.stack ?? ''));
 
     // What `console.error(err)` and every structured logger actually emit.
-    parts.push(inspect(current, { depth: 8 }));
+    //
+    // `showHidden` is load-bearing and was missing. `message` and `stack` are
+    // own **non-enumerable** properties on every `Error`, and a library is free
+    // to attach a value-bearing one the same way — `Object.entries`,
+    // `JSON.stringify` and a default `inspect` all skip those, so this helper
+    // was blind to exactly the properties the redaction's `Reflect.ownKeys`
+    // sweep exists to blank. Production was stricter than the test guarding it,
+    // which is safe right up until somebody reverts that sweep to
+    // `Object.keys` — a change that was made once here already, for the
+    // entirely reasonable reason that it had obliterated the message and the
+    // stack.
+    parts.push(inspect(current, { depth: 8, showHidden: true }));
 
+    // Named explicitly as well, so a future non-enumerable property is covered
+    // without anyone editing this. `getOwnPropertyNames` is the superset;
+    // `Object.entries` is kept because it invokes getters, which
+    // `getOwnPropertyDescriptor`-based enumeration would not.
     for (const [key, value] of Object.entries(current)) {
       parts.push(key, inspect(value, { depth: 8 }));
+    }
+
+    for (const key of Object.getOwnPropertyNames(current)) {
+      try {
+        parts.push(key, inspect((current as unknown as Record<string, unknown>)[key], { depth: 8 }));
+      } catch {
+        // A throwing getter tells us nothing; `inspect` above still covered it.
+      }
     }
 
     try {
@@ -136,6 +159,84 @@ async function captureFailure(body: () => Promise<unknown>): Promise<unknown> {
       'every assertion below would be vacuous.',
   );
 }
+
+/**
+ * **The helper that gathers the evidence, tested as the subject.**
+ *
+ * `errorText()` has been the defect twice. First it claimed to gather
+ * "everything an error could carry a value in" and skipped own enumerable
+ * properties, so every canary assertion in this file was measured against a
+ * string built to exclude where the leak lived. Then, once fixed, it was still
+ * blind to own **non-enumerable** properties — which is where `message` and
+ * `stack` live on every `Error`, and where a library is free to hang a value.
+ *
+ * So the helper gets its own tests, and they assert the **property** rather
+ * than today's shape: a value hidden anywhere an error can hide one has to
+ * come out. Without these, the widening above is one careless revert away from
+ * silently un-widening, and nothing else in the suite would notice — the leak
+ * tests would keep passing, because they would keep asking a question that had
+ * quietly stopped reaching the answer.
+ *
+ * No database: this is a property of the helper, not of any query.
+ */
+describe('errorText finds a value wherever it hides', () => {
+  const hidden = 'hidden-canary-value';
+
+  it.each([
+    [
+      'an own enumerable property',
+      () => Object.assign(new Error('failed'), { params: [hidden] }),
+    ],
+    [
+      'an own NON-enumerable property',
+      () => {
+        const error = new Error('failed');
+        Object.defineProperty(error, 'params', {
+          value: [hidden],
+          enumerable: false,
+          writable: true,
+          configurable: true,
+        });
+        return error;
+      },
+    ],
+    [
+      'a getter',
+      () => {
+        const error = new Error('failed');
+        Object.defineProperty(error, 'params', {
+          get: () => [hidden],
+          enumerable: true,
+          configurable: true,
+        });
+        return error;
+      },
+    ],
+    ['the message', () => new Error(`failed with ${hidden}`)],
+    [
+      'a cause one level down',
+      () =>
+        new Error('failed', {
+          cause: Object.assign(new Error('inner'), { params: [hidden] }),
+        }),
+    ],
+    [
+      'a non-Error cause',
+      () => new Error('failed', { cause: { params: [hidden] } }),
+    ],
+  ])('sees a value on %s', (_label, build) => {
+    expect(
+      errorText(build()),
+      'errorText cannot see this, so every canary assertion in this file is ' +
+        'blind to it too',
+    ).toContain(hidden);
+  });
+
+  /** The control: it does not invent the canary when there is none. */
+  it('does not report a value that is not there', () => {
+    expect(errorText(new Error('failed'))).not.toContain(hidden);
+  });
+});
 
 describeDatabase('a failing query', () => {
   let unwrappedFailure: unknown;

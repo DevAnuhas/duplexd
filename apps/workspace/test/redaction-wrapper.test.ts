@@ -477,3 +477,58 @@ describe('what the redaction must leave intact', () => {
     expect(String(redacted.stack)).toMatch(/\n\s+at /);
   });
 });
+
+/**
+ * The redaction's own sweep must reach non-enumerable properties.
+ *
+ * `Reflect.ownKeys` sees them and `Object.keys` does not, and that difference
+ * is not academic: the swap was made once in this file's history, and it was
+ * reverted because it also caught `message` and `stack` and obliterated both.
+ * The correct fix was to keep `Reflect.ownKeys` and put `message` and `stack`
+ * on the keep list — so the failure mode to guard is somebody undoing the
+ * sweep rather than the keep list, for the entirely reasonable reason that the
+ * sweep is what broke things last time.
+ */
+describe('the own-property sweep', () => {
+  function errorWithHiddenParams(): Error {
+    const error = new Error('Failed query: select 1');
+    Object.defineProperty(error, 'params', {
+      value: ['SWEEP-CANARY'],
+      enumerable: false,
+      writable: true,
+      configurable: true,
+    });
+
+    return error;
+  }
+
+  it('blanks a value hidden on a non-enumerable property', () => {
+    const redacted = redactQueryParams(errorWithHiddenParams()) as Error & {
+      params?: unknown;
+    };
+
+    expect(
+      redacted.params,
+      'a non-enumerable property kept its value — the sweep is using ' +
+        'Object.keys, which cannot see it',
+    ).toBe('[redacted]');
+  });
+
+  it('still leaves message and stack intact while doing it', () => {
+    const redacted = redactQueryParams(errorWithHiddenParams()) as Error;
+
+    expect(redacted.message).toContain('select 1');
+    expect(String(redacted.stack)).toMatch(/\n\s+at /);
+  });
+
+  it('blanks a value hidden under a symbol key', () => {
+    const key = Symbol('params');
+    const error = new Error('Failed query: select 1') as Error &
+      Record<symbol, unknown>;
+    error[key] = ['SYMBOL-CANARY'];
+
+    const redacted = redactQueryParams(error) as Record<symbol, unknown>;
+
+    expect(redacted[key]).toBe('[redacted]');
+  });
+});
