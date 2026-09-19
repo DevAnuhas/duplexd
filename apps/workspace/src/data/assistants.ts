@@ -58,9 +58,18 @@ export type AssistantInput = {
   tools?: unknown;
 };
 
-export type Assistant = {
-  [K in keyof typeof publicColumns]: unknown;
-};
+/**
+ * A row as the public projection returns it.
+ *
+ * Inferred from `publicColumns` rather than hand-written, so it gains a field
+ * exactly when the projection does — and so P03 can extend these functions
+ * without casting at every call site. A mapped type of `unknown` would compile
+ * and tell a caller nothing.
+ */
+export type Assistant = Pick<
+  typeof assistants.$inferSelect,
+  keyof typeof publicColumns
+>;
 
 /**
  * Creates an assistant owned by `accountId`.
@@ -77,10 +86,21 @@ export async function createAssistant(
   accountId: string,
   input: AssistantInput,
 ): Promise<Assistant> {
+  // An empty string means "no secret given", not "encrypt the empty string".
+  // `encryptSecret` refuses an empty plaintext, so without this a form that
+  // submits a blank optional field would be a 500 rather than an assistant
+  // with no secret.
+  const secret =
+    input.serverSecret === undefined ||
+    input.serverSecret === null ||
+    input.serverSecret === ''
+      ? null
+      : input.serverSecret;
+
   const secrets =
-    input.serverSecret === undefined || input.serverSecret === null
+    secret === null
       ? []
-      : [{ id: randomUUID(), ciphertext: encryptSecret(input.serverSecret) }];
+      : [{ id: randomUUID(), ciphertext: encryptSecret(secret) }];
 
   const rows = await getDb()
     .insert(assistants)

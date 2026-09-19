@@ -10,8 +10,12 @@ primary_region = "lhr"
 [deploy]
   # Migrations run once per release, before any new machine serves traffic, so
   # a deploy cannot serve a schema that has not been applied. This is why the
-  # image does not migrate on boot.
-  release_command = "pnpm --filter workspace db:migrate"
+  # image does not migrate on boot: every machine in a deploy would race.
+  #
+  # This runs inside the built image, which is Next standalone output — there is
+  # no pnpm workspace and no src/ in there, so a `pnpm --filter` script cannot
+  # work. `migrate.mjs` is a self-contained bundle that needs only `drizzle/`.
+  release_command = "node /app/migrate.mjs"
 
 [http_service]
   internal_port = 3000

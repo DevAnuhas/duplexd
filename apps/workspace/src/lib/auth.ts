@@ -35,6 +35,53 @@ function createAuth() {
     emailAndPassword: {
       enabled: true,
     },
+    /**
+     * Rate limiting, with the auth endpoints held tighter than the default.
+     *
+     * This is the mitigation for signup account enumeration, which P02 cannot
+     * close outright. Signing up with an address that already exists returns
+     * 422 `USER_ALREADY_EXISTS`, and a new address returns 200 — so a prober
+     * learns whether an address is registered.
+     *
+     * Returning an identical body for both would be theatre: a successful
+     * signup issues a session cookie and a duplicate does not, so `set-cookie`
+     * distinguishes them whatever the body says. Closing it properly means
+     * signup stops creating a session and confirms by email instead, which
+     * needs email infrastructure this ticket does not build.
+     *
+     * So the leak is made slow rather than pretended away, and recorded as a
+     * residual in the pull request rather than quietly accepted.
+     */
+    rateLimit: {
+      // Off under test: the suite drives concurrent signups deliberately, and
+      // a limiter would reject them and hide what those tests exist to check.
+      // The production build has it on, which is where it is verified.
+      enabled: process.env.NODE_ENV !== 'test',
+      window: 60,
+      max: 60,
+      customRules: {
+        '/sign-up/email': { window: 60, max: 5 },
+        '/sign-in/email': { window: 60, max: 10 },
+      },
+    },
+    advanced: {
+      /**
+       * Where the client IP comes from.
+       *
+       * The rate limiter keys on `ip ?? NO_TRUSTED_IP_KEY`, so when no trusted
+       * address can be resolved every caller shares a single bucket — and a
+       * limiter meant to slow one prober would instead lock out everybody.
+       * Behind Fly's proxy the socket address is the proxy, so the real client
+       * comes from `fly-client-ip`.
+       *
+       * Only headers named here are trusted. A client can set any header it
+       * likes, so trusting a header the platform does not guarantee would let
+       * a prober mint a fresh bucket per request and skip the limit entirely.
+       */
+      ipAddress: {
+        ipAddressHeaders: ['fly-client-ip', 'x-forwarded-for'],
+      },
+    },
     user: {
       additionalFields: {
         accountId: {
@@ -57,13 +104,29 @@ function createAuth() {
       user: {
         create: {
           /**
-           * Signup creates the account the user will belong to, in the same
-           * transaction Better Auth uses to insert the user.
+           * Signup creates the account the user will belong to.
            *
-           * `users.account_id` is NOT NULL with a foreign key, so this cannot
-           * half-succeed: if the account insert fails the user insert fails
-           * with it, and there is no window in which a signed-up user exists
-           * with nothing to own their rows.
+           * **This is not transactional, and an earlier version of this
+           * comment wrongly claimed it was.** Better Auth's Drizzle adapter
+           * implements no `transaction`, so Better Auth patches it to a
+           * pass-through — `adapter.transaction = async (cb) => cb(adapter)` —
+           * after logging that the adapter does not implement it. `createUser`
+           * does not wrap this hook in one either.
+           *
+           * What that costs is bounded, and it is worth being exact about the
+           * direction. The account is written *first*, so the failure mode is
+           * an orphan `accounts` row, never a user without an account — which
+           * the schema forbids outright, since `account_id` is NOT NULL with a
+           * foreign key. Better Auth rejects a duplicate email before this hook
+           * runs, so a sequential duplicate strands nothing; only genuinely
+           * concurrent signups for the same address can slip past that check
+           * and leave a row behind.
+           *
+           * An orphan account is inert: nothing resolves to it, because the
+           * only route to an account is through a user's `account_id`. It is
+           * untidy rather than dangerous, and the honest fix is a real
+           * transaction once the adapter supports one, not a comment claiming
+           * one already exists.
            */
           before: async (user) => {
             const accountId = randomUUID();

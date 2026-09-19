@@ -41,7 +41,15 @@ export default function SignUpPage() {
   return (
     <main>
       <h1>Create an account</h1>
-      <form onSubmit={onSubmit}>
+      {/*
+        `method="post"` is deliberate on a form handled in JavaScript. If the
+        client bundle fails or is slow, the browser falls back to a native
+        submit — and a form with no method defaults to GET, putting the
+        password in the URL, the history, the Referer and every proxy log in
+        front of it. With POST the degraded case is a harmless request the
+        server ignores.
+      */}
+      <form method="post" onSubmit={onSubmit}>
         <label htmlFor="email">Email</label>
         <input
           id="email"

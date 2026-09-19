@@ -154,12 +154,17 @@ describeDatabase('signing in', () => {
 /**
  * A duplicate signup.
  *
- * Two things must hold. The second attempt must not create a second account for
- * the same person, and — the part that is easy to get wrong — it must not leave
- * an orphan `accounts` row behind when the user insert is rejected. The account
- * is created in a hook that runs before the user is written, so a non-
- * transactional implementation creates the account, fails the user, and leaks a
- * row every time somebody mistypes an email they already registered.
+ * A *sequential* duplicate never reaches the account-creating hook: Better Auth
+ * rejects the email at its own uniqueness check first, so nothing is written
+ * and nothing can be stranded. An earlier version of this comment claimed the
+ * tests below proved the hook was transactional. They cannot — the path that
+ * would leak is not reached — and the implementation is in fact not
+ * transactional. See `concurrent duplicate signups` below for the case that
+ * does reach it, and `src/lib/auth.ts` for what that costs.
+ *
+ * What these tests do establish is real and worth keeping: a repeat signup is
+ * rejected, it creates no second user and no second account, and it leaves
+ * nothing behind.
  */
 describeDatabase('a duplicate signup', () => {
   let signedUp: SignedUpUser;
@@ -227,6 +232,51 @@ describeDatabase('a duplicate signup', () => {
     expect(
       orphans,
       'a rejected signup created an accounts row with no user in it',
+    ).toBe(0);
+  });
+
+  /**
+   * The case the sequential tests above cannot reach.
+   *
+   * Better Auth's uniqueness check and the account-creating hook are not in one
+   * transaction, so several signups for the same address launched at once can
+   * all pass the check before any of them writes a user. One wins; the losers
+   * may each have already written an `accounts` row.
+   *
+   * What is asserted here is what must hold regardless: exactly one user for
+   * the address, and — the invariant that actually matters — no user anywhere
+   * without a real account behind it. Orphan account rows are deliberately not
+   * asserted to be zero, because today they can occur and a test claiming
+   * otherwise would be the same false comfort this file just removed. They are
+   * inert: nothing resolves to an account except through a user's `account_id`.
+   */
+  it('keeps one user and no account-less user under concurrency', async () => {
+    const email = `concurrent-${randomUUID()}@example.test`;
+
+    await Promise.all(
+      Array.from({ length: 6 }, () => attemptSignUp(email, CANARY_PASSWORD)),
+    );
+
+    const { users, accountless } = await withTestPool(async (pool) => {
+      const { rows } = await pool.query<{ users: string; accountless: string }>(
+        `SELECT (SELECT count(*)::text FROM users WHERE email = $1) AS users,
+                (SELECT count(*)::text FROM users u
+                  WHERE NOT EXISTS (
+                    SELECT 1 FROM accounts a WHERE a.id = u.account_id
+                  )) AS accountless`,
+        [email],
+      );
+
+      return {
+        users: Number(rows[0]?.users ?? 0),
+        accountless: Number(rows[0]?.accountless ?? 0),
+      };
+    });
+
+    expect(users, 'concurrent signups created more than one user').toBe(1);
+    expect(
+      accountless,
+      'a user exists whose account_id points at no account',
     ).toBe(0);
   });
 

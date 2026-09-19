@@ -62,6 +62,6 @@ Recording retention, outbound calling compliance, and provider region placement 
 
 The engine milestone is retired. Its packages, specs, and wire-contract documentation have been removed from the tree — `docs/decisions/` keeps every superseded ADR, and git history keeps the code.
 
-What exists at this commit: the documentation and decision trail, the CI workflow with its path classifier, and `spikes/pipecat-gate/` — the passing gate, kept as the regression test for a future Pipecat upgrade rather than as dead weight.
+What exists at this commit: the documentation and decision trail, the CI workflow with its path classifier, `spikes/pipecat-gate/` — the passing gate, kept as the regression test for a future Pipecat upgrade rather than as dead weight — and `apps/workspace`, the Next.js app.
 
-**No platform code exists yet.** There is no workspace, no schema, no control API, no agent. The current build target and its acceptance evidence are in [the milestone](docs/MILESTONE.md).
+The workspace app covers signing in and the schema behind it: accounts, users, API keys, assistants, calls and call events, with assistants' webhook secrets encrypted at rest. **There is no assistant or API-key interface, no control API and no agent yet**, so no call has been placed and nothing is deployed. The current build target and its acceptance evidence are in [the milestone](docs/MILESTONE.md).

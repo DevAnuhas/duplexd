@@ -1,6 +1,6 @@
 # Engineering
 
-Setup, verification, CI, and releases. This file owns supported commands and actual verification evidence. The commands below are executable today; application startup is planned until the tickets named below land.
+Setup, verification, CI, and releases. This file owns supported commands and actual verification evidence. Every command below is executable today, including running the app.
 
 ## Toolchain
 
@@ -69,7 +69,7 @@ P02 added the first package since, and widened each root script rather than rein
 `DATABASE_URL` is never defaulted. An unset or empty value aborts with an error naming the variable, because libpq-based clients treat an empty connection string as "use the defaults" and connect to whatever PostgreSQL is listening locally — which is how the wrong database gets migrated.
 
 ```bash
-cp .env.example .env.local     # then fill in the three variables
+cp .env.example .env.local     # then fill in the four variables
 pnpm db:generate               # after changing src/db/schema.ts
 pnpm db:migrate                # apply committed migrations; idempotent
 pnpm dev                       # the workspace app

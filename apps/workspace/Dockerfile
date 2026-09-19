@@ -31,7 +31,14 @@ COPY --from=build /repo/apps/workspace/.next/static ./apps/workspace/.next/stati
 
 # Migrations are applied by the Fly release command, not here: a container that
 # migrates on boot races every other container in the same deploy.
-COPY --from=build /repo/apps/workspace/drizzle ./apps/workspace/drizzle
+#
+# The release command runs inside this image, which is Next's standalone output
+# — no pnpm workspace, no src/, and only the modules the app itself traced. So
+# `pnpm --filter workspace db:migrate` cannot work here, and neither can the
+# TypeScript entry point it names. `migrate.mjs` is a single bundled file with
+# its dependencies inlined, and `drizzle/` is the SQL it applies.
+COPY --from=build /repo/apps/workspace/drizzle ./drizzle
+COPY --from=build /repo/apps/workspace/dist/migrate.mjs ./migrate.mjs
 
 EXPOSE 3000
 CMD ["node", "apps/workspace/server.js"]
