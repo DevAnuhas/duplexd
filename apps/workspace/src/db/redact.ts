@@ -37,6 +37,25 @@
  * If a specific value is genuinely needed to debug something, log it
  * deliberately at that call site where a reviewer can see what is being
  * exposed — do not widen the chokepoint for everything.
+ *
+ * **This is end-anchored, and that is only correct because it is applied to a
+ * message and never to a stack.** Getting here took two wrong turns worth
+ * recording, because both look right in isolation.
+ *
+ * Anchoring to the end and applying it to `.stack` destroys every frame: on a
+ * stack everything after `\nparams:` *is* the frames. Bounding it with a
+ * lookahead for the first ` at ` frame then leaks, because that boundary is
+ * derived from the parameter values themselves — and those are customer free
+ * text. An `instructions` textarea containing an ordinary wrapped sentence
+ * ("Greet the caller.\n    at all times be polite.") is indistinguishable from
+ * a stack frame, the redaction stops there, and every parameter bound after
+ * that column survives. `server_secrets` is two columns downstream of
+ * `instructions`, so the leak lands on exactly the value this file exists to
+ * protect.
+ *
+ * So the boundary is never guessed from content. See `redactQueryParams`: the
+ * stack is repaired by splicing the redacted message over the original
+ * message's span, which the stack begins with by construction.
  */
 const PARAMS_SECTION = /\nparams:[\s\S]*$/;
 
@@ -52,26 +71,39 @@ export function redactQueryParams(error: unknown): unknown {
     return error;
   }
 
-  if (PARAMS_SECTION.test(error.message)) {
-    error.message = error.message.replace(
-      PARAMS_SECTION,
-      '\nparams: [redacted]',
-    );
+  const original = error.message;
+
+  // Read `.stack` before mutating the message. V8 formats it once, lazily, and
+  // caches the result — so reading it here pins a string built from the
+  // original message, which is exactly the span we need to find below.
+  const stack = typeof error.stack === 'string' ? error.stack : null;
+
+  if (PARAMS_SECTION.test(original)) {
+    error.message = original.replace(PARAMS_SECTION, '\nparams: [redacted]');
   }
 
-  // `.stack` must be rewritten too, and this is structural rather than
-  // belt-and-braces. V8 formats the stack string once, lazily, and caches it
-  // — so if anything read `.stack` before this ran, that string still holds
-  // the original message with its parameters. `console.error(err)` and Next's
-  // own logger print `.stack`, not `.message`, so redacting only the message
-  // leaves the values in the exact field most loggers emit.
+  // `.stack` matters as much as `.message`: `console.error(err)` and Next's
+  // own logger print the stack, so redacting only the message would clean the
+  // field nobody emits and leave the one they do.
   //
-  // Verified on Node 24.21.0: mutate the message without touching `.stack`
-  // first and the stack is clean; read `.stack` first and the parameters
-  // survive there. Whether that happens depends on who touched the error
-  // before us, which is not a property to rely on.
-  if (typeof error.stack === 'string' && PARAMS_SECTION.test(error.stack)) {
-    error.stack = error.stack.replace(PARAMS_SECTION, '\nparams: [redacted]');
+  // It is repaired by splicing rather than by pattern-matching. A stack begins
+  // with `${name}: ${message}` followed by the frames, so the original message
+  // locates its own span exactly — no rule has to guess where values end and
+  // frames begin, which is the guess that leaked. Frames survive byte-for-byte
+  // because they are never touched.
+  //
+  // `indexOf` returning -1 is the benign case: the stack had not been
+  // formatted before this ran, so it was built from the already-redacted
+  // message and needs nothing.
+  if (stack !== null && error.message !== original) {
+    const start = stack.indexOf(original);
+
+    error.stack =
+      start === -1
+        ? stack
+        : stack.slice(0, start) +
+          error.message +
+          stack.slice(start + original.length);
   }
 
   if (error.cause !== undefined && error.cause !== null) {

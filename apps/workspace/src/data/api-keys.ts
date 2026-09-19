@@ -1,9 +1,10 @@
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
 import { and, desc, eq, isNull } from 'drizzle-orm';
 
 import { getDb } from '@/db/client';
 import { apiKeys } from '@/db/schema';
+import { secretsMatch } from '@/lib/crypto';
 
 /**
  * API keys — what a customer's backend actually holds.
@@ -180,9 +181,12 @@ export async function revokeApiKey(
  *  1. **The lookup is by prefix, never by the key.** The raw key is never a
  *     bound query parameter, so it cannot reach a log through a failed
  *     statement — the protection is structural rather than a redaction.
- *  2. **The comparison is constant-time.** `===` on a hash leaks it through
- *     timing, one byte at a time; an attacker with a valid prefix could walk
- *     the digest out of the response latency.
+ *  2. **The comparison is constant-time**, through the one `secretsMatch` in
+ *     `lib/crypto.ts`. `===` on a hash leaks it through timing, one byte at a
+ *     time; an attacker with a valid prefix could walk the digest out of the
+ *     response latency. There was briefly a second, private copy of this
+ *     helper here — two constant-time comparisons is the same smell as two
+ *     account resolvers, and the duplicate is gone.
  *  3. **A revoked key returns null.** Revocation is enforced here, not merely
  *     recorded in the row for someone else to notice.
  */
@@ -210,27 +214,9 @@ export async function verifyApiKey(
     return null;
   }
 
-  if (!hashesMatch(row.keyHash, hashKey(raw))) {
+  if (!secretsMatch(row.keyHash, hashKey(raw))) {
     return null;
   }
 
   return { accountId: row.accountId, keyId: row.id };
-}
-
-/**
- * Constant-time comparison of two hex digests.
- *
- * Lengths are compared first because `timingSafeEqual` throws on a mismatch.
- * Both inputs are SHA-256 hex here, so a length difference means malformed
- * input rather than a near-miss guess, and leaks nothing.
- */
-function hashesMatch(stored: string, candidate: string): boolean {
-  const a = Buffer.from(stored, 'utf8');
-  const b = Buffer.from(candidate, 'utf8');
-
-  if (a.length !== b.length) {
-    return false;
-  }
-
-  return timingSafeEqual(a, b);
 }
