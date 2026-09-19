@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { inspect } from 'node:util';
 
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -40,10 +41,28 @@ const CIPHERTEXT_CANARY = `v1.${CANARY}`;
 const describeDatabase = describe.skipIf(!isDatabaseConfigured());
 
 /**
- * Everything an error could carry a value in: the message, the stack, and every
- * error in the `cause` chain. A redaction that cleaned the message and left the
- * stack would pass a message-only check while `console.error(err)` — which
- * prints the stack — leaked the lot.
+ * Everywhere an error can carry a value, gathered into one string.
+ *
+ * **This function was the defect once, and it is worth saying how.** It used to
+ * collect the message, the stack and the `cause` chain, and its docstring
+ * claimed that was "everything an error could carry a value in". It was not.
+ * `DrizzleQueryError` also keeps `this.query` and `this.params` as own
+ * enumerable properties, and own enumerable properties are what
+ * `util.inspect` prints — which is what `console.error(err)` prints, which is
+ * what Next's logger does with a caught error, and what Sentry, pino and
+ * `JSON.stringify` all serialise.
+ *
+ * So every `not.toContain(CANARY)` in this file was asserted against a string
+ * deliberately built to exclude the place the leak actually lived. The
+ * assertion and the defect were blind in the same direction, which is the one
+ * way a test can be worse than no test: it occupies the slot where a real
+ * check would have gone and reports green.
+ *
+ * The three sources below are therefore gathered separately rather than
+ * trusting any one of them to imply the others. `inspect` at depth is the
+ * honest stand-in for what a logger emits; `Object.entries` names the own
+ * properties explicitly so a future one is included without anyone editing
+ * this; `JSON.stringify` is what a structured logger does.
  */
 function errorText(error: unknown): string {
   const parts: string[] = [];
@@ -51,11 +70,25 @@ function errorText(error: unknown): string {
 
   for (let depth = 0; depth < 10 && current instanceof Error; depth += 1) {
     parts.push(current.message, String(current.stack ?? ''));
+
+    // What `console.error(err)` and every structured logger actually emit.
+    parts.push(inspect(current, { depth: 8 }));
+
+    for (const [key, value] of Object.entries(current)) {
+      parts.push(key, inspect(value, { depth: 8 }));
+    }
+
+    try {
+      parts.push(JSON.stringify(current) ?? '');
+    } catch {
+      // A cyclic own property cannot be stringified; `inspect` above covers it.
+    }
+
     current = current.cause;
   }
 
   if (current !== undefined && current !== null && !(current instanceof Error)) {
-    parts.push(String(current));
+    parts.push(String(current), inspect(current, { depth: 8 }));
   }
 
   return parts.join('\n');
@@ -353,5 +386,145 @@ describeDatabase('a failing query through the application’s own client', () =>
     expect(failure).toBeInstanceOf(Error);
     expect(text, 'the last link of the chain was not wrapped').not.toContain(chained);
     expect(text).toContain('assistants');
+  });
+});
+
+/**
+ * Every route out of the client, not only `await` on a builder.
+ *
+ * A chokepoint is only a chokepoint if there is no way past it, and "one call
+ * site can skip it" is worse than having none because it reads as protection.
+ * Three routes bypassed it, and the common thread is that none of them is
+ * `await db.insert(...)` — which is the shape everything in `src/data/`
+ * happens to use today, and therefore the only shape anybody tested.
+ *
+ *  - **`db.query.*`**, Drizzle's relational read API, is a plain object
+ *    property rather than a method, so a proxy that only wrapped functions
+ *    forwarded it untouched. `getDb()` passes `{ schema }`, whose entire
+ *    purpose is to enable it.
+ *  - **`.catch()`** and **`.finally()`** are implemented on Drizzle's
+ *    `QueryPromise` in terms of `this.then`, where `this` is the raw target
+ *    rather than the proxy — so the interception on `then` never runs.
+ *
+ * Each test below forces a **real failure with a real bound canary** through
+ * its route. None of them asserts that a wrapper exists.
+ */
+describeDatabase('every route into the client is redacted', () => {
+  afterAll(async () => {
+    await closeDb();
+  });
+
+  /**
+   * A relational read, failed on a bad integer cast while the canary rides
+   * along as a second bound parameter.
+   *
+   * The canary is deliberately **not** the invalid value. PostgreSQL echoes
+   * the offending input in its own error text, so a canary that caused the
+   * failure would appear in the message no matter how correct the redaction
+   * was, and the test would fail forever for the wrong reason.
+   */
+  it('redacts a failure from db.query, the relational API', async () => {
+    const canary = `canary-relational-${randomUUID()}`;
+
+    const failure = await captureFailure(() =>
+      getDb().query.calls.findFirst({
+        where: (table, { and, eq }) =>
+          and(
+            eq(table.id, canary),
+            eq(table.durationSecs, 'not-an-integer' as unknown as number),
+          ),
+      }),
+    );
+
+    expect(failure, 'the relational query did not fail, so nothing was proved').toBeInstanceOf(
+      Error,
+    );
+    expect(
+      errorText(failure),
+      'db.query routed around the redaction — it is a property, not a method',
+    ).not.toContain(canary);
+  });
+
+  it('redacts a failure consumed with .catch()', async () => {
+    const canary = `canary-catch-${randomUUID()}`;
+
+    const failure = await getDb()
+      .insert(assistants)
+      .values({
+        id: randomUUID(),
+        accountId: 'no-such-account-forcing-a-constraint-failure',
+        name: canary,
+      })
+      .catch((error: unknown) => error);
+
+    expect(failure, '.catch() did not receive an error').toBeInstanceOf(Error);
+    expect(
+      errorText(failure),
+      '.catch() routed around the redaction',
+    ).not.toContain(canary);
+  });
+
+  it('redacts a failure passed through .finally()', async () => {
+    const canary = `canary-finally-${randomUUID()}`;
+
+    const failure = await captureFailure(() =>
+      getDb()
+        .insert(assistants)
+        .values({
+          id: randomUUID(),
+          accountId: 'no-such-account-forcing-a-constraint-failure',
+          name: canary,
+        })
+        .finally(() => undefined),
+    );
+
+    expect(failure, '.finally() swallowed the rejection').toBeInstanceOf(Error);
+    expect(
+      errorText(failure),
+      '.finally() routed around the redaction',
+    ).not.toContain(canary);
+  });
+
+  /**
+   * Intercepting `finally` means owning `finally`'s contract.
+   *
+   * The whole point of `finally` is that its callback runs on **both**
+   * settlements — it is where a lock is released or a span is closed. A
+   * wrapper whose `finally` runs the callback on success and silently drops it
+   * on failure breaks cleanup on exactly the path cleanup exists for, and
+   * nothing in the repository uses `.finally()` today, which is precisely the
+   * argument for pinning it now rather than discovering it later.
+   */
+  it('runs the .finally() callback on both settlements', async () => {
+    let ranOnSuccess = false;
+    let ranOnFailure = false;
+
+    await getDb()
+      .select({ id: assistants.id })
+      .from(assistants)
+      .limit(1)
+      .finally(() => {
+        ranOnSuccess = true;
+      });
+
+    await captureFailure(() =>
+      getDb()
+        .insert(assistants)
+        .values({
+          id: randomUUID(),
+          accountId: 'no-such-account-forcing-a-constraint-failure',
+          name: `canary-finally-contract-${randomUUID()}`,
+        })
+        .finally(() => {
+          ranOnFailure = true;
+        }),
+    );
+
+    expect(ranOnSuccess, 'the finally callback did not run on success').toBe(true);
+    expect(
+      ranOnFailure,
+      'the finally callback did not run on failure — cleanup is skipped on ' +
+        'exactly the path it exists for',
+    ).toBe(true);
   });
 });

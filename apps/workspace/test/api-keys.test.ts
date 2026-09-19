@@ -353,11 +353,61 @@ describeDatabase('verifying a key', () => {
     expect(await verifyApiKey(wrong)).toBeNull();
   });
 
-  it('rejects a wrong key of the same length whose prefix does not exist', async () => {
+  /**
+   * A real key's prefix wearing a different key's body.
+   *
+   * This test was previously named "whose prefix does not exist", which it is
+   * not: `other` is minted before the check, so its prefix is in the table. The
+   * case is worth keeping — it is the cross-key confusion where the indexed
+   * read succeeds and returns *somebody else's* row — but under its own name,
+   * and the case the old name described now has its own test below, because it
+   * was never being exercised at all.
+   */
+  it('rejects a key that splices one key’s prefix onto another key’s body', async () => {
     const other = await mintApiKey(accountId, 'a different key', userId);
+    const spliced = `${other.raw.slice(0, PREFIX_LENGTH)}${minted.raw.slice(PREFIX_LENGTH)}`;
 
     expect(other.raw).toHaveLength(minted.raw.length);
-    expect(await verifyApiKey(`${other.raw.slice(0, PREFIX_LENGTH)}${minted.raw.slice(PREFIX_LENGTH)}`)).toBeNull();
+    expect(spliced).toHaveLength(minted.raw.length);
+    expect(spliced).not.toBe(other.raw);
+    expect(spliced).not.toBe(minted.raw);
+
+    // The prefix genuinely resolves to a row — asserted, not assumed, because
+    // that is the whole difference between this test and the next one.
+    expect(await verifyApiKey(other.raw)).not.toBeNull();
+
+    expect(await verifyApiKey(spliced)).toBeNull();
+  });
+
+  /**
+   * The case the misnamed test above was supposed to cover: a well-formed key
+   * whose prefix is in no row at all, so the indexed read returns nothing and
+   * the `row === undefined` branch is the one that rejects it.
+   *
+   * It has to be well-formed to reach that branch — the garbage inputs below
+   * are all turned away by the prefix and length guard before any query runs,
+   * so none of them exercises it.
+   */
+  it('rejects a well-formed key whose prefix is in no row at all', async () => {
+    const body = [...createHash('sha256').update(randomUUID()).digest()]
+      .map((byte) => BASE62[byte % BASE62.length])
+      .join('');
+    const unknown = `${KEY_PREFIX}${body}`;
+
+    expect(unknown).toHaveLength(minted.raw.length);
+    expect(unknown.startsWith(KEY_PREFIX)).toBe(true);
+
+    const stored = await withTestPool(async (pool) => {
+      const { rows } = await pool.query<{ hits: string }>(
+        'SELECT count(*)::text AS hits FROM api_keys WHERE prefix = $1',
+        [unknown.slice(0, PREFIX_LENGTH)],
+      );
+
+      return Number(rows[0]?.hits ?? 0);
+    });
+
+    expect(stored, 'the prefix exists, so this is not the case being tested').toBe(0);
+    expect(await verifyApiKey(unknown)).toBeNull();
   });
 
   it.each([
