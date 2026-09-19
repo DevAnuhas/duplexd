@@ -84,10 +84,42 @@ function privateAddressReason(hostname: string): string | null {
     ? hostname.slice(1, -1)
     : hostname;
 
-  // `::ffff:10.0.0.5` is an IPv4 address wearing an IPv6 spelling, and reaches
-  // exactly the same machine.
-  const mapped = /^::ffff:(.+)$/i.exec(bare);
-  const octets = ipv4Octets(mapped === null ? bare : mapped[1]!);
+  // Three IPv6 formats carry an IPv4 address inside them and reach exactly the
+  // machine it names: IPv4-mapped `::ffff:`, NAT64's well-known `64:ff9b::`,
+  // and 6to4's `2002:`. Each is unwrapped and then judged by the IPv4 rules.
+  //
+  // **Unwrapped rather than rejected outright**, which matters for NAT64: an
+  // IPv6-only network reaching a *public* IPv4 host does so through
+  // `64:ff9b::<that address>`, so refusing the prefix wholesale would turn away
+  // legitimate targets. What makes an address unacceptable is the machine it
+  // reaches, not the spelling used to reach it.
+  //
+  // **The hex form is the one that matters, not the dotted one.** `new URL`
+  // normalises `::ffff:10.0.0.5` to `::ffff:a00:5`, so a branch expecting a
+  // dotted quad never fires. That bypass hid well, because the dotted spelling
+  // *is* refused — the pattern's IPv6 class is `[0-9a-fA-F:]+`, which has no
+  // dots — so the one spelling a person checks by hand is turned away by the
+  // scheme rule for an unrelated reason. Right answer, wrong rule, reads as
+  // coverage. `[::ffff:a9fe:a9fe]` is the metadata endpoint, and it was
+  // accepted until this was fixed.
+  const dotted =
+    /^(?:::ffff|64:ff9b|2002)::?(\d{1,3}(?:\.\d{1,3}){3})(?:::?)?$/i.exec(bare);
+  const hex =
+    /^(?:::ffff|64:ff9b|2002)::?([0-9a-f]{1,4}):([0-9a-f]{1,4})(?:::?)?$/i.exec(bare);
+
+  const unwrapped =
+    dotted !== null
+      ? dotted[1]!
+      : hex !== null
+        ? (() => {
+            const high = Number.parseInt(hex[1]!, 16);
+            const low = Number.parseInt(hex[2]!, 16);
+
+            return `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
+          })()
+        : bare;
+
+  const octets = ipv4Octets(unwrapped);
 
   if (octets !== null) {
     const [a, b] = octets as [number, number, number, number];
