@@ -74,12 +74,19 @@ function createAuth() {
        * Behind Fly's proxy the socket address is the proxy, so the real client
        * comes from `fly-client-ip`.
        *
-       * Only headers named here are trusted. A client can set any header it
-       * likes, so trusting a header the platform does not guarantee would let
-       * a prober mint a fresh bucket per request and skip the limit entirely.
+       * Only `fly-client-ip` is trusted, and deliberately not
+       * `x-forwarded-for`. A client can set any header it likes; Fly overwrites
+       * `fly-client-ip` on every proxied request, but `x-forwarded-for` is a
+       * list the client can prepend to. Trusting it would let a prober send a
+       * different forged address each time, land in a fresh bucket every
+       * request, and skip the limit entirely — a limiter that is trivially
+       * bypassed is worse than none, because it reads as protection.
+       *
+       * This is why the list is one header rather than a fallback chain: a
+       * fallback is only as trustworthy as its weakest entry.
        */
       ipAddress: {
-        ipAddressHeaders: ['fly-client-ip', 'x-forwarded-for'],
+        ipAddressHeaders: ['fly-client-ip'],
       },
     },
     user: {
