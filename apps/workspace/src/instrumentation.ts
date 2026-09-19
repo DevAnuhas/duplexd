@@ -16,15 +16,25 @@ import {
  * `ASSISTANT_SECRET_KEY` is read only when an assistant's webhook secret is
  * encrypted or decrypted, which P02 has no user-facing path to, so a deploy
  * missing it would boot green, serve every page, and fail in P03 on the first
- * customer who saves a secret. A process that cannot do its job should refuse
- * to start rather than wait to be asked.
+ * customer who saves a secret.
  *
- * Each getter throws naming its own variable, so the first missing one is the
- * one reported.
+ * **Throwing here is not enough, and an earlier version of this file only
+ * threw.** Next catches it: the process stays alive, keeps the port bound, and
+ * answers every request with a bare 500. To anything watching the port — a Fly
+ * health check, a supervisor, a load balancer — that machine looks healthy
+ * while serving nothing. A process that cannot do its job should stop holding
+ * the socket, so this exits and lets the platform report a failed release.
  */
 export function register(): void {
-  requireDatabaseUrl();
-  requireAuthSecret();
-  requireAuthUrl();
-  requireEncryptionKey();
+  try {
+    requireDatabaseUrl();
+    requireAuthSecret();
+    requireAuthUrl();
+    requireEncryptionKey();
+  } catch (error) {
+    console.error(
+      `[startup] ${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exit(1);
+  }
 }
