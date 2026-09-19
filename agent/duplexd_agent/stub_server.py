@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 HOST = "127.0.0.1"
-PORT = 8787
+PORT = 8791
 CALL_ID = "stub-call"
 AGENT_TOKEN = "stub-agent-token"
 ASSISTANT_ID = "stub-assistant"

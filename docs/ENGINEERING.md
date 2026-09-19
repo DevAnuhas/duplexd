@@ -49,7 +49,7 @@ DUPLEXD_ALLOW_LOCAL_WEBHOOKS=1 OPENAI_API_KEY=... \
   uv run --directory agent bot -t webrtc
 ```
 
-Use the runner body `{"callId":"stub-call","apiBase":"http://127.0.0.1:8787","agentToken":"stub-agent-token"}`. The local-webhook flag is off by default and only the exact value `1` enables non-global customer webhook addresses; startup logs a warning when it is enabled. It does not enable redirects. Platform `apiBase` is supplied by duplexd and is not subject to the customer-webhook egress rule.
+Use the runner body `{"callId":"stub-call","apiBase":"http://127.0.0.1:8791","agentToken":"stub-agent-token"}`. Port `8791` deliberately differs from the spike webhook on `8787`, so both regression surfaces can run together. The local-webhook flag is off by default and only the exact value `1` enables non-global customer webhook addresses; startup logs a warning when it is enabled. It does not enable redirects. Platform `apiBase` is supplied by duplexd and is not subject to the customer-webhook egress rule.
 
 The config response uses camelCase consistently. Required keys are `assistantId`, `voice`, `instructions`, `accentStyle`, `waitingBehavior`, `backendModel`, `backendInstructions`, `serverUrl`, `serverSecret`, `tools`, `webhookTimeoutSecs`, `functionCallTimeoutSecs`, and `delegationTimeoutSecs`. The webhook timeout must be lower than both other timeouts so the customer receives the runtime's structured failure before Pipecat cancels the function or delegation.
 
@@ -66,6 +66,8 @@ uv run pipecat cloud deploy
 ```
 
 CI builds the image but never pushes or deploys it. `pcc-deploy.toml` keeps zero warm agents and a finite `max_agents` cost guard. A cold-start figure must come from a real `min_agents = 0` start; without Pipecat Cloud credentials it is blocked, never estimated.
+
+Keep deployed agents above DEBUG logging. Pipecat logs backend system instructions at DEBUG; those instructions are customer content even though they are not credentials.
 
 ## Verification
 
