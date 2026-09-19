@@ -52,6 +52,23 @@ export function validateServerUrl(value: string | null | undefined): ValidationI
   return null;
 }
 
+/**
+ * Used for `validateSchema` only, never `compile`.
+ *
+ * `compile` **registers** the schema under its `$id`, and a second
+ * registration of the same `$id` throws. Each save parses the tool list fresh,
+ * so the objects differ and Ajv's identity cache does not absorb it: a
+ * customer who includes `$id` — normal, and likely for exactly the people
+ * hand-writing JSON Schema — saves once and is then told their schema is
+ * invalid on every subsequent save, for the life of the process. The registry
+ * is per-instance and this instance is module-level, so one account could burn
+ * an `$id` for another.
+ *
+ * `validateSchema` answers the only question being asked — is this valid JSON
+ * Schema — and registers nothing. It also avoids retaining every schema and
+ * generated validator ever submitted, which `compile` does through a strong
+ * cache that would grow on form input.
+ */
 const ajv = new Ajv({ strict: false, allErrors: true });
 
 /**
@@ -64,6 +81,13 @@ const ajv = new Ajv({ strict: false, allErrors: true });
  *
  * Every issue names the offending tool, because "invalid tool list" against
  * twelve tools tells the customer nothing about which one to fix.
+ *
+ * **Names must be unique.** A tool call arrives as a name and nothing else, so
+ * two tools called `lookup_order` make the call ambiguous by construction —
+ * whatever a given provider does with a list containing both. Rejecting it at
+ * save is the only point where the customer can still fix it; the alternative
+ * is finding out at call time, with a caller on the line, which is the failure
+ * mode this whole module exists to move earlier.
  */
 export function validateTools(value: unknown): ValidationIssue[] {
   if (value === undefined || value === null) {
@@ -75,6 +99,8 @@ export function validateTools(value: unknown): ValidationIssue[] {
   }
 
   const issues: ValidationIssue[] = [];
+  const seenNames = new Set<string>();
+  const duplicated = new Set<string>();
 
   value.forEach((tool, index) => {
     const label = `tool ${index + 1}`;
@@ -93,6 +119,14 @@ export function validateTools(value: unknown): ValidationIssue[] {
         field: 'tools',
         message: `${label} needs a name of 1 to 64 letters, digits, underscores or hyphens.`,
       });
+    } else if (seenNames.has(name)) {
+      // Recorded rather than pushed here, so twelve tools sharing a name
+      // produce one issue instead of eleven. Compared exactly: `lookup_order`
+      // and `Lookup_Order` are two different identifiers to a provider, and
+      // folding case here would reject a list that works.
+      duplicated.add(name);
+    } else {
+      seenNames.add(name);
     }
 
     if (typeof description !== 'string' || description.trim() === '') {
@@ -122,20 +156,26 @@ export function validateTools(value: unknown): ValidationIssue[] {
       return;
     }
 
-    // Compiling is the operational definition of "valid JSON Schema" — two
-    // implementations can disagree about the phrase, but not about whether
-    // Ajv accepted it.
-    try {
-      ajv.compile(parameters as object);
-    } catch (error) {
+    // Ajv's verdict is the operational definition of "valid JSON Schema" —
+    // two implementations can disagree about the phrase, but not about whether
+    // Ajv accepted it. `validateSchema`, never `compile`: see the note on the
+    // instance above.
+    if (!ajv.validateSchema(parameters as object)) {
+      const detail = ajv.errors?.[0]?.message ?? 'schema is not valid';
+
       issues.push({
         field: 'tools',
-        message: `${named}: parameters is not valid JSON Schema — ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        message: `${named}: parameters is not valid JSON Schema — ${detail}`,
       });
     }
   });
+
+  for (const name of duplicated) {
+    issues.push({
+      field: 'tools',
+      message: `Two tools are called "${name}". A tool call names one tool, so the names must be unique.`,
+    });
+  }
 
   return issues;
 }
