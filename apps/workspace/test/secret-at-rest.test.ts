@@ -215,12 +215,42 @@ describeDatabase('a secret written through createAssistant', () => {
    * still hand every caller the material to attack offline.
    */
   describe('read paths', () => {
-    /** Any key that could plausibly carry secret material. */
+    /**
+     * Any key that could plausibly carry secret material.
+     *
+     * `hasServerSecret` is the one exception, and it is excluded **by exact
+     * name** rather than by loosening the pattern. P03 added it to the
+     * projection: the UI has to show *that* a secret is set, so a boolean
+     * derived in SQL is exactly right — and it trips this sweep on the word
+     * "secret", which is the sweep working rather than failing.
+     *
+     * Dropping `secret` from the pattern would have been the quicker fix and
+     * would have let the next field actually called `serverSecret` straight
+     * through. An exact-name allowance cannot do that, and the test below
+     * asserts this particular field really is a boolean before allowing it, so
+     * a column that smuggled the ciphertext under the same name would still
+     * fail.
+     */
     function secretishKeys(value: Record<string, unknown>): string[] {
-      return Object.keys(value).filter((key) =>
-        /secret|cipher|password|token|key/i.test(key),
+      const allowed = new Set(['hasServerSecret']);
+
+      return Object.keys(value).filter(
+        (key) => !allowed.has(key) && /secret|cipher|password|token|key/i.test(key),
       );
     }
+
+    /**
+     * The allowance above is only safe while this holds: a boolean, never a
+     * masked value of the real length and never a placeholder that round-trips
+     * as if it were the secret.
+     */
+    it('exposes hasServerSecret as a boolean and nothing more', async () => {
+      const row = await getAssistantForAccount(account.accountId, assistantId);
+
+      expect(typeof row?.hasServerSecret).toBe('boolean');
+      expect(row?.hasServerSecret).toBe(true);
+      expect(String(row?.hasServerSecret)).not.toContain(CANARY);
+    });
 
     it('createAssistant returns no secret field and no plaintext', () => {
       expect(secretishKeys(created)).toStrictEqual([]);
