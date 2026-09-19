@@ -85,6 +85,17 @@ const PARAMS_SECTION = /\nparams:[\s\S]*$/;
  * for `where`, `hint` and `internalQuery`, which can quote statement text.
  */
 const KEPT_PROPERTIES = new Set([
+  // **Handled above, on their own terms — this pass must not touch them.**
+  // `message` and `stack` are own properties on every `Error` and they are
+  // *non-enumerable*, so `Object.keys` never saw them. Switching to
+  // `Reflect.ownKeys` to catch symbol keys also caught these, and blanked both
+  // wholesale: the entire message and the entire stack became the string
+  // `[redacted]`, destroying exactly what the splice two blocks above exists to
+  // preserve. That is the fourth time in this file that replacing something
+  // with a broader primitive silently dropped a guarantee nobody had written
+  // down — here, that `Object.keys` skips non-enumerables.
+  'message',
+  'stack',
   // The parameterised SQL. Placeholders, never values.
   'query',
   // Recursed into separately rather than blanked.
