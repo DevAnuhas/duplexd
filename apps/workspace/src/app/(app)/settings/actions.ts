@@ -19,12 +19,32 @@ import { requireCurrentAccount } from '@/lib/account';
  * `accountId` field would be the first tenant-controlled scope parameter in
  * this codebase, and it would arrive through the one write nobody thinks to
  * review — a rename looks harmless in a diff.
+ *
+ * **This authenticates and does not authorize, and that is only safe today.**
+ * Any session bound to the account may rename it, which is moot while
+ * `users.account_id` means one user per account. The moment a membership model
+ * lands, every member — including whatever the read-only role turns out to be
+ * — can rename the organization through this function. Add the role check
+ * here at the same time as the model, not after.
  */
 
 export type RenameResult = { ok: true } | { ok: false; message: string };
 
 /** Longer than any real organization name, short enough to stay a label. */
 const MAX_NAME_LENGTH = 120;
+
+/**
+ * Characters that render as nothing: whitespace, control codes, and the
+ * format category — which is where U+200B ZERO WIDTH SPACE, U+2060 WORD
+ * JOINER, U+FEFF and the bidirectional overrides live.
+ *
+ * `String.trim()` is not enough on its own. It strips U+00A0, but U+200B has
+ * not been whitespace since Unicode 4.0.1, so `'​'.trim()` is unchanged
+ * and non-empty. Without this, a name made only of zero-width characters
+ * passes "an organization needs a name" and then renders as a blank sidebar
+ * and a blank breadcrumb on every page.
+ */
+const INVISIBLE = /[\s\p{Cc}\p{Cf}]/gu;
 
 export async function renameAccountAction(
   formData: FormData,
@@ -34,7 +54,7 @@ export async function renameAccountAction(
   const raw = formData.get('name');
   const name = typeof raw === 'string' ? raw.trim() : '';
 
-  if (name === '') {
+  if (name.replace(INVISIBLE, '') === '') {
     return { ok: false, message: 'An organization needs a name.' };
   }
 
