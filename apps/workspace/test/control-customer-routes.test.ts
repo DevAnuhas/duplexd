@@ -81,7 +81,7 @@ async function createAssistant(
   const result = await createAssistantAction(
     assistantFormData({ ...overrides, name }),
   );
-  expect(result).toStrictEqual({ ok: true });
+  expect(result).toStrictEqual({ ok: true, assistantId: expect.any(String) });
 
   const row = (await listAssistantsForAccount(account.accountId)).find(
     (assistant) => assistant.name === name,
@@ -212,7 +212,10 @@ describeDatabase('customer call creation authentication and ownership', () => {
     const form = new FormData();
     form.set('name', name);
     requestHeaders.current = new Headers({ cookie: account.cookie });
-    expect(await createAssistantAction(form)).toStrictEqual({ ok: true });
+    expect(await createAssistantAction(form)).toStrictEqual({
+      ok: true,
+      assistantId: expect.any(String),
+    });
     const incomplete = (await listAssistantsForAccount(account.accountId)).find(
       (assistant) => assistant.name === name,
     );

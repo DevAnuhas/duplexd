@@ -119,6 +119,7 @@ describeDatabase('a secret set through the real create action', () => {
 
     expect(result, 'the assistant under test was not created').toStrictEqual({
       ok: true,
+      assistantId: expect.any(String),
     });
 
     const saved = (await listAssistantsForAccount(account.accountId)).find(

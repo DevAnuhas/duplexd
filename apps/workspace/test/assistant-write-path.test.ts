@@ -112,7 +112,10 @@ describeDatabase('the server URL matrix, through the real save path', () => {
         formDataFor({ name, serverUrl: url }),
       );
 
-      expect(result).toStrictEqual({ ok: true });
+      expect(result).toStrictEqual({
+        ok: true,
+        assistantId: expect.any(String),
+      });
 
       const listed = await listAssistantsForAccount(account.accountId);
       const saved = listed.find((row) => row.name === name);
@@ -175,7 +178,7 @@ describeDatabase('the server URL matrix, through the real save path', () => {
 
       expect(
         await createAssistantAction(formDataFor({ name, serverUrl: url })),
-      ).toStrictEqual({ ok: true });
+      ).toStrictEqual({ ok: true, assistantId: expect.any(String) });
 
       const saved = (await listAssistantsForAccount(account.accountId)).find(
         (row) => row.name === name,
@@ -234,6 +237,7 @@ describeDatabase('the server URL matrix, through the real save path', () => {
 
     expect(await createAssistantAction(formDataFor({ name }))).toStrictEqual({
       ok: true,
+      assistantId: expect.any(String),
     });
     expect(await countByName(name)).toBe(1);
   });
@@ -285,7 +289,7 @@ describeDatabase('tool-list rejection, through the real save path', () => {
       await createAssistantAction(
         formDataFor({ name, tools: JSON.stringify(tools) }),
       ),
-    ).toStrictEqual({ ok: true });
+    ).toStrictEqual({ ok: true, assistantId: expect.any(String) });
 
     const stored = await withTestPool(async (pool) => {
       const { rows } = await pool.query<{ tools: unknown }>(
@@ -451,6 +455,7 @@ describeDatabase('an assistant round-trips every field', () => {
 
     expect(await createAssistantAction(formDataFor(created))).toStrictEqual({
       ok: true,
+      assistantId: expect.any(String),
     });
 
     const listed = await listAssistantsForAccount(account.accountId);
