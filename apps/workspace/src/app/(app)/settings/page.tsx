@@ -144,7 +144,14 @@ async function AccountIdCard() {
         intact — Founders Grotesk ships no monospace cut, so tabular numerals
         and copy-and-compare do the work a mono face would otherwise do.
       */}
-      <code className="bg-muted rounded px-2 py-1 text-sm tabular-nums">
+      {/*
+        `break-all` is load-bearing at 375px. A UUID is 36 characters with no
+        space in it, so it cannot wrap on its own: inside the card's padding
+        the string is wider than the viewport allows, and without this the
+        whole page scrolls sideways. The flex row already wraps the Copy
+        button; this is what lets the value itself wrap.
+      */}
+      <code className="bg-muted min-w-0 break-all rounded px-2 py-1 text-sm tabular-nums">
         {account.id}
       </code>
       <CopyButton value={account.id} label="Copy ID" />

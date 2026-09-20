@@ -140,6 +140,43 @@
 }
 
 @layer base {
+  /*
+    Tailwind v4 dropped the default `cursor: pointer` on buttons, so nothing
+    in the app showed one. Stated once here rather than per component: a
+    utility on each control would be forty places to forget.
+
+    `:not(:disabled)` and the `aria-disabled` guard matter — a disabled
+    control offering a pointer says it can be pressed. Note that a utility
+    class beats this layer, so any `cursor-default` on an element that is
+    actually interactive has to be removed at the component, which is why
+    the dropdown and select items no longer carry one.
+  */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [role="menuitem"],
+  [role="menuitemcheckbox"],
+  [role="menuitemradio"],
+  [role="checkbox"],
+  [role="switch"],
+  [role="radio"],
+  [role="tab"],
+  [role="option"],
+  [role="combobox"],
+  a[href],
+  label[for],
+  summary,
+  input[type="checkbox"],
+  input[type="radio"],
+  input[type="file"] {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [aria-disabled="true"],
+  [data-disabled] {
+    cursor: not-allowed;
+  }
+
   * {
     @apply border-border outline-ring/50;
     }
