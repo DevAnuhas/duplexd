@@ -8,6 +8,7 @@ import { validateServerUrl } from '@/lib/validate';
 import {
   requireAuthSecret,
   requireAuthUrl,
+  resolveAuthBaseUrl,
   requireDatabaseUrl,
   requireEncryptionKey,
   requirePipecatApiKey,
@@ -63,7 +64,11 @@ const OPTIONAL_VARIABLES = ['ALLOW_LOOPBACK_SERVER_URL'] as const;
  * do, and the failure would look like a flaky test rather than a leaked
  * environment.
  */
-const PLATFORM_VARIABLES = ['VERCEL_ENV', 'VERCEL_BRANCH_URL'] as const;
+const PLATFORM_VARIABLES = [
+  'VERCEL_ENV',
+  'VERCEL_BRANCH_URL',
+  'VERCEL_URL',
+] as const;
 
 describe('environment guards', () => {
   let saved: Partial<
@@ -372,6 +377,142 @@ describe('environment guards', () => {
         process.env.VERCEL_BRANCH_URL = '  duplexd-git-branch.vercel.app  ';
 
         expect(requireAuthUrl()).toBe('https://duplexd-git-branch.vercel.app');
+      });
+
+      it('falls back to the deployment host when only VERCEL_URL is present', () => {
+        delete process.env.BETTER_AUTH_URL;
+        process.env.VERCEL_ENV = 'preview';
+        delete process.env.VERCEL_BRANCH_URL;
+        process.env.VERCEL_URL = 'duplexd-abc123.vercel.app';
+
+        expect(requireAuthUrl()).toBe('https://duplexd-abc123.vercel.app');
+      });
+    });
+  });
+
+  /**
+   * Better Auth's origin check compares the request's `Origin` against the
+   * configured base URL, and **a Vercel preview is reachable on two hostnames
+   * that both legitimately serve it**: the stable branch URL and the
+   * per-deployment URL. Vercel's dashboard and pull-request comments link the
+   * per-deployment one, so that is the host a reviewer actually opens.
+   *
+   * Pinning the base URL to either one rejects the other with `403 Invalid
+   * origin`. That is not hypothetical — it is what a single-host preview
+   * fallback produced, and the failure was invisible to a check that requested
+   * the branch URL with a matching `Origin` header, which is the one path the
+   * fallback was designed for.
+   *
+   * So the base URL becomes **per-request but allowlisted**, using Better
+   * Auth's `DynamicBaseURLConfig`, documented for exactly this case. The
+   * distinction from "derived from the request" still holds: the host may
+   * choose only between origins this deployment already knows about, both
+   * injected by the platform. An arbitrary `Host` header cannot name an
+   * origin.
+   *
+   * Production keeps a single explicit string. It has one hostname, so a
+   * per-request base URL would add a header to the auth decision for no
+   * benefit.
+   */
+  describe('resolveAuthBaseUrl', () => {
+    it('allows both preview hostnames, preferring the branch URL as fallback', () => {
+      delete process.env.BETTER_AUTH_URL;
+      process.env.VERCEL_ENV = 'preview';
+      process.env.VERCEL_BRANCH_URL = 'duplexd-git-branch.vercel.app';
+      process.env.VERCEL_URL = 'duplexd-abc123.vercel.app';
+
+      expect(resolveAuthBaseUrl()).toStrictEqual({
+        allowedHosts: ['duplexd-git-branch.vercel.app', 'duplexd-abc123.vercel.app'],
+        protocol: 'https',
+        fallback: 'https://duplexd-git-branch.vercel.app',
+      });
+    });
+
+    it('returns the explicit origin as a plain string, not a dynamic config', () => {
+      process.env.BETTER_AUTH_URL = 'https://workspace.example.invalid';
+      process.env.VERCEL_ENV = 'preview';
+      process.env.VERCEL_BRANCH_URL = 'duplexd-git-branch.vercel.app';
+      process.env.VERCEL_URL = 'duplexd-abc123.vercel.app';
+
+      expect(resolveAuthBaseUrl()).toBe('https://workspace.example.invalid');
+    });
+
+    it('lists only the hosts that are actually present', () => {
+      delete process.env.BETTER_AUTH_URL;
+      process.env.VERCEL_ENV = 'preview';
+      delete process.env.VERCEL_BRANCH_URL;
+      process.env.VERCEL_URL = 'duplexd-abc123.vercel.app';
+
+      expect(resolveAuthBaseUrl()).toStrictEqual({
+        allowedHosts: ['duplexd-abc123.vercel.app'],
+        protocol: 'https',
+        fallback: 'https://duplexd-abc123.vercel.app',
+      });
+    });
+
+    it('never widens beyond the two platform hosts', () => {
+      delete process.env.BETTER_AUTH_URL;
+      process.env.VERCEL_ENV = 'preview';
+      process.env.VERCEL_BRANCH_URL = 'duplexd-git-branch.vercel.app';
+      process.env.VERCEL_URL = 'duplexd-abc123.vercel.app';
+
+      const resolved = resolveAuthBaseUrl();
+
+      expect(typeof resolved).toBe('object');
+      const hosts = (resolved as { allowedHosts: string[] }).allowedHosts;
+      expect(hosts).toHaveLength(2);
+      expect(hosts.some((host) => host.includes('*'))).toBe(false);
+    });
+
+    it('throws on production even with both platform hosts present', () => {
+      delete process.env.BETTER_AUTH_URL;
+      process.env.VERCEL_ENV = 'production';
+      process.env.VERCEL_BRANCH_URL = 'duplexd-git-branch.vercel.app';
+      process.env.VERCEL_URL = 'duplexd-abc123.vercel.app';
+
+      expect(() => resolveAuthBaseUrl()).toThrow(/BETTER_AUTH_URL/);
+    });
+
+    it('throws when VERCEL_ENV is absent', () => {
+      delete process.env.BETTER_AUTH_URL;
+      process.env.VERCEL_BRANCH_URL = 'duplexd-git-branch.vercel.app';
+      process.env.VERCEL_URL = 'duplexd-abc123.vercel.app';
+
+      expect(() => resolveAuthBaseUrl()).toThrow(/BETTER_AUTH_URL/);
+    });
+
+    it('throws on a preview with neither platform host', () => {
+      delete process.env.BETTER_AUTH_URL;
+      process.env.VERCEL_ENV = 'preview';
+      delete process.env.VERCEL_BRANCH_URL;
+      delete process.env.VERCEL_URL;
+
+      expect(() => resolveAuthBaseUrl()).toThrow(/BETTER_AUTH_URL/);
+    });
+
+    it('trims both hosts', () => {
+      delete process.env.BETTER_AUTH_URL;
+      process.env.VERCEL_ENV = 'preview';
+      process.env.VERCEL_BRANCH_URL = '  duplexd-git-branch.vercel.app  ';
+      process.env.VERCEL_URL = '  duplexd-abc123.vercel.app  ';
+
+      expect(resolveAuthBaseUrl()).toStrictEqual({
+        allowedHosts: ['duplexd-git-branch.vercel.app', 'duplexd-abc123.vercel.app'],
+        protocol: 'https',
+        fallback: 'https://duplexd-git-branch.vercel.app',
+      });
+    });
+
+    it('does not repeat a host when both variables name the same one', () => {
+      delete process.env.BETTER_AUTH_URL;
+      process.env.VERCEL_ENV = 'preview';
+      process.env.VERCEL_BRANCH_URL = 'duplexd-same.vercel.app';
+      process.env.VERCEL_URL = 'duplexd-same.vercel.app';
+
+      expect(resolveAuthBaseUrl()).toStrictEqual({
+        allowedHosts: ['duplexd-same.vercel.app'],
+        protocol: 'https',
+        fallback: 'https://duplexd-same.vercel.app',
       });
     });
   });
