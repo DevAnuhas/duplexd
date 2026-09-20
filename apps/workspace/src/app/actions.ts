@@ -35,7 +35,7 @@ import { validateServerUrl, validateTools, type ValidationIssue } from '@/lib/va
  */
 
 export type ActionResult =
-  | { ok: true }
+  | { ok: true; assistantId?: string }
   | { ok: false; issues: ValidationIssue[] };
 
 /** The one place a submitted assistant is turned into validated input. */
@@ -110,10 +110,10 @@ export async function createAssistantAction(
     return { ok: false, issues };
   }
 
-  await createAssistant(accountId, input);
+  const created = await createAssistant(accountId, input);
   revalidatePath('/assistants');
 
-  return { ok: true };
+  return { ok: true, assistantId: created.id };
 }
 
 export async function updateAssistantAction(

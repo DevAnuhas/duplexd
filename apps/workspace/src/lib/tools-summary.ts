@@ -5,8 +5,7 @@ export type ToolSummary = {
 };
 
 export type ToolsSummaryResult =
-  | { ok: true; rows: ToolSummary[] }
-  | { ok: false; error: string };
+  { ok: true; rows: ToolSummary[] } | { ok: false; error: string };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -23,7 +22,10 @@ export function summarizeTools(json: string): ToolsSummaryResult {
   try {
     value = JSON.parse(json);
   } catch {
-    return { ok: false, error: 'Tools must be valid JSON. Check the syntax and try again.' };
+    return {
+      ok: false,
+      error: 'Tools must be valid JSON. Check the syntax and try again.',
+    };
   }
 
   if (!Array.isArray(value)) {
@@ -43,7 +45,8 @@ export function summarizeTools(json: string): ToolsSummaryResult {
       typeof tool.name !== 'string' ||
       typeof tool.description !== 'string' ||
       !isRecord(tool.parameters) ||
-      (tool.parameters.properties !== undefined && !isRecord(tool.parameters.properties))
+      (tool.parameters.properties !== undefined &&
+        !isRecord(tool.parameters.properties))
     ) {
       return {
         ok: false,

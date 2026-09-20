@@ -1,24 +1,26 @@
-import { redirect } from 'next/navigation';
+import { Suspense } from 'react';
+import { AssistantEditorSkeleton } from '../assistant-editor-skeleton';
 
 import { createAssistantAction } from '@/app/actions';
-import { getCurrentAccount } from '@/lib/account';
+import { requireShell } from '../../shell-data';
 import { AssistantForm } from '../assistant-form';
 
-export const dynamic = 'force-dynamic';
+export default function NewAssistantPage() {
+  return (
+    <Suspense fallback={<AssistantEditorSkeleton />}>
+      <NewAssistant />
+    </Suspense>
+  );
+}
 
-export default async function NewAssistantPage() {
-  if ((await getCurrentAccount()) === null) {
-    redirect('/sign-in');
-  }
+async function NewAssistant() {
+  await requireShell();
 
   return (
-    <main>
-      <h1>New assistant</h1>
-      <AssistantForm
-        values={{ hasServerSecret: false }}
-        action={createAssistantAction}
-        submitLabel="Create assistant"
-      />
-    </main>
+    <AssistantForm
+      values={{ hasServerSecret: false }}
+      action={createAssistantAction}
+      submitLabel="Create assistant"
+    />
   );
 }

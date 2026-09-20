@@ -1,50 +1,41 @@
-import { notFound, redirect } from 'next/navigation';
+import { Suspense } from 'react';
+import { AssistantEditorSkeleton } from '../assistant-editor-skeleton';
+import { notFound } from 'next/navigation';
 
 import { updateAssistantAction } from '@/app/actions';
 import { getAssistantForAccount } from '@/data/assistants';
-import { getCurrentAccount } from '@/lib/account';
+import { requireShell } from '../../shell-data';
 import { AssistantForm } from '../assistant-form';
 
-export const dynamic = 'force-dynamic';
-
-/**
- * The edit page.
- *
- * `getAssistantForAccount` scopes by account inside the query, so another
- * account's id is indistinguishable from one that does not exist — both are
- * `null`, and both become a 404. An archived assistant is `null` too, so it is
- * genuinely unreachable by URL rather than merely absent from the list.
- *
- * The assistant it passes down carries `hasServerSecret`, a boolean derived in
- * SQL. The ciphertext never leaves the database and there is nothing here that
- * could render it.
- */
-export default async function EditAssistantPage({
-  params,
-}: {
+type PageProps = {
   params: Promise<{ id: string }>;
-}) {
-  const account = await getCurrentAccount();
+  searchParams: Promise<{ saved?: string }>;
+};
 
-  if (account === null) {
-    redirect('/sign-in');
-  }
+export default function EditAssistantPage(props: PageProps) {
+  return (
+    <Suspense fallback={<AssistantEditorSkeleton />}>
+      <EditAssistant {...props} />
+    </Suspense>
+  );
+}
+
+async function EditAssistant({ params, searchParams }: PageProps) {
+  const { account } = await requireShell();
 
   const { id } = await params;
-  const assistant = await getAssistantForAccount(account.accountId, id);
-
-  if (assistant === null) {
-    notFound();
-  }
+  // Account-scoped projection excludes ciphertext; absent, archived, and
+  // another account's assistant all remain indistinguishable 404s.
+  const assistant = await getAssistantForAccount(account.id, id);
+  if (assistant === null) notFound();
+  const { saved } = await searchParams;
 
   return (
-    <main>
-      <h1>{assistant.name}</h1>
-      <AssistantForm
-        values={assistant}
-        action={updateAssistantAction.bind(null, id)}
-        submitLabel="Save changes"
-      />
-    </main>
+    <AssistantForm
+      values={assistant}
+      action={updateAssistantAction.bind(null, id)}
+      submitLabel="Save changes"
+      initiallySaved={saved === '1'}
+    />
   );
 }

@@ -1,43 +1,50 @@
 'use client';
 
+import { Archive } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
 import { archiveAssistantAction } from '@/app/actions';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
+import { Button } from '@/components/ui/button';
 
-export function ArchiveButton({ assistantId }: { assistantId: string }) {
+export function ArchiveButton({
+  assistantId,
+  assistantName,
+}: {
+  assistantId: string;
+  assistantName: string;
+}) {
   const router = useRouter();
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
-
-  /**
-   * Inside a transition, for the reason spelled out in `key-manager.tsx`: a
-   * bare `router.refresh()` after a server action does not commit the new
-   * render, so the row stayed in the list after archiving. Same shape, same
-   * fix — and this path, like revoke, changes no local state, so there was
-   * nothing to mask it.
-   */
   const [, startTransition] = useTransition();
 
-  /**
-   * `busy` was set and never cleared, on any path.
-   *
-   * On success that is invisible, because the refresh removes the row this
-   * button lives in. On a rejected action — an expired session, a database
-   * that went away — the button stayed disabled with nothing said, so the
-   * customer saw a dead control and no reason. Clearing it in `finally` covers
-   * both, and the failure says so rather than looking like a no-op.
-   */
   function onArchive() {
     setBusy(true);
     setFailed(false);
-
-    // The action call itself goes inside the transition — see the note in
-    // key-manager.tsx. Wrapping only the refresh leaves React nowhere to apply
-    // the tree revalidatePath sends back, and the row stays in the list.
+    // The action itself belongs inside the transition so its revalidated
+    // server tree is committed, not only the subsequent router.refresh().
     startTransition(async () => {
       try {
-        await archiveAssistantAction(assistantId);
+        const result = await archiveAssistantAction(assistantId);
+        if (!result.ok) {
+          setFailed(true);
+          return;
+        }
+        setOpen(false);
         router.refresh();
       } catch {
         setFailed(true);
@@ -48,16 +55,53 @@ export function ArchiveButton({ assistantId }: { assistantId: string }) {
   }
 
   return (
-    <>
-      <button type="button" disabled={busy} onClick={onArchive}>
-        Archive
-      </button>
-      {failed ? (
-        <span role="alert">
-          {' '}
-          Could not archive that assistant. Nothing was changed — try again.
-        </span>
-      ) : null}
-    </>
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!busy) {
+          setOpen(next);
+          setFailed(false);
+        }
+      }}
+    >
+      <AlertDialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={`Archive ${assistantName}`}
+        >
+          <Archive aria-hidden="true" />
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Archive {assistantName}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This assistant will leave your workspace and cannot start new calls.
+            Its call history stays available.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {failed && (
+          <Alert variant="destructive">
+            <AlertDescription>
+              Could not confirm the archive. Try again or refresh to check its
+              status.
+            </AlertDescription>
+          </Alert>
+        )}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={busy}>Keep assistant</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={busy}
+            onClick={(event) => {
+              event.preventDefault();
+              onArchive();
+            }}
+          >
+            {busy ? 'Archiving…' : 'Archive assistant'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
