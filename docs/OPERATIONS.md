@@ -62,7 +62,7 @@ The workspace arms a 30-second interval timer at server start. It does **not** s
 
 Every accepted event batch, including an empty heartbeat batch, advances `last_heartbeat_at`. On a timer tick:
 
-- an `active` call whose heartbeat is more than two minutes old becomes `incomplete` with `ended_reason = agent_lost`; its last reported duration is retained;
+- an `active` call whose heartbeat is more than two minutes old becomes `incomplete` with `ended_reason = agent_lost`. The agent has not reported an authoritative duration before `/complete`, so a production-shaped incomplete call retains `duration_secs = NULL`; the sweeper does not estimate a duration from timestamps;
 - a `starting` call more than two minutes old becomes `failed` with `ended_reason = agent_never_started`.
 
 The starting threshold is provisional. The real cold-start measurement requires a Pipecat Cloud deployment with `min_agents = 0`; without those credentials it is blocked, not estimated. Revisit the threshold after that measurement rather than treating two minutes as provider evidence.

@@ -292,6 +292,27 @@ describeDatabase('stale call sweeps', () => {
     expect(await storedEvents(staleStarting.callId)).toHaveLength(0);
   });
 
+  it('uses the reserved range when naive max-plus-one would allocate an agent sequence', async () => {
+    const stale = new Date('2026-09-20T10:00:00Z');
+    const now = new Date('2026-09-20T10:10:00Z');
+    const { callId, rawToken } = await seedCall({
+      state: 'active',
+      startedAt: stale,
+      lastHeartbeatAt: stale,
+    });
+    const agentEvents = [1, 2, 3, 4, 5].map((seq) => event(seq));
+    await ingestAgentEvents(callId, rawToken, agentEvents);
+    const before = await storedEvents(callId);
+
+    await sweepStaleCalls(now);
+
+    const rows = await storedEvents(callId);
+    expect(rows).toHaveLength(6);
+    expect(rows.slice(0, 5)).toStrictEqual(before);
+    expect(rows[5]?.seq).toBe(PLATFORM_SWEEP_SEQUENCE);
+    expect(rows.some((row) => row.seq === 6)).toBe(false);
+  });
+
   it('uses the reserved int4 range even when the agent owns the preceding sequence', async () => {
     const stale = new Date('2026-09-20T10:00:00Z');
     const now = new Date('2026-09-20T10:10:00Z');

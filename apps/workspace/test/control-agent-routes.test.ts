@@ -24,9 +24,12 @@ const { GET: fetchConfig } = await import('@/app/v1/agent/calls/[id]/config/rout
 const { POST: postEvents } = await import('@/app/v1/agent/calls/[id]/events/route');
 const { POST: postComplete } = await import('@/app/v1/agent/calls/[id]/complete/route');
 const { createAssistantAction, updateAssistantAction } = await import('@/app/actions');
-const { AGENT_EVENT_TYPES } = await import('@/control/constants');
+const { ACTIVE_STALE_AFTER_MS, AGENT_EVENT_TYPES } = await import(
+  '@/control/constants'
+);
 const { listAssistantsForAccount } = await import('@/data/assistants');
 const { mintApiKey } = await import('@/data/api-keys');
+const { sweepStaleCalls } = await import('@/data/calls');
 const { closeDb } = await import('@/db/client');
 const { signUpNewAccount } = await import('./helpers/auth.ts');
 const {
@@ -355,6 +358,81 @@ describeDatabase('agent configuration contract', () => {
 });
 
 describeDatabase('agent event route validation and idempotency', () => {
+  it('keeps duration unknown when a production-shaped active call is swept', async () => {
+    const call = await activeCall();
+    const eventResponse = await postEvents(
+      agentRequest(call.callId, 'events', call.agentToken, 'POST', {
+        events: [
+          {
+            seq: 1,
+            at: '2026-09-20T10:00:00.123456+00:00',
+            type: 'interruption',
+            payload: { observed: true },
+          },
+        ],
+      }),
+      routeContext(call.callId),
+    );
+    expect(eventResponse.status).toBe(200);
+
+    const sweepAt = new Date();
+    const staleAt = new Date(sweepAt.getTime() - ACTIVE_STALE_AFTER_MS - 1_000);
+    await withTestPool(async (pool) => {
+      const before = await pool.query<{
+        state: string;
+        duration_secs: string | null;
+        event_count: string;
+      }>(
+        `SELECT c.state,
+                c.duration_secs::text,
+                count(e.seq)::text AS event_count
+         FROM calls c
+         LEFT JOIN call_events e ON e.call_id = c.id
+         WHERE c.id = $1
+         GROUP BY c.id`,
+        [call.callId],
+      );
+      expect(before.rows[0]).toMatchObject({
+        state: 'active',
+        duration_secs: null,
+        event_count: '1',
+      });
+      await pool.query(
+        `UPDATE calls
+         SET started_at = $2, last_heartbeat_at = $2
+         WHERE id = $1`,
+        [call.callId, staleAt],
+      );
+    });
+
+    await sweepStaleCalls(sweepAt);
+
+    await withTestPool(async (pool) => {
+      const after = await pool.query<{
+        state: string;
+        ended_reason: string | null;
+        duration_secs: string | null;
+        event_count: string;
+      }>(
+        `SELECT c.state,
+                c.ended_reason,
+                c.duration_secs::text,
+                count(e.seq)::text AS event_count
+         FROM calls c
+         LEFT JOIN call_events e ON e.call_id = c.id
+         WHERE c.id = $1
+         GROUP BY c.id`,
+        [call.callId],
+      );
+      expect(after.rows[0]).toMatchObject({
+        state: 'incomplete',
+        ended_reason: 'agent_lost',
+        duration_secs: null,
+        event_count: '2',
+      });
+    });
+  });
+
   it('accepts an empty heartbeat with exact 200 and rejects malformed emptiness unchanged', async () => {
     const call = await activeCall();
     await withTestPool(async (pool) => {

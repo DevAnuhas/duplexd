@@ -76,7 +76,7 @@ describeDatabase('P05 call persistence shape', () => {
       id: callId,
       accountId,
       assistantSnapshot: { assistantId: 'snapshot-duration-control' },
-      agentTokenHash: '0'.repeat(64),
+      agentTokenHash: randomUUID().replaceAll('-', '').repeat(2),
       state: 'ended',
       durationSecs: 12.345,
     });

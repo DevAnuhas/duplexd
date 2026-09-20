@@ -211,7 +211,6 @@ describeDatabase('real standalone server behavior', () => {
       createdAt: new Date(now - 60_000),
       startedAt: new Date(now - 60_000),
       heartbeat: new Date(now),
-      durationSecs: 4.5,
     });
     const stale = await seedStandaloneCall({
       accountId: pageAccount.accountId,
@@ -219,7 +218,6 @@ describeDatabase('real standalone server behavior', () => {
       createdAt: new Date(now - ACTIVE_STALE_AFTER_MS - 60_000),
       startedAt: new Date(now - ACTIVE_STALE_AFTER_MS - 60_000),
       heartbeat: new Date(now - ACTIVE_STALE_AFTER_MS - 1_000),
-      durationSecs: 17.125,
     });
     freshCallId = fresh.callId;
     staleCallId = stale.callId;
@@ -252,7 +250,7 @@ describeDatabase('real standalone server behavior', () => {
     expect(await callRecord(staleCallId)).toMatchObject({
       state: 'incomplete',
       ended_reason: 'agent_lost',
-      duration_secs: 17.125,
+      duration_secs: null,
     });
     expect((await callRecord(freshCallId)).state).toBe('active');
     expect(await eventCount(staleCallId)).toBe(2);
