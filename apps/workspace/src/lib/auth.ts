@@ -186,12 +186,38 @@ function createAuth() {
            * transaction once the adapter supports one, not a comment claiming
            * one already exists.
            */
-          before: async (user) => {
+          before: async (user, context) => {
             const accountId = randomUUID();
+
+            /**
+             * The workspace name the person typed at signup.
+             *
+             * It reaches this hook on the endpoint context rather than on
+             * `user`, because it is not a column on `users` and should not
+             * become one. That works because Better Auth's sign-up body schema
+             * is `z.object({...}).and(z.record(z.string(), z.any()))` — an
+             * intersection with a catch-all, so extra keys survive validation
+             * and arrive intact. Verified by reading
+             * `node_modules/better-auth/dist/api/routes/sign-up.mjs`, not
+             * assumed; the alternative (`user.additionalFields`) would add a
+             * column to `users` to carry a value that belongs to `accounts`.
+             *
+             * **Falling back to the email is deliberate**, not a leftover. A
+             * signup that arrives without a workspace name — an older client,
+             * a direct API call — must still produce an account, and an
+             * account named after its owner's address is recoverable: the
+             * rename form on Settings exists precisely for that.
+             */
+            const submitted = (context as { body?: { workspaceName?: unknown } } | undefined)
+              ?.body?.workspaceName;
+            const workspaceName =
+              typeof submitted === 'string' && submitted.trim() !== ''
+                ? submitted.trim()
+                : user.email;
 
             await getDb().insert(schema.accounts).values({
               id: accountId,
-              name: user.email,
+              name: workspaceName,
             });
 
             return { data: { ...user, accountId } };

@@ -56,11 +56,13 @@ export type AccountSummary = { id: string; name: string };
 export function AppSidebar({
   account,
   userEmail,
+  userName,
   counts,
   ...props
 }: {
   account: AccountSummary;
   userEmail: string;
+  userName: string | null;
   counts: { assistants: number; apiKeys: number; calls: number };
 } & ComponentProps<typeof Sidebar>) {
   const pathname = usePathname();
@@ -191,7 +193,7 @@ export function AppSidebar({
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
-        <NavUser email={userEmail} />
+        <NavUser email={userEmail} name={userName} />
       </SidebarFooter>
 
       <SidebarRail />

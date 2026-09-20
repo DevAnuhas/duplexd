@@ -29,7 +29,21 @@ import {
  * The scaffold's block shipped Upgrade to Pro, Account, Billing and
  * Notifications. None of those exist, so none of them are here.
  */
-export function NavUser({ email }: { email: string }) {
+/**
+ * The signed-in person, and the two things they can actually do.
+ *
+ * Shows their **name** with the address underneath, falling back to the
+ * address alone when there is no name — accounts created before signup
+ * collected one, and API-created users, both have a null `users.name`. The
+ * fallback is the honest display, not a placeholder pretending to be a name.
+ */
+export function NavUser({
+  email,
+  name,
+}: {
+  email: string;
+  name: string | null;
+}) {
   const { isMobile } = useSidebar();
   const router = useRouter();
   const { theme, setTheme } = useTheme();
@@ -54,7 +68,8 @@ export function NavUser({ email }: { email: string }) {
     }
   }
 
-  const initial = email.slice(0, 1).toUpperCase();
+  const display = name !== null && name.trim() !== '' ? name : email;
+  const initial = display.slice(0, 1).toUpperCase();
 
   return (
     <SidebarMenu>
@@ -63,14 +78,19 @@ export function NavUser({ email }: { email: string }) {
           <DropdownMenuTrigger asChild>
             <SidebarMenuButton
               size="lg"
-              tooltip={email}
+              tooltip={display}
               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
             >
               <div className="bg-sidebar-accent text-sidebar-accent-foreground flex aspect-square size-8 items-center justify-center rounded-lg text-xs font-medium">
                 {initial}
               </div>
-              <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate">{email}</span>
+              <div className="grid min-w-0 flex-1 text-left text-sm leading-tight">
+                <span className="truncate font-medium">{display}</span>
+                {display !== email && (
+                  <span className="text-muted-foreground truncate text-xs">
+                    {email}
+                  </span>
+                )}
               </div>
               <ChevronsUpDown className="ml-auto size-4" />
             </SidebarMenuButton>

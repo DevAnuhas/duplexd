@@ -31,16 +31,37 @@ export function SignUpForm() {
     formState: { isSubmitting },
   } = useForm<SignUpValues>({
     resolver: zodResolver(signUpSchema),
-    defaultValues: { email: '', password: '', confirmPassword: '' },
+    defaultValues: {
+      workspaceName: '',
+      name: '',
+      email: '',
+      password: '',
+      confirmPassword: '',
+    },
   });
 
   async function onSubmit(values: SignUpValues) {
     setFormError(null);
 
+    /*
+      `workspaceName` is not a column on `users` — it names the account. It
+      rides along on the signup body because Better Auth's schema for that
+      endpoint is an intersection with a catch-all record, so extra keys
+      survive validation and reach the create hook, which writes
+      `accounts.name`. See `lib/auth.ts`.
+    */
     const result = await authClient.signUp.email({
       email: values.email,
       password: values.password,
-      name: values.email,
+      name: values.name,
+      /*
+        The client's generated type lists only Better Auth's own signup
+        fields, but the endpoint's runtime schema is an intersection with a
+        catch-all record, so this key is carried through untouched. The cast
+        is narrow and deliberate: widening the call signature would suggest
+        arbitrary fields are supported, when exactly one is.
+      */
+      ...({ workspaceName: values.workspaceName } as { workspaceName: string }),
     });
 
     if (result.error) {
@@ -59,6 +80,51 @@ export function SignUpForm() {
       noValidate
       className="space-y-4"
     >
+      <Controller
+        control={control}
+        name="workspaceName"
+        render={({ field, fieldState }) => (
+          <Field data-invalid={fieldState.invalid || undefined}>
+            <FieldLabel htmlFor={field.name}>Workspace name</FieldLabel>
+            <Input
+              {...field}
+              id={field.name}
+              placeholder="Acme Inc."
+              autoComplete="organization"
+              className="h-11"
+              aria-invalid={fieldState.invalid || undefined}
+            />
+            <FieldDescription>
+              What your organization is called. You can change it in Settings.
+            </FieldDescription>
+            {fieldState.error && (
+              <FieldError>{fieldState.error.message}</FieldError>
+            )}
+          </Field>
+        )}
+      />
+
+      <Controller
+        control={control}
+        name="name"
+        render={({ field, fieldState }) => (
+          <Field data-invalid={fieldState.invalid || undefined}>
+            <FieldLabel htmlFor={field.name}>Your name</FieldLabel>
+            <Input
+              {...field}
+              id={field.name}
+              placeholder="Alex Morgan"
+              autoComplete="name"
+              className="h-11"
+              aria-invalid={fieldState.invalid || undefined}
+            />
+            {fieldState.error && (
+              <FieldError>{fieldState.error.message}</FieldError>
+            )}
+          </Field>
+        )}
+      />
+
       <Controller
         control={control}
         name="email"

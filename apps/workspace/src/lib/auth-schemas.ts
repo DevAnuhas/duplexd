@@ -84,8 +84,24 @@ export const signInSchema = z.object({
   password: z.string().min(1, { error: 'Enter your password.' }),
 });
 
+/** The organization's display name, set at signup and editable in Settings. */
+const workspaceName = z
+  .string({ error: 'Name your workspace.' })
+  .trim()
+  .min(1, { error: 'Name your workspace.' })
+  .max(120, { error: 'Keep the workspace name under 120 characters.' });
+
+/** The person's own name, shown in the user menu instead of their address. */
+const personName = z
+  .string({ error: 'Enter your name.' })
+  .trim()
+  .min(1, { error: 'Enter your name.' })
+  .max(120, { error: 'Keep your name under 120 characters.' });
+
 export const signUpSchema = z
   .object({
+    workspaceName,
+    name: personName,
     email,
     password,
     confirmPassword: z.string().min(1, { error: 'Confirm your password.' }),

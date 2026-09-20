@@ -62,6 +62,7 @@ export async function renameAccount(
 export type ShellContext = {
   account: AccountProfile;
   userEmail: string;
+  userName: string | null;
   counts: {
     assistants: number;
     apiKeys: number;
@@ -99,6 +100,7 @@ export async function getShellContext(
       name: accounts.name,
       createdAt: accounts.createdAt,
       userEmail: users.email,
+      userName: users.name,
       assistants: sql<number>`(
         select count(*) from ${assistants}
         where ${assistants.accountId} = ${accounts.id}
@@ -143,6 +145,7 @@ export async function getShellContext(
   return {
     account: { id: row.id, name: row.name, createdAt: row.createdAt },
     userEmail: row.userEmail,
+    userName: row.userName,
     counts: {
       assistants: row.assistants,
       apiKeys: row.apiKeys,

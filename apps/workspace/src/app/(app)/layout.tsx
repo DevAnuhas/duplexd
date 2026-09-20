@@ -67,6 +67,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       <AppSidebar
         account={{ id: shell.account.id, name: shell.account.name }}
         userEmail={shell.userEmail}
+        userName={shell.userName}
         counts={shell.counts}
       />
       <SidebarInset className="flex min-h-0 flex-1 flex-col">
