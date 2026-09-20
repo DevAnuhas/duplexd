@@ -90,7 +90,7 @@ const hasNeonGateEnvironment = [
 ].every((value) => value !== undefined && value.trim() !== '');
 
 const neonGateCommand =
-  'node --env-file=apps/workspace/.env.local apps/workspace/node_modules/vitest/vitest.mjs run --root apps/workspace test/vercel-deployment.test.ts -t "real Neon preview identity gate"';
+  'pnpm --filter workspace exec vitest run test/vercel-deployment.test.ts -t "real Neon preview identity gate"';
 
 describe('real Neon preview identity gate', () => {
   if (!hasNeonGateEnvironment) {

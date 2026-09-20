@@ -50,8 +50,10 @@ The preview migration preflight runs on `DATABASE_URL_UNPOOLED`, the same connec
 CI covers the preflight's identity decision with injected branch identities. Its local PostgreSQL service cannot expose Neon's `neon.project_id` and `neon.branch_id`, so the real-Neon proof names itself as **NOT RUN** rather than disappearing into a green count. With the approved per-worktree `.env.local` present, run the live proof from the repository root:
 
 ```sh
-node --env-file=apps/workspace/.env.local apps/workspace/node_modules/vitest/vitest.mjs run --root apps/workspace test/vercel-deployment.test.ts -t "real Neon preview identity gate"
+pnpm --filter workspace exec vitest run test/vercel-deployment.test.ts -t "real Neon preview identity gate"
 ```
+
+The test setup resolves `.env.local` through the shared environment helper, preferring `apps/workspace/.env.local` and retaining the repository-root fallback used by older worktrees.
 
 ## GitHub secrets
 
