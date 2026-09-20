@@ -1,5 +1,3 @@
-import { Suspense } from 'react';
-import { Skeleton } from '@/components/ui/skeleton';
 import { ArrowUpRight, Plus } from '@phosphor-icons/react/ssr';
 import Link from 'next/link';
 
@@ -22,6 +20,8 @@ import {
 import { listAssistantsForAccount } from '@/data/assistants';
 import { requireShell } from '../shell-data';
 import { ArchiveButton } from './archive-button';
+
+export const dynamic = 'force-dynamic';
 
 const updatedFormat = new Intl.DateTimeFormat('en', {
   dateStyle: 'medium',
@@ -54,17 +54,16 @@ export default async function AssistantsPage() {
         </Button>
       </header>
 
-      <Suspense fallback={<Skeleton className="h-64 w-full rounded-lg" />}>
-        <AssistantList />
-      </Suspense>
+      <AssistantList assistants={assistants} />
     </div>
   );
 }
 
-async function AssistantList() {
-  const { account } = await requireShell();
-  const assistants = await listAssistantsForAccount(account.id);
-
+function AssistantList({
+  assistants,
+}: {
+  assistants: Awaited<ReturnType<typeof listAssistantsForAccount>>;
+}) {
   return (
     <>
       {assistants.length === 0 ? (
