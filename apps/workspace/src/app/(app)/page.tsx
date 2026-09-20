@@ -123,8 +123,20 @@ async function Stats() {
   );
 }
 
-/** `21:06 · 20 Sep` — the time first, because that is what is being scanned. */
-function when(value: string): string {
+/**
+ * `21:06 · 20 Sep` — the time first, because that is what is being scanned.
+ *
+ * **Null means null.** A call that never started has no start time, and
+ * falling back to `createdAt` would print a plausible one — which reads as
+ * "this call ran at 21:44" for a call that never connected. The calls list
+ * says "Not reported" for exactly this row, and two pages disagreeing about
+ * the same call is worse than either answer alone.
+ */
+function when(value: string | null): string {
+  if (value === null) {
+    return 'Not reported';
+  }
+
   const date = new Date(value);
 
   return `${new Intl.DateTimeFormat('en-GB', {
@@ -208,7 +220,7 @@ async function RecentActivity() {
                       prefetch
                       className="underline-offset-4 hover:underline"
                     >
-                      {when(call.startedAt ?? call.createdAt)}
+                      {when(call.startedAt)}
                     </Link>
                   </TableCell>
                   <TableCell>
