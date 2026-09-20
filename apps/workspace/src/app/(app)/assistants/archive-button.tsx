@@ -3,9 +3,9 @@
 import { Archive } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
+import { toast } from 'sonner';
 
 import { archiveAssistantAction } from '@/app/actions';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,25 +29,28 @@ export function ArchiveButton({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
   const [, startTransition] = useTransition();
 
   function onArchive() {
     setBusy(true);
-    setFailed(false);
     // The action itself belongs inside the transition so its revalidated
     // server tree is committed, not only the subsequent router.refresh().
     startTransition(async () => {
       try {
         const result = await archiveAssistantAction(assistantId);
         if (!result.ok) {
-          setFailed(true);
+          toast.error(
+            'Could not confirm the archive. Try again or refresh to check its status.',
+          );
           return;
         }
         setOpen(false);
+        toast.success('Assistant archived');
         router.refresh();
       } catch {
-        setFailed(true);
+        toast.error(
+          'Could not confirm the archive. Try again or refresh to check its status.',
+        );
       } finally {
         setBusy(false);
       }
@@ -60,14 +63,14 @@ export function ArchiveButton({
       onOpenChange={(next) => {
         if (!busy) {
           setOpen(next);
-          setFailed(false);
         }
       }}
     >
       <AlertDialogTrigger asChild>
         <Button
           variant="ghost"
-          size="icon-sm"
+          size="icon"
+          className="size-11"
           aria-label={`Archive ${assistantName}`}
         >
           <Archive aria-hidden="true" />
@@ -81,18 +84,13 @@ export function ArchiveButton({
             Its call history stays available.
           </AlertDialogDescription>
         </AlertDialogHeader>
-        {failed && (
-          <Alert variant="destructive">
-            <AlertDescription>
-              Could not confirm the archive. Try again or refresh to check its
-              status.
-            </AlertDescription>
-          </Alert>
-        )}
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={busy}>Keep assistant</AlertDialogCancel>
+          <AlertDialogCancel disabled={busy} className="min-h-11">
+            Keep assistant
+          </AlertDialogCancel>
           <AlertDialogAction
             disabled={busy}
+            className="min-h-11"
             onClick={(event) => {
               event.preventDefault();
               onArchive();

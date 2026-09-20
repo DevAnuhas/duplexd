@@ -1,18 +1,20 @@
 'use client';
 
-import { Check, ChevronDown, Copy, LoaderCircle } from 'lucide-react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { ChevronDown, Copy, LoaderCircle } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useState, useTransition } from 'react';
 import {
-  useEffect,
-  useRef,
-  useState,
-  useTransition,
-  type FormEvent,
-} from 'react';
+  Controller,
+  useForm,
+  useWatch,
+  type Control,
+  type FieldErrors,
+} from 'react-hook-form';
+import { toast } from 'sonner';
 
 import type { ActionResult } from '@/app/actions';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -28,16 +30,16 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
-import { Input } from '@/components/ui/input';
 import {
   Field,
   FieldDescription,
-  FieldError as ErrorMessage,
+  FieldError,
   FieldGroup,
   FieldLabel,
   FieldLegend,
   FieldSet,
 } from '@/components/ui/field';
+import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import {
   Table,
@@ -48,6 +50,10 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  assistantSchema,
+  type AssistantFormInput,
+} from '@/lib/assistant-schema';
 import { summarizeTools } from '@/lib/tools-summary';
 import type { ValidationIssue } from '@/lib/validate';
 
@@ -73,158 +79,226 @@ const sections = [
   ['tool-settings', 'Tools'],
 ] as const;
 
-function FieldError({
-  field,
-  issues,
+type TextFieldName = Exclude<
+  keyof AssistantFormInput,
+  'clearServerSecret' | 'tools'
+>;
+
+/** One Controller/Field composition for the editor's ordinary text controls. */
+function AssistantTextField({
+  control,
+  name,
+  label,
+  description,
+  rows,
+  type = 'text',
+  placeholder,
 }: {
-  field: string;
-  issues: ValidationIssue[];
+  control: Control<AssistantFormInput>;
+  name: TextFieldName;
+  label: string;
+  description?: string;
+  rows?: number;
+  type?: 'text' | 'password';
+  placeholder?: string;
 }) {
-  const messages = issues.filter((issue) => issue.field === field);
-  if (messages.length === 0) return null;
   return (
-    <ErrorMessage id={`${field}-error`}>
-      {messages.map((issue) => issue.message).join(' ')}
-    </ErrorMessage>
+    <Controller
+      control={control}
+      name={name}
+      render={({ field, fieldState }) => (
+        <Field data-invalid={fieldState.invalid}>
+          <FieldLabel htmlFor={field.name}>{label}</FieldLabel>
+          {description && (
+            <FieldDescription id={`${field.name}-help`}>
+              {description}
+            </FieldDescription>
+          )}
+          {rows === undefined ? (
+            <Input
+              {...field}
+              id={field.name}
+              type={type}
+              placeholder={placeholder}
+              autoComplete={type === 'password' ? 'new-password' : undefined}
+              className="min-h-11"
+              aria-invalid={fieldState.invalid}
+              aria-describedby={
+                [
+                  description ? `${field.name}-help` : '',
+                  fieldState.invalid ? `${field.name}-error` : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ') || undefined
+              }
+            />
+          ) : (
+            <Textarea
+              {...field}
+              id={field.name}
+              rows={rows}
+              className={
+                rows >= 6
+                  ? 'min-h-40 leading-relaxed'
+                  : 'min-h-24 leading-relaxed'
+              }
+              aria-invalid={fieldState.invalid}
+              aria-describedby={
+                [
+                  description ? `${field.name}-help` : '',
+                  fieldState.invalid ? `${field.name}-error` : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ') || undefined
+              }
+            />
+          )}
+          <FieldError id={`${field.name}-error`} errors={[fieldState.error]} />
+        </Field>
+      )}
+    />
   );
 }
 
 /**
- * Every control stays mounted, including the collapsed JSON editor. Fields are
- * uncontrolled so rejecting a save never replaces what the operator typed.
- * JSON is summarized but never rewritten: FormData reads the textarea itself.
- * Secrets arrive only through a new, initially empty password input.
+ * RHF owns every editable value. A failed write never resets the form; a
+ * successful write resets to the submitted values with only the credential
+ * entry and explicit clear instruction removed. Collapsed tools stay mounted.
  */
 export function AssistantForm({
   values,
   action,
   submitLabel,
-  initiallySaved = false,
 }: {
   values: AssistantFormValues;
   action: (formData: FormData) => Promise<ActionResult>;
   submitLabel: string;
-  initiallySaved?: boolean;
 }) {
   const router = useRouter();
-  const secretRef = useRef<HTMLInputElement>(null);
-  const [issues, setIssues] = useState<ValidationIssue[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [dirty, setDirty] = useState(false);
-  const [saved, setSaved] = useState(initiallySaved);
-  const [title, setTitle] = useState(values.name || 'New assistant');
-  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>(
-    'idle',
-  );
-  const [hasSecret, setHasSecret] = useState(values.hasServerSecret === true);
-  const [clearSecret, setClearSecret] = useState(false);
-  const [toolsOpen, setToolsOpen] = useState(false);
-  const [initialTools] = useState(() =>
-    JSON.stringify(values.tools ?? [], null, 2),
-  );
-  const [toolsSummary, setToolsSummary] = useState(() =>
-    summarizeTools(initialTools),
-  );
   const [, startTransition] = useTransition();
+  const [hasSecret, setHasSecret] = useState(values.hasServerSecret === true);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const form = useForm<AssistantFormInput>({
+    resolver: zodResolver(assistantSchema),
+    defaultValues: {
+      name: values.name ?? '',
+      instructions: values.instructions ?? '',
+      voice: values.voice ?? '',
+      accentStyle: values.accentStyle ?? '',
+      waitingBehavior: values.waitingBehavior ?? '',
+      backendModel: values.backendModel ?? '',
+      backendInstructions: values.backendInstructions ?? '',
+      serverUrl: values.serverUrl ?? '',
+      serverSecret: '',
+      clearServerSecret: false,
+      tools: JSON.stringify(values.tools ?? [], null, 2),
+    },
+    shouldFocusError: false,
+  });
+  const title =
+    useWatch({ control: form.control, name: 'name' }) || 'New assistant';
+  const [toolsSummary, setToolsSummary] = useState(() =>
+    summarizeTools(form.getValues('tools')),
+  );
+  const { isDirty, isSubmitting } = form.formState;
 
-  useEffect(() => {
-    if (issues.length === 0) return;
-    const first = issues[0];
-    if (first === undefined) return;
-    const frame = requestAnimationFrame(() =>
-      document.getElementById(first.field)?.focus(),
+  function focusError(name: keyof AssistantFormInput) {
+    if (name === 'tools') setToolsOpen(true);
+    requestAnimationFrame(() => form.setFocus(name));
+  }
+
+  function invalid(errors: FieldErrors<AssistantFormInput>) {
+    const first = Object.keys(errors).find(
+      (name) => name in assistantSchema.shape,
     );
-    return () => cancelAnimationFrame(frame);
-  }, [issues]);
-
-  function markDirty() {
-    setDirty(true);
-    setSaved(false);
+    if (first !== undefined) focusError(first as keyof AssistantFormInput);
+    toast.error('This assistant was not saved. Check the highlighted fields.');
   }
 
-  function reject(nextIssues: ValidationIssue[]) {
-    setIssues(nextIssues);
-    if (nextIssues.some((issue) => issue.field === 'tools')) setToolsOpen(true);
-  }
-
-  function onSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (busy) return;
-    // Read before disabling controls, which would omit them from FormData.
-    const data = new FormData(event.currentTarget);
-    const summary = summarizeTools(String(data.get('tools') ?? ''));
-    setToolsSummary(summary);
-    if (!summary.ok) {
-      reject([{ field: 'tools', message: summary.error }]);
-      return;
-    }
-    setBusy(true);
-    setIssues([]);
-    startTransition(async () => {
-      try {
-        const result = await action(data);
-        if (!result.ok) {
-          reject(result.issues);
-          return;
-        }
-        // A successful write is the only point where the entered credential
-        // is cleared. Rejections leave it and every other field untouched.
-        const replacement = data.get('serverSecret');
-        if (typeof replacement === 'string' && replacement.trim() !== '')
-          setHasSecret(true);
-        else if (data.get('clearServerSecret') === 'on') setHasSecret(false);
-        if (secretRef.current !== null) secretRef.current.value = '';
-        setClearSecret(false);
-        setDirty(false);
-        setSaved(true);
-        if (values.id === undefined && result.assistantId !== undefined) {
-          router.replace(`/assistants/${result.assistantId}?saved=1`);
-        }
-        router.refresh();
-      } catch {
-        reject([
-          {
-            field: 'name',
-            message:
-              'Could not confirm the save. Your edits are still here. Try again or refresh to check the saved version.',
-          },
-        ]);
-      } finally {
-        setBusy(false);
+  function reject(issues: ValidationIssue[]) {
+    for (const name of new Set(issues.map((issue) => issue.field))) {
+      const message = issues
+        .filter((issue) => issue.field === name)
+        .map((issue) => issue.message)
+        .join(' ');
+      if (name in assistantSchema.shape) {
+        form.setError(name as keyof AssistantFormInput, {
+          type: 'server',
+          message,
+        });
+      } else {
+        form.setError('root.server', { message });
       }
+    }
+    const first = issues.find((issue) => issue.field in assistantSchema.shape);
+    if (first) focusError(first.field as keyof AssistantFormInput);
+    toast.error('This assistant was not saved.', {
+      description: issues.map((issue) => issue.message).join(' '),
     });
   }
 
-  function fieldState(field: string) {
-    const invalid = issues.some((issue) => issue.field === field);
-    return {
-      'aria-invalid': invalid,
-      'aria-describedby': invalid ? `${field}-error` : undefined,
-    };
+  async function submit(input: AssistantFormInput) {
+    const data = new FormData();
+    for (const [name, value] of Object.entries(input)) {
+      if (name === 'clearServerSecret') {
+        if (value === true) data.set(name, 'on');
+      } else if (typeof value === 'string') {
+        data.set(name, value);
+      }
+    }
+    setToolsSummary(summarizeTools(input.tools));
+    form.clearErrors();
+    // Keep the server mutation in React's transition context while returning a
+    // promise to RHF so isSubmitting covers the whole request.
+    await new Promise<void>((resolve) => {
+      startTransition(async () => {
+        try {
+          const result = await action(data);
+          if (!result.ok) {
+            reject(result.issues);
+            return;
+          }
+          if (input.serverSecret.trim() !== '') setHasSecret(true);
+          else if (input.clearServerSecret) setHasSecret(false);
+          form.reset({ ...input, serverSecret: '', clearServerSecret: false });
+          toast.success('Saved');
+          if (values.id === undefined && result.assistantId !== undefined) {
+            router.replace(`/assistants/${result.assistantId}`);
+          }
+          router.refresh();
+        } catch {
+          const message =
+            'Could not confirm the save. Your edits are still here. Try again or refresh to check the saved version.';
+          form.setError('root.server', { message });
+          toast.error(message);
+        } finally {
+          resolve();
+        }
+      });
+    });
   }
 
   async function copyId() {
     if (values.id === undefined) return;
     try {
       await navigator.clipboard.writeText(values.id);
-      setCopyState('copied');
+      toast.success('Assistant ID copied');
     } catch {
-      setCopyState('failed');
+      toast.error('Could not copy. Select the ID to copy it.');
     }
   }
 
   return (
     <form
-      method="post"
-      onSubmit={onSubmit}
-      onChange={markDirty}
-      className="flex flex-col gap-6"
+      noValidate
+      onSubmit={form.handleSubmit(submit, invalid)}
+      className="flex min-w-0 flex-col gap-6"
     >
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0 flex-1 flex flex-col gap-2">
+      <header className="flex min-w-0 flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
           <Link
             href="/assistants"
-            className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+            className="inline-flex min-h-11 w-fit items-center rounded-sm text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
           >
             Assistants
           </Link>
@@ -232,28 +306,18 @@ export function AssistantForm({
             {title}
           </h1>
           {values.id !== undefined ? (
-            <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+            <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-muted-foreground">
               <span className="break-all tabular-nums">{values.id}</span>
               <Button
                 type="button"
                 variant="ghost"
-                size="icon-sm"
+                size="icon"
+                className="size-11"
                 onClick={copyId}
                 aria-label="Copy assistant ID"
               >
-                {copyState === 'copied' ? (
-                  <Check aria-hidden="true" />
-                ) : (
-                  <Copy aria-hidden="true" />
-                )}
+                <Copy aria-hidden="true" />
               </Button>
-              <span role="status">
-                {copyState === 'copied'
-                  ? 'Copied'
-                  : copyState === 'failed'
-                    ? 'Could not copy. Select the ID to copy it.'
-                    : ''}
-              </span>
             </div>
           ) : (
             <p className="text-muted-foreground">
@@ -261,318 +325,215 @@ export function AssistantForm({
             </p>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <span role="status" className="text-sm text-muted-foreground">
-            {busy
-              ? 'Saving…'
-              : dirty
-                ? 'Unsaved changes'
-                : saved
-                  ? 'Saved'
-                  : ''}
+            {isSubmitting ? 'Saving…' : isDirty ? 'Unsaved changes' : ''}
           </span>
-          <Button type="submit" disabled={busy}>
-            {busy && (
+          <Button type="submit" disabled={isSubmitting} className="min-h-11">
+            {isSubmitting && (
               <LoaderCircle
                 data-icon="inline-start"
                 className="animate-spin motion-reduce:animate-none"
                 aria-hidden="true"
               />
             )}
-            {busy ? 'Saving…' : submitLabel}
+            {isSubmitting ? 'Saving…' : submitLabel}
           </Button>
         </div>
       </header>
 
       <nav
         aria-label="Assistant sections"
-        className="sticky top-0 z-10 -mx-1 flex gap-1 overflow-x-auto border-b bg-background/95 px-1 py-3 backdrop-blur-sm"
+        className="sticky top-0 z-10 flex min-w-0 flex-wrap gap-1 border-b bg-background/95 py-3 backdrop-blur-sm"
       >
         {sections.map(([id, label]) => (
-          <Button key={id} asChild variant="ghost" size="sm">
+          <Button key={id} asChild variant="ghost" className="min-h-11">
             <a href={`#${id}`}>{label}</a>
           </Button>
         ))}
       </nav>
 
-      {issues.length > 0 && (
-        <Alert variant="destructive">
-          <AlertTitle>This assistant was not saved</AlertTitle>
-          <AlertDescription>
-            <ul className="list-disc flex flex-col gap-1 pl-4">
-              {issues.map((issue, index) => (
-                <li key={index}>{issue.message}</li>
-              ))}
-            </ul>
-          </AlertDescription>
-        </Alert>
-      )}
-
-      <FieldSet disabled={busy} className="min-w-0">
+      <FieldSet disabled={isSubmitting} className="min-w-0">
         <FieldLegend className="sr-only">Assistant configuration</FieldLegend>
-        <Card id="identity" className="scroll-mt-24 rounded-lg shadow-none">
+        <Card id="identity" className="scroll-mt-40 rounded-lg shadow-none">
           <CardHeader>
-            <CardTitle>Identity</CardTitle>
+            <CardTitle>
+              <h2>Identity</h2>
+            </CardTitle>
             <CardDescription>
               A name you can recognize in your call history.
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            <Field
-              data-invalid={issues.some((issue) => issue.field === 'name')}
-            >
-              <FieldLabel htmlFor="name">Assistant name</FieldLabel>
-              <Input
-                id="name"
-                name="name"
-                defaultValue={values.name ?? ''}
-                required
-                onChange={(event) =>
-                  setTitle(event.target.value || 'New assistant')
-                }
-                {...fieldState('name')}
-              />
-              <FieldError field="name" issues={issues} />
-            </Field>
+          <CardContent>
+            <AssistantTextField
+              control={form.control}
+              name="name"
+              label="Assistant name"
+            />
           </CardContent>
         </Card>
-
-        <Card id="conversation" className="scroll-mt-24 rounded-lg shadow-none">
+        <Card id="conversation" className="scroll-mt-40 rounded-lg shadow-none">
           <CardHeader>
-            <CardTitle>Conversation</CardTitle>
+            <CardTitle>
+              <h2>Conversation</h2>
+            </CardTitle>
             <CardDescription>
               Shape how the assistant speaks with callers.
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-6">
-            <Field
-              data-invalid={issues.some(
-                (issue) => issue.field === 'instructions',
-              )}
-            >
-              <FieldLabel htmlFor="instructions">
-                Conversation instructions
-              </FieldLabel>
-              <Textarea
-                id="instructions"
+          <CardContent>
+            <FieldGroup>
+              <AssistantTextField
+                control={form.control}
                 name="instructions"
+                label="Conversation instructions"
                 rows={8}
-                className="min-h-48 leading-relaxed"
-                defaultValue={values.instructions ?? ''}
-                {...fieldState('instructions')}
               />
-              <FieldError field="instructions" issues={issues} />
-            </Field>
-            <FieldGroup className="grid gap-6 sm:grid-cols-2">
-              <Field
-                data-invalid={issues.some((issue) => issue.field === 'voice')}
-              >
-                <FieldLabel htmlFor="voice">Voice</FieldLabel>
-                <Input
-                  id="voice"
+              <FieldGroup className="grid gap-6 sm:grid-cols-2">
+                <AssistantTextField
+                  control={form.control}
                   name="voice"
-                  defaultValue={values.voice ?? ''}
-                  {...fieldState('voice')}
+                  label="Voice"
+                  description="The voice identifier used for your calls."
                 />
-                <FieldDescription className="text-sm text-muted-foreground">
-                  The voice identifier used for your calls.
-                </FieldDescription>
-                <FieldError field="voice" issues={issues} />
-              </Field>
-              <Field
-                data-invalid={issues.some(
-                  (issue) => issue.field === 'accentStyle',
-                )}
-              >
-                <FieldLabel htmlFor="accentStyle">
-                  Accent &amp; speaking style
-                </FieldLabel>
-                <Input
-                  id="accentStyle"
+                <AssistantTextField
+                  control={form.control}
                   name="accentStyle"
-                  defaultValue={values.accentStyle ?? ''}
-                  {...fieldState('accentStyle')}
+                  label="Accent & speaking style"
+                  description="Describe the accent, tone, and pace."
                 />
-                <FieldDescription className="text-sm text-muted-foreground">
-                  Describe the accent, tone, and pace.
-                </FieldDescription>
-                <FieldError field="accentStyle" issues={issues} />
-              </Field>
+              </FieldGroup>
             </FieldGroup>
           </CardContent>
         </Card>
-
-        <Card id="waiting" className="scroll-mt-24 rounded-lg shadow-none">
+        <Card id="waiting" className="scroll-mt-40 rounded-lg shadow-none">
           <CardHeader>
-            <CardTitle>While waiting</CardTitle>
+            <CardTitle>
+              <h2>While waiting</h2>
+            </CardTitle>
             <CardDescription>
               What should it say while waiting for an answer?
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            <Field
-              data-invalid={issues.some(
-                (issue) => issue.field === 'waitingBehavior',
-              )}
-            >
-              <FieldLabel htmlFor="waitingBehavior">
-                Waiting behavior
-              </FieldLabel>
-              <Textarea
-                id="waitingBehavior"
-                name="waitingBehavior"
-                rows={3}
-                defaultValue={values.waitingBehavior ?? ''}
-                {...fieldState('waitingBehavior')}
-              />
-              <FieldError field="waitingBehavior" issues={issues} />
-            </Field>
+          <CardContent>
+            <AssistantTextField
+              control={form.control}
+              name="waitingBehavior"
+              label="Waiting behavior"
+              rows={3}
+            />
           </CardContent>
         </Card>
-
-        <Card id="backend" className="scroll-mt-24 rounded-lg shadow-none">
+        <Card id="backend" className="scroll-mt-40 rounded-lg shadow-none">
           <CardHeader>
-            <CardTitle>Backend &amp; connection</CardTitle>
+            <CardTitle>
+              <h2>Backend & connection</h2>
+            </CardTitle>
             <CardDescription>
               Connect the assistant to the actions your backend provides.
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-6">
-            <Field
-              data-invalid={issues.some(
-                (issue) => issue.field === 'backendModel',
-              )}
-            >
-              <FieldLabel htmlFor="backendModel">Backend model</FieldLabel>
-              <Input
-                id="backendModel"
+          <CardContent>
+            <FieldGroup>
+              <AssistantTextField
+                control={form.control}
                 name="backendModel"
-                defaultValue={values.backendModel ?? ''}
-                {...fieldState('backendModel')}
+                label="Backend model"
               />
-              <FieldError field="backendModel" issues={issues} />
-            </Field>
-            <Field
-              data-invalid={issues.some(
-                (issue) => issue.field === 'backendInstructions',
-              )}
-            >
-              <FieldLabel htmlFor="backendInstructions">
-                Backend instructions
-              </FieldLabel>
-              <FieldDescription
-                id="backend-instructions-help"
-                className="text-sm text-muted-foreground"
-              >
-                Guide how tools are chosen. Your backend still controls
-                permissions and confirms actions.
-              </FieldDescription>
-              <Textarea
-                id="backendInstructions"
+              <AssistantTextField
+                control={form.control}
                 name="backendInstructions"
+                label="Backend instructions"
                 rows={6}
-                className="min-h-36 leading-relaxed"
-                defaultValue={values.backendInstructions ?? ''}
-                {...fieldState('backendInstructions')}
-                aria-describedby={
-                  issues.some((issue) => issue.field === 'backendInstructions')
-                    ? 'backend-instructions-help backendInstructions-error'
-                    : 'backend-instructions-help'
-                }
+                description="Guide how tools are chosen. Your backend still controls permissions and confirms actions."
               />
-              <FieldError field="backendInstructions" issues={issues} />
-            </Field>
-            <Field
-              data-invalid={issues.some((issue) => issue.field === 'serverUrl')}
-            >
-              <FieldLabel htmlFor="serverUrl">Server URL</FieldLabel>
-              <Input
-                id="serverUrl"
+              <AssistantTextField
+                control={form.control}
                 name="serverUrl"
-                type="url"
+                label="Server URL"
                 placeholder="https://api.example.com/voice"
-                defaultValue={values.serverUrl ?? ''}
-                {...fieldState('serverUrl')}
+                description="Tool requests are sent to this endpoint."
               />
-              <FieldDescription className="text-sm text-muted-foreground">
-                Tool requests are sent to this endpoint.
-              </FieldDescription>
-              <FieldError field="serverUrl" issues={issues} />
-            </Field>
-            <Separator />
-            <FieldSet className="gap-4">
-              <FieldLegend className="mb-0 flex w-full flex-wrap items-center justify-between gap-2">
-                Webhook secret
-                <Badge variant="outline">
-                  {hasSecret ? 'Configured' : 'Not configured'}
-                </Badge>
-              </FieldLegend>
-              <FieldDescription
-                data-testid="secret-state"
-                className="text-sm text-muted-foreground"
-              >
-                {hasSecret
-                  ? "A secret is set. It can't be shown — enter a new one to replace it."
-                  : 'No secret is set.'}
-              </FieldDescription>
-              <Field
-                data-invalid={issues.some(
-                  (issue) => issue.field === 'serverSecret',
-                )}
-              >
-                <FieldLabel htmlFor="serverSecret">
-                  {hasSecret ? 'Replace secret' : 'New secret'}
-                </FieldLabel>
-                <Input
-                  ref={secretRef}
-                  id="serverSecret"
-                  name="serverSecret"
-                  type="password"
-                  autoComplete="new-password"
-                  defaultValue=""
-                  {...fieldState('serverSecret')}
-                />
-                <FieldDescription className="text-sm text-muted-foreground">
-                  Leave blank to keep the current secret.
+              <Separator />
+              <FieldSet className="gap-4">
+                <FieldLegend className="mb-0 flex w-full flex-wrap items-center justify-between gap-2">
+                  Webhook secret{' '}
+                  <Badge variant="outline">
+                    {hasSecret ? 'Configured' : 'Not configured'}
+                  </Badge>
+                </FieldLegend>
+                <FieldDescription data-testid="secret-state">
+                  {hasSecret
+                    ? "A secret is set. It can't be shown — enter a new one to replace it."
+                    : 'No secret is set.'}
                 </FieldDescription>
-                <FieldError field="serverSecret" issues={issues} />
-              </Field>
-              {hasSecret && (
-                <Field orientation="horizontal">
-                  <Checkbox
-                    id="clearServerSecret"
+                <AssistantTextField
+                  control={form.control}
+                  name="serverSecret"
+                  label={hasSecret ? 'Replace secret' : 'New secret'}
+                  type="password"
+                  description="Leave blank to keep the current secret."
+                />
+                {hasSecret && (
+                  <Controller
+                    control={form.control}
                     name="clearServerSecret"
-                    value="on"
-                    checked={clearSecret}
-                    onCheckedChange={(checked) => {
-                      setClearSecret(checked === true);
-                      markDirty();
-                    }}
+                    render={({ field, fieldState }) => (
+                      <Field
+                        orientation="horizontal"
+                        data-invalid={fieldState.invalid}
+                      >
+                        <Checkbox
+                          ref={field.ref}
+                          id={field.name}
+                          name={field.name}
+                          value="on"
+                          checked={field.value}
+                          onCheckedChange={(checked) =>
+                            field.onChange(checked === true)
+                          }
+                          onBlur={field.onBlur}
+                          aria-invalid={fieldState.invalid}
+                          aria-describedby="clearServerSecret-help clearServerSecret-error"
+                          className="size-11"
+                        />
+                        <div className="flex min-w-0 flex-col gap-1">
+                          <FieldLabel htmlFor={field.name}>
+                            Remove the stored secret when saving
+                          </FieldLabel>
+                          <FieldDescription id="clearServerSecret-help">
+                            This takes effect only after a successful save.
+                          </FieldDescription>
+                          <FieldError
+                            id="clearServerSecret-error"
+                            errors={[fieldState.error]}
+                          />
+                        </div>
+                      </Field>
+                    )}
                   />
-                  <FieldLabel htmlFor="clearServerSecret">
-                    Remove the stored secret when saving
-                  </FieldLabel>
-                </Field>
-              )}
-            </FieldSet>
+                )}
+              </FieldSet>
+            </FieldGroup>
           </CardContent>
         </Card>
-
         <Card
           id="tool-settings"
-          className="scroll-mt-24 rounded-lg shadow-none"
+          className="min-w-0 scroll-mt-40 rounded-lg shadow-none"
         >
           <CardHeader>
-            <CardTitle>Tools</CardTitle>
+            <CardTitle>
+              <h2>Tools</h2>
+            </CardTitle>
             <CardDescription>
               Actions available through your backend. Changes take effect when
               you save.
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-5">
+          <CardContent className="flex min-w-0 flex-col gap-5">
             {toolsSummary.ok ? (
               toolsSummary.rows.length === 0 ? (
-                <FieldDescription className="text-sm text-muted-foreground">
+                <FieldDescription>
                   No tools configured. Open the JSON editor to add your
                   backend's tool definitions.
                 </FieldDescription>
@@ -603,13 +564,17 @@ export function AssistantForm({
                 </Table>
               )
             ) : (
-              <Alert variant="destructive">
-                <AlertDescription>{toolsSummary.error}</AlertDescription>
-              </Alert>
+              <FieldDescription>
+                Tool summary unavailable. Check the JSON editor below.
+              </FieldDescription>
             )}
             <Collapsible open={toolsOpen} onOpenChange={setToolsOpen}>
               <CollapsibleTrigger asChild>
-                <Button type="button" variant="outline" className="group">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="group min-h-11"
+                >
                   Edit as JSON{' '}
                   <ChevronDown
                     data-icon="inline-end"
@@ -618,54 +583,47 @@ export function AssistantForm({
                   />
                 </Button>
               </CollapsibleTrigger>
-              {/* forceMount is essential: closed tools must still be in FormData. */}
               <CollapsibleContent
                 forceMount
-                className="mt-4 flex flex-col gap-2 data-[state=closed]:hidden"
+                className="mt-4 data-[state=closed]:hidden"
               >
-                <Field
-                  data-invalid={
-                    !toolsSummary.ok ||
-                    issues.some((issue) => issue.field === 'tools')
-                  }
-                >
-                  <FieldLabel htmlFor="tools">Tool definitions</FieldLabel>
-                  <FieldDescription
-                    id="tools-help"
-                    className="text-sm text-muted-foreground"
-                  >
-                    A JSON array of tools. Each entry has a name, description,
-                    and parameters schema.
-                  </FieldDescription>
-                  <Textarea
-                    id="tools"
-                    name="tools"
-                    rows={14}
-                    className="min-h-64 leading-relaxed"
-                    defaultValue={initialTools}
-                    spellCheck={false}
-                    onBlur={(event) =>
-                      setToolsSummary(summarizeTools(event.target.value))
-                    }
-                    aria-invalid={
-                      !toolsSummary.ok ||
-                      issues.some((issue) => issue.field === 'tools')
-                    }
-                    aria-describedby={
-                      !toolsSummary.ok ||
-                      issues.some((issue) => issue.field === 'tools')
-                        ? 'tools-help tools-error'
-                        : 'tools-help'
-                    }
-                  />
-                  <FieldError field="tools" issues={issues} />
-                  {!toolsSummary.ok &&
-                    !issues.some((issue) => issue.field === 'tools') && (
-                      <ErrorMessage id="tools-error">
-                        {toolsSummary.error}
-                      </ErrorMessage>
-                    )}
-                </Field>
+                <Controller
+                  control={form.control}
+                  name="tools"
+                  render={({ field, fieldState }) => (
+                    <Field data-invalid={fieldState.invalid}>
+                      <FieldLabel htmlFor={field.name}>
+                        Tool definitions
+                      </FieldLabel>
+                      <FieldDescription id="tools-help">
+                        A JSON array of tools. Each entry has a name,
+                        description, and parameters schema.
+                      </FieldDescription>
+                      <Textarea
+                        {...field}
+                        id={field.name}
+                        rows={14}
+                        className="min-h-64 leading-relaxed"
+                        spellCheck={false}
+                        onBlur={() => {
+                          field.onBlur();
+                          setToolsSummary(summarizeTools(field.value));
+                          void form.trigger('tools');
+                        }}
+                        aria-invalid={fieldState.invalid}
+                        aria-describedby={
+                          fieldState.invalid
+                            ? 'tools-help tools-error'
+                            : 'tools-help'
+                        }
+                      />
+                      <FieldError
+                        id="tools-error"
+                        errors={[fieldState.error]}
+                      />
+                    </Field>
+                  )}
+                />
               </CollapsibleContent>
             </Collapsible>
           </CardContent>

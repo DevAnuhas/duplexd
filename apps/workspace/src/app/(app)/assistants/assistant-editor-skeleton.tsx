@@ -27,10 +27,10 @@ export function AssistantEditorSkeleton() {
       </header>
       <nav
         aria-label="Assistant sections"
-        className="sticky top-0 z-10 flex gap-1 overflow-x-auto border-b bg-background py-3"
+        className="sticky top-0 z-10 flex min-w-0 flex-wrap gap-1 border-b bg-background py-3"
       >
         {sections.map(([id, label]) => (
-          <Button key={id} variant="ghost" size="sm" asChild>
+          <Button key={id} variant="ghost" className="min-h-11" asChild>
             <a href={`#${id}`}>{label}</a>
           </Button>
         ))}

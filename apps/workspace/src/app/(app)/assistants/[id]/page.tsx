@@ -9,7 +9,6 @@ import { AssistantForm } from '../assistant-form';
 
 type PageProps = {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ saved?: string }>;
 };
 
 export default function EditAssistantPage(props: PageProps) {
@@ -20,7 +19,7 @@ export default function EditAssistantPage(props: PageProps) {
   );
 }
 
-async function EditAssistant({ params, searchParams }: PageProps) {
+async function EditAssistant({ params }: PageProps) {
   const { account } = await requireShell();
 
   const { id } = await params;
@@ -28,14 +27,12 @@ async function EditAssistant({ params, searchParams }: PageProps) {
   // another account's assistant all remain indistinguishable 404s.
   const assistant = await getAssistantForAccount(account.id, id);
   if (assistant === null) notFound();
-  const { saved } = await searchParams;
 
   return (
     <AssistantForm
       values={assistant}
       action={updateAssistantAction.bind(null, id)}
       submitLabel="Save changes"
-      initiallySaved={saved === '1'}
     />
   );
 }

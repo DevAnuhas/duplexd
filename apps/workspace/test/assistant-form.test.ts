@@ -1,17 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Hoisted above the component import: the editor calls `useRouter` at the top
-// of its body, and outside an app router there is no context for it to read.
-// One router shared by every render, so navigation can be asserted — a factory
-// returning fresh spies would record each call onto an object the test has no
-// way to reach.
+// Hoisted above the component import. One router and one toast shared by every
+// render, so both can be asserted — a factory returning fresh spies would
+// record each call onto an object the test has no way to reach.
 const router = vi.hoisted(() => ({
   push: vi.fn(),
   replace: vi.fn(),
   refresh: vi.fn(),
 }));
 
+const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+
 vi.mock('next/navigation', () => ({ useRouter: () => router }));
+vi.mock('sonner', () => ({ toast }));
 
 import type { ActionResult } from '@/app/actions';
 import {
@@ -26,7 +27,6 @@ import {
   createElement,
   mount,
   submit,
-  submittedValues,
   type Mounted,
   type as typeInto,
 } from './helpers/assistant-form/render.ts';
@@ -37,21 +37,22 @@ import { flatTool } from './helpers/assistant-form/tool-fixtures.ts';
  *
  * The editor's hard requirement is not that it looks right — it is that **a
  * save that fails costs the operator nothing**. A twelve-tool assistant is an
- * afternoon of work sitting in an uncontrolled textarea, and every way of
- * losing it looks like ordinary React:
+ * afternoon of work, and every way of losing it looks like ordinary React.
  *
- *  - re-rendering a field from `values` after a rejection,
- *  - letting a collapsed section unmount, taking its control out of `FormData`
- *    so the save quietly writes an empty tool list,
- *  - disabling the fieldset before reading `FormData`, which drops every
- *    disabled control from the submission,
- *  - clearing the secret box, or the "remove the secret" tick, on a failure.
+ * Since the move to react-hook-form the shape of that risk has changed, and so
+ * have these tests. The form no longer submits itself: `handleSubmit` hands the
+ * validated values to a callback which builds the `FormData` by hand. So **what
+ * the DOM would submit is no longer the contract** — what the *action receives*
+ * is. Asserting `new FormData(form)` would now be checking a path the
+ * application does not use, which is why nearly every submission assertion
+ * below reads from the recorded call instead.
  *
- * Each of those produces a form that still renders and still submits. None is
- * visible in static markup — React emits the identical `value="…"` attribute
- * for `value` and `defaultValue`, so only a live DOM can tell a controlled
- * field from an uncontrolled one, and only a live DOM can be submitted,
- * collapsed or ticked. That is why this file runs under jsdom.
+ * What the controlled inputs buy in return is a stronger guarantee than the
+ * uncontrolled ones gave. Under `Controller`, React re-renders each input from
+ * form state — so if typing failed to reach react-hook-form, React would
+ * immediately write the *old* value back over the DOM. `expect(field.value)`
+ * therefore proves the library received the keystroke, which under the previous
+ * uncontrolled form it did not.
  */
 
 /** A populated assistant, so every case differs in exactly one way. */
@@ -77,9 +78,7 @@ function editing(overrides: Partial<AssistantFormValues> = {}): AssistantFormVal
  *
  * Declared as the mock's type parameter rather than as a parameter on the
  * function itself, so `mock.calls` types as a one-element tuple of `FormData`
- * without leaving an argument nothing reads. Untyped, the recorded arguments
- * are `never[]` and every assertion about *what was submitted* — which is most
- * of this file — needs a cast to compile.
+ * without leaving an argument nothing reads.
  */
 type ServerAction = (formData: FormData) => Promise<ActionResult>;
 
@@ -114,6 +113,20 @@ function submittedTo(
   return call[0].get(field);
 }
 
+/** Every key a recorded call submitted. */
+function submittedKeys(
+  action: ReturnType<typeof vi.fn<ServerAction>>,
+  callIndex = 0,
+): string[] {
+  const call = action.mock.calls[callIndex];
+
+  if (call === undefined) {
+    throw new Error(`The action was not called ${callIndex + 1} time(s).`);
+  }
+
+  return [...call[0].keys()];
+}
+
 /** Mounts the editor over `values`, with `action` as the server action. */
 async function editor(
   values: AssistantFormValues,
@@ -124,7 +137,7 @@ async function editor(
   );
 }
 
-/** The fields whose contents are the operator's typing, in submission order. */
+/** The fields the operator types into, all of which must reach the action. */
 const TEXT_FIELDS = [
   'name',
   'instructions',
@@ -134,6 +147,7 @@ const TEXT_FIELDS = [
   'backendModel',
   'backendInstructions',
   'serverUrl',
+  'serverSecret',
   'tools',
 ] as const;
 
@@ -155,21 +169,40 @@ function clearSecretBox(mounted: Mounted): HTMLElement | null {
   return mounted.form.querySelector<HTMLElement>('[role="checkbox"]');
 }
 
+/** The header's live status text — "Saving…", "Unsaved changes", or nothing. */
+function status(mounted: Mounted): string {
+  return (
+    mounted.form.querySelector('[role="status"]')?.textContent?.trim() ?? ''
+  );
+}
+
+/** The live page title, which follows the name field. */
+function heading(mounted: Mounted): string {
+  return mounted.container.querySelector('h1')?.textContent?.trim() ?? '';
+}
+
 /**
- * The text of the tools section's summary table alone.
+ * The text of the tools section's summary, above the JSON editor.
  *
- * Scoped deliberately. A tool name is an ordinary word that an operator may
- * well have typed into the instructions too, so a negative assertion against
- * the whole form could never go false and would read as coverage.
+ * Scoped deliberately. A tool name is an ordinary word an operator may well
+ * have typed into the instructions too, so a negative assertion against the
+ * whole form could never go false and would read as coverage.
  */
 function toolSummary(mounted: Mounted): string {
-  const table = mounted.container.querySelector('#tool-settings table');
+  const section = mounted.container.querySelector('#tool-settings');
 
-  if (table === null) {
-    throw new Error('The tools section is showing no summary table.');
+  if (section === null) {
+    throw new Error('There is no tools section.');
   }
 
-  return table.textContent ?? '';
+  const table = section.querySelector('table');
+
+  return (table ?? section).textContent ?? '';
+}
+
+/** Whether any message anywhere in the form says `text`. */
+function showsMessage(mounted: Mounted, text: string): boolean {
+  return (mounted.form.textContent ?? '').includes(text);
 }
 
 beforeEach(() => {
@@ -177,6 +210,8 @@ beforeEach(() => {
   router.push.mockClear();
   router.replace.mockClear();
   router.refresh.mockClear();
+  toast.success.mockClear();
+  toast.error.mockClear();
 });
 
 describe('every section stays mounted', () => {
@@ -203,38 +238,45 @@ describe('every section stays mounted', () => {
   });
 
   /**
-   * The failure this guards against is silent and destroys data. Radix
-   * unmounts collapsed content unless told otherwise, and an unmounted
-   * textarea is not in `FormData` — so the save would write an empty tool list
-   * and report success, and the operator would find out at call time.
+   * The failure this guards against is silent and destroys data. Radix unmounts
+   * collapsed content unless told otherwise, and an unmounted `Controller`
+   * takes its value out of the submission — so the save would write an empty
+   * tool list and report success, and the operator would find out at call time.
    */
-  it('submits the collapsed tool editor as part of the form', async () => {
-    const mounted = await editor(editing(), rejectingAction());
+  it('sends the collapsed tool editor to the action', async () => {
+    const action = acceptingAction();
+    const mounted = await editor(editing(), action);
 
     expect(toolsToggle(mounted).dataset.state).toBe('closed');
-    expect(submittedValues(mounted).tools).toContain('lookup_order');
+
+    await submit(mounted);
+
+    expect(submittedTo(action, 'tools')).toContain('lookup_order');
 
     mounted.unmount();
   });
 
-  it('submits every field while the tool editor is collapsed', async () => {
-    const mounted = await editor(editing(), rejectingAction());
-    const submitted = submittedValues(mounted);
+  it('sends every field while the tool editor is collapsed', async () => {
+    const action = acceptingAction();
+    const mounted = await editor(editing(), action);
+
+    await submit(mounted);
 
     for (const field of TEXT_FIELDS) {
-      expect(Object.keys(submitted)).toContain(field);
+      expect(submittedKeys(action)).toContain(field);
     }
 
     mounted.unmount();
   });
 
   /**
-   * Collapsing is a view change, not an edit. If opening and closing the
-   * editor round-tripped the JSON through the summary, an operator who glanced
-   * at it would silently change what gets saved.
+   * Collapsing is a view change, not an edit. If opening and closing the editor
+   * round-tripped the JSON through the summary, an operator who glanced at it
+   * would silently change what gets saved.
    */
   it('keeps typed JSON through an open and close of the tool editor', async () => {
-    const mounted = await editor(editing(), rejectingAction());
+    const action = acceptingAction();
+    const mounted = await editor(editing(), action);
     const edited = '[{"name":"a","description":"d","parameters":{}}]';
 
     await typeInto(control(mounted, 'tools'), edited);
@@ -245,7 +287,199 @@ describe('every section stays mounted', () => {
     expect(toolsToggle(mounted).dataset.state).toBe('closed');
 
     expect(control(mounted, 'tools').value).toBe(edited);
-    expect(submittedValues(mounted).tools).toBe(edited);
+
+    await submit(mounted);
+    expect(submittedTo(action, 'tools')).toBe(edited);
+
+    mounted.unmount();
+  });
+});
+
+describe('the schema gate, before anything is sent', () => {
+  /**
+   * The editor is `noValidate`, so nothing the browser does stops a bad
+   * submission — the schema is the only thing between the operator and a
+   * pointless round trip. Each case asserts the action was **not called**,
+   * because "it was rejected" and "it was rejected before being sent" are
+   * different guarantees and only the second one is worth having here.
+   */
+  it('refuses an empty name and sends nothing', async () => {
+    const action = acceptingAction();
+    const mounted = await editor(editing(), action);
+
+    await typeInto(control(mounted, 'name'), '');
+    await submit(mounted);
+
+    expect(action).not.toHaveBeenCalled();
+    expect(showsMessage(mounted, 'An assistant needs a name.')).toBe(true);
+    expect(toast.error).toHaveBeenCalled();
+
+    mounted.unmount();
+  });
+
+  /**
+   * A name of spaces renders as an empty heading and is indistinguishable from
+   * an unnamed assistant in a call history.
+   */
+  it('refuses a whitespace-only name and sends nothing', async () => {
+    const action = acceptingAction();
+    const mounted = await editor(editing(), action);
+
+    await typeInto(control(mounted, 'name'), '   ');
+    await submit(mounted);
+
+    expect(action).not.toHaveBeenCalled();
+    expect(showsMessage(mounted, 'An assistant needs a name.')).toBe(true);
+
+    mounted.unmount();
+  });
+
+  it('refuses a name over the length limit and sends nothing', async () => {
+    const action = acceptingAction();
+    const mounted = await editor(editing(), action);
+
+    await typeInto(control(mounted, 'name'), 'a'.repeat(121));
+    await submit(mounted);
+
+    expect(action).not.toHaveBeenCalled();
+    expect(
+      showsMessage(mounted, 'Assistant name must be 120 characters or fewer.'),
+    ).toBe(true);
+
+    mounted.unmount();
+  });
+
+  it('accepts a name at the limit and sends it', async () => {
+    const action = acceptingAction();
+    const mounted = await editor(editing(), action);
+    const longest = 'a'.repeat(120);
+
+    await typeInto(control(mounted, 'name'), longest);
+    await submit(mounted);
+
+    expect(submittedTo(action, 'name')).toBe(longest);
+
+    mounted.unmount();
+  });
+
+  it('refuses a server URL that is not a URL and sends nothing', async () => {
+    const action = acceptingAction();
+    const mounted = await editor(editing(), action);
+
+    await typeInto(control(mounted, 'serverUrl'), 'api.example.com');
+    await submit(mounted);
+
+    expect(action).not.toHaveBeenCalled();
+    expect(
+      showsMessage(mounted, 'Server URL must be a valid HTTP or HTTPS URL.'),
+    ).toBe(true);
+
+    mounted.unmount();
+  });
+
+  it('refuses a server URL with an unusable scheme and sends nothing', async () => {
+    const action = acceptingAction();
+    const mounted = await editor(editing(), action);
+
+    await typeInto(control(mounted, 'serverUrl'), 'ftp://example.com/voice');
+    await submit(mounted);
+
+    expect(action).not.toHaveBeenCalled();
+
+    mounted.unmount();
+  });
+
+  /**
+   * The other half of the authority split, asserted through the UI rather than
+   * only at the schema. Whether an `http:` address may be stored depends on
+   * `ALLOW_LOOPBACK_SERVER_URL` and on the address, which the browser cannot
+   * know — so the editor must send it and let the server answer. A client that
+   * guessed would leave the operator pressing Save with nothing happening and
+   * no message anywhere.
+   */
+  it('sends an http URL for the server to rule on', async () => {
+    const action = rejectingAction([
+      { field: 'serverUrl', message: 'That is a loopback address.' },
+    ]);
+    const mounted = await editor(editing(), action);
+
+    await typeInto(control(mounted, 'serverUrl'), 'http://localhost:3000/voice');
+    await submit(mounted);
+
+    expect(submittedTo(action, 'serverUrl')).toBe('http://localhost:3000/voice');
+    expect(showsMessage(mounted, 'That is a loopback address.')).toBe(true);
+
+    mounted.unmount();
+  });
+
+  it('accepts a blank server URL, which is optional', async () => {
+    const action = acceptingAction();
+    const mounted = await editor(editing(), action);
+
+    await typeInto(control(mounted, 'serverUrl'), '');
+    await submit(mounted);
+
+    expect(submittedTo(action, 'serverUrl')).toBe('');
+
+    mounted.unmount();
+  });
+
+  it('refuses malformed tools JSON and sends nothing', async () => {
+    const action = acceptingAction();
+    const mounted = await editor(editing(), action);
+
+    await typeInto(control(mounted, 'tools'), '[{"name": "half-typed');
+    await submit(mounted);
+
+    expect(action).not.toHaveBeenCalled();
+    expect(showsMessage(mounted, 'Tools must be valid JSON')).toBe(true);
+
+    mounted.unmount();
+  });
+
+  it('refuses tools that are not a list and sends nothing', async () => {
+    const action = acceptingAction();
+    const mounted = await editor(editing(), action);
+
+    await typeInto(control(mounted, 'tools'), '{"name":"lookup_order"}');
+    await submit(mounted);
+
+    expect(action).not.toHaveBeenCalled();
+    expect(showsMessage(mounted, 'Tools must be a list.')).toBe(true);
+
+    mounted.unmount();
+  });
+
+  /**
+   * Per-tool rules stay on the server. A list whose *members* are nonsense is a
+   * well-formed array, so the client lets it through and `validateTools`
+   * answers with a message naming the offending tool — the one place those
+   * rules live.
+   */
+  it('sends a well-formed array whose members are not tools', async () => {
+    const action = rejectingAction([
+      { field: 'tools', message: 'tool 1 is not an object.' },
+    ]);
+    const mounted = await editor(editing(), action);
+
+    await typeInto(control(mounted, 'tools'), '[1,2,3]');
+    await submit(mounted);
+
+    expect(submittedTo(action, 'tools')).toBe('[1,2,3]');
+    expect(showsMessage(mounted, 'tool 1 is not an object.')).toBe(true);
+
+    mounted.unmount();
+  });
+
+  it('opens the tool editor when the schema rejects the JSON', async () => {
+    const mounted = await editor(editing(), acceptingAction());
+
+    expect(toolsToggle(mounted).dataset.state).toBe('closed');
+
+    await typeInto(control(mounted, 'tools'), 'not json');
+    await submit(mounted);
+
+    expect(toolsToggle(mounted).dataset.state).toBe('open');
 
     mounted.unmount();
   });
@@ -261,7 +495,7 @@ describe('a rejected save costs nothing', () => {
     waitingBehavior: 'Say "still looking" every few seconds.',
     backendModel: 'gpt-4.1',
     backendInstructions: 'Escalate anything about refunds.',
-    serverUrl: 'http://10.0.0.5/voice',
+    serverUrl: 'https://api.example.com/evening',
   };
 
   /** Types every value in `typed` into the mounted editor. */
@@ -295,7 +529,9 @@ describe('a rejected save costs nothing', () => {
    * the canonical order — so anything that round-tripped it would be caught.
    */
   it('leaves the tools JSON byte-for-byte as it was typed', async () => {
-    const action = rejectingAction();
+    const action = rejectingAction([
+      { field: 'tools', message: '"lookup_order" needs a description.' },
+    ]);
     const mounted = await editor(editing(), action);
     const raw =
       '[ {"description":"Looks it up.",   "name":"lookup_order",\n' +
@@ -313,8 +549,12 @@ describe('a rejected save costs nothing', () => {
   /**
    * A server action can reject rather than return — an expired session, a
    * database that went away. The editor must treat that exactly like a
-   * validation failure, because from the operator's chair it is the same
-   * event: the save did not happen and the work is still on screen.
+   * validation failure, because from the operator's chair it is the same event:
+   * the save did not happen and the work is still on screen.
+   *
+   * The message for this one is a **root** error, which the form does not
+   * render inline, so the toast is the only place it appears. Asserting the
+   * toast is therefore asserting the operator was told at all.
    */
   it('survives an action that throws', async () => {
     const action = vi.fn<ServerAction>(async () => {
@@ -329,7 +569,9 @@ describe('a rejected save costs nothing', () => {
       expect(control(mounted, field).value).toBe(value);
     }
 
-    expect(mounted.container.textContent).toContain('still here');
+    expect(toast.error).toHaveBeenCalledWith(
+      expect.stringContaining('Your edits are still here'),
+    );
 
     mounted.unmount();
   });
@@ -357,7 +599,7 @@ describe('a rejected save costs nothing', () => {
     mounted.unmount();
   });
 
-  it('shows what went wrong', async () => {
+  it('shows what went wrong, beside the field and in a toast', async () => {
     const mounted = await editor(
       editing(),
       rejectingAction([
@@ -367,22 +609,24 @@ describe('a rejected save costs nothing', () => {
 
     await submit(mounted);
 
-    expect(mounted.container.textContent).toContain(
-      'That is a private network address.',
+    expect(showsMessage(mounted, 'That is a private network address.')).toBe(
+      true,
     );
+    expect(toast.error).toHaveBeenCalled();
 
     mounted.unmount();
   });
 
   /**
-   * A tool list rejected by the server is a tool list the operator has to
-   * edit, and it lives behind a collapsed section they would otherwise have to
-   * find.
+   * A tool list rejected by the server is a tool list the operator has to edit,
+   * and it lives behind a collapsed section they would otherwise have to find.
    */
   it('opens the tool editor when the rejection is about tools', async () => {
     const mounted = await editor(
       editing(),
-      rejectingAction([{ field: 'tools', message: '"lookup_order" needs a description.' }]),
+      rejectingAction([
+        { field: 'tools', message: '"lookup_order" needs a description.' },
+      ]),
     );
 
     expect(toolsToggle(mounted).dataset.state).toBe('closed');
@@ -395,25 +639,66 @@ describe('a rejected save costs nothing', () => {
   });
 
   /**
-   * Malformed JSON is caught before the action runs, and that early return is
-   * its own path through `onSubmit` — one that sets `issues` without ever
-   * setting `busy`. It has to preserve the form just as thoroughly.
+   * `validateTools` reports one issue per broken tool, so a list with three
+   * mistakes comes back as three issues **on the same field**. React-hook-form
+   * holds one error per field, so the naive loop — `setError` per issue —
+   * leaves only the last one standing and the operator fixes one problem per
+   * round trip, learning about the next only after saving again.
+   *
+   * Asserted with two messages on one field rather than one each on two, since
+   * only the same-field case can regress this way.
    */
-  it('preserves everything when the tools JSON is rejected before sending', async () => {
-    const action = rejectingAction();
-    const mounted = await editor(editing(), action);
+  it('shows every server message for a field, not just the last', async () => {
+    const mounted = await editor(
+      editing(),
+      rejectingAction([
+        { field: 'tools', message: '"lookup_order" needs a description.' },
+        { field: 'tools', message: '"cancel_order" needs a parameters object.' },
+      ]),
+    );
 
-    await fillIn(mounted);
-    await typeInto(control(mounted, 'tools'), '[{"name": "half-typed');
     await submit(mounted);
 
-    expect(action).not.toHaveBeenCalled();
+    expect(showsMessage(mounted, '"lookup_order" needs a description.')).toBe(
+      true,
+    );
+    expect(
+      showsMessage(mounted, '"cancel_order" needs a parameters object.'),
+    ).toBe(true);
 
-    for (const [field, value] of Object.entries(typed)) {
-      expect(control(mounted, field).value).toBe(value);
-    }
+    mounted.unmount();
+  });
 
-    expect(control(mounted, 'tools').value).toBe('[{"name": "half-typed');
+  it('places each field’s own message against that field', async () => {
+    const mounted = await editor(
+      editing(),
+      rejectingAction([
+        { field: 'name', message: 'An assistant needs a name.' },
+        { field: 'serverUrl', message: 'That is a private network address.' },
+      ]),
+    );
+
+    await submit(mounted);
+
+    const nameError = mounted.container.querySelector('#name-error');
+    const urlError = mounted.container.querySelector('#serverUrl-error');
+
+    expect(nameError?.textContent).toContain('An assistant needs a name.');
+    expect(urlError?.textContent).toContain(
+      'That is a private network address.',
+    );
+
+    mounted.unmount();
+  });
+
+  /** The work is still unsaved, and the header has to keep saying so. */
+  it('still reports unsaved changes', async () => {
+    const mounted = await editor(editing(), rejectingAction());
+
+    await fillIn(mounted);
+    await submit(mounted);
+
+    expect(status(mounted)).toBe('Unsaved changes');
 
     mounted.unmount();
   });
@@ -422,8 +707,8 @@ describe('a rejected save costs nothing', () => {
 describe('the webhook secret', () => {
   /**
    * The server never sends the secret, so there is nothing to prefill. A masked
-   * placeholder of the real length would leak that length and imply a
-   * round-trip that does not happen.
+   * placeholder of the real length would leak that length and imply a round
+   * trip that does not happen.
    */
   it('starts empty even when one is stored', async () => {
     const mounted = await editor(
@@ -432,7 +717,7 @@ describe('the webhook secret', () => {
     );
 
     expect(control(mounted, 'serverSecret').value).toBe('');
-    expect(mounted.container.textContent).toContain('A secret is set');
+    expect(showsMessage(mounted, 'A secret is set')).toBe(true);
 
     mounted.unmount();
   });
@@ -444,7 +729,7 @@ describe('the webhook secret', () => {
     );
 
     expect(control(mounted, 'serverSecret').value).toBe('');
-    expect(mounted.container.textContent).toContain('No secret is set');
+    expect(showsMessage(mounted, 'No secret is set')).toBe(true);
 
     mounted.unmount();
   });
@@ -511,16 +796,20 @@ describe('removing a stored secret', () => {
     without.unmount();
   });
 
-  it('starts unticked and submits nothing', async () => {
-    const mounted = await editor(editing(), rejectingAction());
+  it('starts unticked and sends nothing', async () => {
+    const action = acceptingAction();
+    const mounted = await editor(editing(), action);
 
     expect(clearSecretBox(mounted)?.dataset.state).toBe('unchecked');
-    expect(submittedValues(mounted)).not.toHaveProperty('clearServerSecret');
+
+    await submit(mounted);
+
+    expect(submittedKeys(action)).not.toContain('clearServerSecret');
 
     mounted.unmount();
   });
 
-  it('submits only once it has been ticked', async () => {
+  it('sends the instruction only once it has been ticked', async () => {
     const action = rejectingAction();
     const mounted = await editor(editing(), action);
     const box = clearSecretBox(mounted);
@@ -529,7 +818,6 @@ describe('removing a stored secret', () => {
     await click(box!);
 
     expect(box?.dataset.state).toBe('checked');
-    expect(submittedValues(mounted).clearServerSecret).toBe('on');
 
     await submit(mounted);
 
@@ -539,32 +827,37 @@ describe('removing a stored secret', () => {
   });
 
   /**
-   * The tick is a deliberate, destructive instruction. Silently untick-ing it
-   * on a rejection would mean a retried save quietly kept a secret the
-   * operator had asked to remove.
+   * The tick is a deliberate, destructive instruction. Silently unticking it on
+   * a rejection would mean a retried save quietly kept a secret the operator
+   * had asked to remove.
    */
   it('stays ticked through a rejected save', async () => {
-    const mounted = await editor(editing(), rejectingAction());
-    const box = clearSecretBox(mounted);
+    const action = rejectingAction();
+    const mounted = await editor(editing(), action);
 
-    await click(box!);
+    await click(clearSecretBox(mounted)!);
     await submit(mounted);
 
     expect(clearSecretBox(mounted)?.dataset.state).toBe('checked');
-    expect(submittedValues(mounted).clearServerSecret).toBe('on');
+
+    await submit(mounted);
+    expect(submittedTo(action, 'clearServerSecret', 1)).toBe('on');
 
     mounted.unmount();
   });
 
   it('can be unticked again', async () => {
-    const mounted = await editor(editing(), rejectingAction());
+    const action = acceptingAction();
+    const mounted = await editor(editing(), action);
     const box = clearSecretBox(mounted);
 
     await click(box!);
     await click(box!);
 
     expect(box?.dataset.state).toBe('unchecked');
-    expect(submittedValues(mounted)).not.toHaveProperty('clearServerSecret');
+
+    await submit(mounted);
+    expect(submittedKeys(action)).not.toContain('clearServerSecret');
 
     mounted.unmount();
   });
@@ -574,7 +867,7 @@ describe('the tool summary beside the editor', () => {
   it('describes the loaded tools without the operator opening the JSON', async () => {
     const mounted = await editor(editing(), rejectingAction());
 
-    expect(mounted.container.textContent).toContain('lookup_order');
+    expect(toolSummary(mounted)).toContain('lookup_order');
     expect(toolsToggle(mounted).dataset.state).toBe('closed');
 
     mounted.unmount();
@@ -583,14 +876,14 @@ describe('the tool summary beside the editor', () => {
   it('says so plainly when there are no tools', async () => {
     const mounted = await editor(editing({ tools: [] }), rejectingAction());
 
-    expect(mounted.container.textContent).toContain('No tools configured');
+    expect(toolSummary(mounted)).toContain('No tools configured');
 
     mounted.unmount();
   });
 
   /**
-   * The summary is a view of the textarea, never a source for it. Re-reading it
-   * after a refresh must not disturb what is in the box.
+   * The summary is a view of the textarea, never a source for it. Refreshing it
+   * must not disturb what is in the box.
    */
   it('refreshes on blur without rewriting the textarea', async () => {
     const mounted = await editor(editing(), rejectingAction());
@@ -605,22 +898,22 @@ describe('the tool summary beside the editor', () => {
 
     // The summary caught up — without this the test would pass on an editor
     // whose `onBlur` never ran, since the textarea holds what it was given
-    // either way. Read from the summary table rather than the whole form: the
+    // either way. Read from the summary rather than the whole form: the
     // backend-instructions field legitimately mentions `lookup_order` too, and
-    // a page-wide search would never go false.
+    // a form-wide search would never go false.
     expect(toolSummary(mounted)).toContain('refunds');
     expect(toolSummary(mounted)).not.toContain('lookup_order');
 
     // ...and the bytes are still the operator's, spacing included.
     expect(tools.value).toBe(raw);
-    expect(submittedValues(mounted).tools).toBe(raw);
 
     mounted.unmount();
   });
 
   /**
-   * A half-typed list must report itself without destroying anything. The
-   * summary goes to an error state; the textarea keeps exactly what is in it.
+   * A half-typed list reports itself in two places for two different reasons:
+   * the summary says it cannot describe the JSON, and the schema says why. The
+   * textarea keeps exactly what is in it.
    */
   it('reports malformed JSON on blur and still keeps the text', async () => {
     const mounted = await editor(editing(), rejectingAction());
@@ -629,9 +922,9 @@ describe('the tool summary beside the editor', () => {
     await typeInto(tools, '[{"name":"half-typed');
     await blur(tools);
 
-    expect(mounted.container.textContent).toContain('valid JSON');
+    expect(toolSummary(mounted)).toContain('Tool summary unavailable');
+    expect(showsMessage(mounted, 'Tools must be valid JSON')).toBe(true);
     expect(tools.value).toBe('[{"name":"half-typed');
-    expect(submittedValues(mounted).tools).toBe('[{"name":"half-typed');
 
     mounted.unmount();
   });
@@ -673,45 +966,7 @@ describe('a save that succeeds', () => {
 
     // The stored secret is gone, so the box that removes it is gone too.
     expect(clearSecretBox(mounted)).toBeNull();
-    expect(mounted.container.textContent).toContain('No secret is set');
-
-    mounted.unmount();
-  });
-
-  /**
-   * Resetting the tick after a successful clear re-renders Radix's hidden
-   * checkbox, and a `change` from that input bubbles to the form's `onChange`
-   * — which marks the form dirty. The operator would then be told they have
-   * unsaved changes immediately after a save that worked, and the only way to
-   * clear it is another save.
-   *
-   * Worth its own test because it is the *success* path misreporting itself:
-   * nothing is lost and nothing errors, so it shows up only as a status line
-   * that contradicts what just happened.
-   */
-  it('does not report unsaved changes after clearing a secret', async () => {
-    const mounted = await editor(editing(), acceptingAction());
-
-    await click(clearSecretBox(mounted)!);
-    await submit(mounted);
-
-    expect(mounted.container.textContent).toContain('Saved');
-    expect(mounted.container.textContent).not.toContain('Unsaved changes');
-
-    mounted.unmount();
-  });
-
-  it('does not report unsaved changes after replacing a secret', async () => {
-    const action = acceptingAction();
-    const mounted = await editor(editing(), action);
-
-    await typeInto(control(mounted, 'serverSecret'), 'whsec_replacement');
-    await submit(mounted);
-
-    expect(submittedTo(action, 'serverSecret')).toBe('whsec_replacement');
-    expect(control(mounted, 'serverSecret').value).toBe('');
-    expect(mounted.container.textContent).toContain('Saved');
-    expect(mounted.container.textContent).not.toContain('Unsaved changes');
+    expect(showsMessage(mounted, 'No secret is set')).toBe(true);
 
     mounted.unmount();
   });
@@ -722,55 +977,54 @@ describe('a save that succeeds', () => {
       acceptingAction(),
     );
 
-    expect(mounted.container.textContent).toContain('No secret is set');
+    expect(showsMessage(mounted, 'No secret is set')).toBe(true);
 
     await typeInto(control(mounted, 'serverSecret'), 'whsec_first');
     await submit(mounted);
 
-    expect(mounted.container.textContent).toContain('A secret is set');
+    expect(showsMessage(mounted, 'A secret is set')).toBe(true);
 
     mounted.unmount();
   });
 
   /**
-   * This test doubles as the harness's own canary.
-   *
-   * "Unsaved changes" is driven by the form's `onChange`, which only runs if
-   * React genuinely saw the typing — and React silently stops delivering
-   * `onChange` if `react-dom` was imported before a DOM existed. Under that
-   * fault the DOM value still updates, so every assertion in this file about
-   * *what the form submits* keeps passing while the component's own state
-   * handlers never run. Asserting the dirty indicator here is what makes that
-   * failure loud instead of invisible, so it is load-bearing beyond the status
-   * line it checks.
+   * Success is announced by a toast and by the header falling silent — there is
+   * no inline "Saved" any more, because the toast survives the navigation a
+   * newly created assistant performs and an inline status would not.
    */
-  it('reports unsaved changes, then a save', async () => {
+  it('announces itself with a toast and no inline status', async () => {
     const mounted = await editor(editing(), acceptingAction());
 
     await typeInto(control(mounted, 'name'), 'Order desk (evening)');
-    expect(mounted.container.textContent).toContain('Unsaved changes');
+    expect(status(mounted)).toBe('Unsaved changes');
 
     await submit(mounted);
 
-    expect(mounted.container.textContent).toContain('Saved');
-    expect(mounted.container.textContent).not.toContain('Unsaved changes');
+    expect(toast.success).toHaveBeenCalledWith('Saved');
+    expect(status(mounted)).toBe('');
 
     mounted.unmount();
   });
 
   /**
-   * The live title is the other thing only a real `onChange` can drive, and it
-   * fails in the same silent way. Kept separate so a regression says which of
-   * the two broke.
+   * The reset makes the submitted values the new baseline. Without that the
+   * form stays dirty after a successful save, so the header contradicts the
+   * toast and a second save re-sends work the server already has.
    */
-  it('retitles the page as the name is typed', async () => {
-    const mounted = await editor(editing(), acceptingAction());
+  it('takes the saved values as the new baseline', async () => {
+    const action = acceptingAction();
+    const mounted = await editor(editing(), action);
 
-    await typeInto(control(mounted, 'name'), 'Evening order desk');
+    await typeInto(control(mounted, 'name'), 'Order desk (evening)');
+    await submit(mounted);
 
-    expect(mounted.container.querySelector('h1')?.textContent).toBe(
-      'Evening order desk',
-    );
+    expect(status(mounted)).toBe('');
+
+    // Still dirty-free after a second look, and the value is the saved one.
+    expect(control(mounted, 'name').value).toBe('Order desk (evening)');
+
+    await typeInto(control(mounted, 'name'), 'Order desk (night)');
+    expect(status(mounted)).toBe('Unsaved changes');
 
     mounted.unmount();
   });
@@ -788,7 +1042,10 @@ describe('a save that succeeds', () => {
 
     await submit(mounted);
 
-    expect(router.replace).toHaveBeenCalledWith('/assistants/asst_new?saved=1');
+    // No `?saved=1`: the toast carries the confirmation across the navigation,
+    // so the query parameter that used to re-announce it is gone.
+    expect(router.replace).toHaveBeenCalledWith('/assistants/asst_new');
+    expect(toast.success).toHaveBeenCalledWith('Saved');
 
     mounted.unmount();
   });
@@ -810,15 +1067,69 @@ describe('a save that succeeds', () => {
    * the form after a save that actually worked.
    */
   it('stays put when a create reports no id', async () => {
-    const mounted = await editor(
-      editing({ id: undefined }),
-      acceptingAction(),
-    );
+    const mounted = await editor(editing({ id: undefined }), acceptingAction());
 
     await submit(mounted);
 
     expect(router.replace).not.toHaveBeenCalled();
-    expect(mounted.container.textContent).toContain('Saved');
+    expect(toast.success).toHaveBeenCalledWith('Saved');
+
+    mounted.unmount();
+  });
+});
+
+describe('the editor keeps up with typing', () => {
+  /**
+   * These two are the harness's own canaries.
+   *
+   * Both are driven by state that only updates if react-hook-form genuinely
+   * received the keystroke. If the wiring between the DOM and `Controller`
+   * broke, a great many assertions in this file would keep passing — so one
+   * test whose whole job is to fail in that case is worth more than its
+   * subject suggests.
+   */
+  it('retitles the page as the name is typed', async () => {
+    const mounted = await editor(editing(), acceptingAction());
+
+    expect(heading(mounted)).toBe('Order desk');
+
+    await typeInto(control(mounted, 'name'), 'Evening order desk');
+
+    expect(heading(mounted)).toBe('Evening order desk');
+
+    mounted.unmount();
+  });
+
+  it('falls back to a placeholder title when the name is cleared', async () => {
+    const mounted = await editor(editing(), acceptingAction());
+
+    await typeInto(control(mounted, 'name'), '');
+
+    expect(heading(mounted)).toBe('New assistant');
+
+    mounted.unmount();
+  });
+
+  it('reports unsaved changes as soon as anything is edited', async () => {
+    const mounted = await editor(editing(), acceptingAction());
+
+    expect(status(mounted)).toBe('');
+
+    await typeInto(control(mounted, 'voice'), 'aura-2-thalia');
+
+    expect(status(mounted)).toBe('Unsaved changes');
+
+    mounted.unmount();
+  });
+
+  it('reports unsaved changes when only the tick box is touched', async () => {
+    const mounted = await editor(editing(), acceptingAction());
+
+    expect(status(mounted)).toBe('');
+
+    await click(clearSecretBox(mounted)!);
+
+    expect(status(mounted)).toBe('Unsaved changes');
 
     mounted.unmount();
   });

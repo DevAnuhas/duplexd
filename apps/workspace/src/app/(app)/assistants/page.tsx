@@ -39,7 +39,7 @@ export default function AssistantsPage() {
             The voices and instructions behind your calls.
           </p>
         </div>
-        <Button asChild>
+        <Button asChild className="min-h-11">
           <Link href="/assistants/new">
             <Plus data-icon="inline-start" aria-hidden="true" /> Create
             assistant
@@ -73,13 +73,13 @@ async function AssistantList() {
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent className="flex flex-wrap gap-3 pb-4">
-            <Button asChild>
+            <Button asChild className="min-h-11">
               <Link href="/assistants/new">
                 <Plus data-icon="inline-start" aria-hidden="true" /> Create
                 assistant
               </Link>
             </Button>
-            <Button asChild variant="outline">
+            <Button asChild variant="outline" className="min-h-11">
               <Link href="/keys">
                 API keys{' '}
                 <ArrowUpRight data-icon="inline-end" aria-hidden="true" />
@@ -120,7 +120,7 @@ async function AssistantList() {
                   </TableCell>
                   <TableCell className="pr-5">
                     <div className="flex items-center justify-end gap-1">
-                      <Button asChild variant="ghost" size="sm">
+                      <Button asChild variant="ghost" className="min-h-11">
                         <Link
                           href={`/assistants/${assistant.id}`}
                           prefetch={true}
