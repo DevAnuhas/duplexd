@@ -60,23 +60,27 @@ function accepts(schema: ZodType, value: unknown): boolean {
 }
 
 /**
- * The email as the schema *stores* it, or `null` when it was rejected.
+ * One field as the schema *stores* it, or `null` when the value was rejected.
  *
- * Acceptance alone is not the contract here. The email rule trims, so what
- * matters downstream is the normalized value — a schema that let the padding
+ * Acceptance alone is not the contract for any of the trimming fields. What
+ * matters downstream is the normalized value — a schema that let padding
  * through unchanged would satisfy every boolean assertion and still hand
- * Better Auth an address with a space in it.
+ * Better Auth an address with a space in it, or name a workspace `"  Acme  "`.
  */
-function parsedEmailOf(schema: ZodType, value: unknown): string | null {
+function parsedFieldOf(
+  schema: ZodType,
+  value: unknown,
+  field: string,
+): string | null {
   const result = schema.safeParse(value);
 
   if (!result.success) {
     return null;
   }
 
-  const parsed = result.data as { email?: unknown };
+  const parsed = result.data as Record<string, unknown>;
 
-  return typeof parsed.email === 'string' ? parsed.email : null;
+  return typeof parsed[field] === 'string' ? (parsed[field] as string) : null;
 }
 
 /** A password of exactly `length` characters that passes every rule but length. */
@@ -97,8 +101,39 @@ function emailOfLength(length: number): string {
   return `${'a'.repeat(length - domain.length)}${domain}`;
 }
 
-const VALID_EMAIL = 'kevin@example.com';
+const VALID_EMAIL = 'person@example.com';
 const VALID_PASSWORD = passwordOfLength(PASSWORD_MIN_LENGTH);
+const VALID_WORKSPACE = 'Acme Logistics';
+const VALID_PERSON = 'Alex Doe';
+
+/** The longest name either name field accepts. Mirrors `NAME_MAX_LENGTH`. */
+const NAME_MAX_LENGTH = 120;
+
+/**
+ * A complete, valid sign-up body with `overrides` applied.
+ *
+ * Every sign-up case is built from this rather than from a literal, so a field
+ * added to `signUpSchema` breaks one helper instead of scattering the same
+ * five keys through a dozen tests — which is exactly what happened when
+ * `workspaceName` and `name` arrived.
+ */
+function signUpWith(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    workspaceName: VALID_WORKSPACE,
+    name: VALID_PERSON,
+    email: VALID_EMAIL,
+    password: VALID_PASSWORD,
+    // Sign-up is losing its confirm field; reset keeps one. This key is sent
+    // anyway because Zod objects strip what they do not declare, so the same
+    // body satisfies the schema that still requires it and is ignored by the
+    // one that does not. That keeps this file green whichever of the two
+    // commits lands first — delete it once the split has settled.
+    confirmPassword: VALID_PASSWORD,
+    ...overrides,
+  };
+}
 
 /** The email rule is one shared object, and every schema carrying it must agree. */
 const SCHEMAS_WITH_EMAIL = [
@@ -110,11 +145,7 @@ const SCHEMAS_WITH_EMAIL = [
   [
     'signUpSchema',
     signUpSchema,
-    (email: string) => ({
-      email,
-      password: VALID_PASSWORD,
-      confirmPassword: VALID_PASSWORD,
-    }),
+    (email: string) => signUpWith({ email }),
   ],
   [
     'forgotPasswordSchema',
@@ -127,8 +158,8 @@ describe('the shared email rule', () => {
   describe.each(SCHEMAS_WITH_EMAIL)('%s', (_name, schema, build) => {
     it.each([
       ['an ordinary address', VALID_EMAIL, VALID_EMAIL],
-      ['a subdomain', 'kevin@mail.example.co.uk', 'kevin@mail.example.co.uk'],
-      ['a plus tag', 'kevin+duplexd@example.com', 'kevin+duplexd@example.com'],
+      ['a subdomain', 'person@mail.example.co.uk', 'person@mail.example.co.uk'],
+      ['a plus tag', 'person+duplexd@example.com', 'person+duplexd@example.com'],
       ['exactly the maximum length', emailOfLength(320), emailOfLength(320)],
       ['a space-padded address', `  ${VALID_EMAIL}  `, VALID_EMAIL],
       ['a tab- and newline-padded address', `\t\n ${VALID_EMAIL} \n\t`, VALID_EMAIL],
@@ -147,21 +178,21 @@ describe('the shared email rule', () => {
       ],
     ])('accepts %s, and stores it trimmed', (_label, submitted, stored) => {
       expect(
-        parsedEmailOf(schema, build(submitted)),
+        parsedFieldOf(schema, build(submitted), 'email'),
         'accepted, but the padding survived into the parsed value',
       ).toBe(stored);
     });
 
     it.each([
       ['the empty string', '', /valid email/i],
-      ['no at sign', 'kevin.example.com', /valid email/i],
-      ['no domain', 'kevin@', /valid email/i],
+      ['no at sign', 'person.example.com', /valid email/i],
+      ['no domain', 'person@', /valid email/i],
       ['no local part', '@example.com', /valid email/i],
       // Trimming is the ends and only the ends. Whitespace in the middle is a
       // typo, not padding, and closing it up would submit an address the
       // customer never typed.
-      ['a space inside', 'ke vin@example.com', /valid email/i],
-      ['a tab inside', 'ke\tvin@example.com', /valid email/i],
+      ['a space inside', 'pe rson@example.com', /valid email/i],
+      ['a tab inside', 'pe\trson@example.com', /valid email/i],
       // After trimming, these are the empty string, so either rule could
       // plausibly fire. They must read as an invalid address — which is what
       // the field is asking for — rather than as a length complaint.
@@ -257,11 +288,8 @@ const PASSWORD_SETTING_SCHEMAS = [
   [
     'signUpSchema',
     signUpSchema,
-    (password: string, confirmPassword: string) => ({
-      email: VALID_EMAIL,
-      password,
-      confirmPassword,
-    }),
+    (password: string, confirmPassword: string) =>
+      signUpWith({ password, confirmPassword }),
   ],
   [
     'resetPasswordSchema',
@@ -309,19 +337,171 @@ describe.each(PASSWORD_SETTING_SCHEMAS)('%s', (_name, schema, build) => {
     ]);
   });
 
+});
+
+/**
+ * The two names signup now collects: the workspace's and the person's.
+ *
+ * They are structurally identical — required, trimmed, capped at 120 — so they
+ * share one table. Sharing it is the point rather than a convenience: a rule
+ * tightened on one field and forgotten on the other is exactly the drift this
+ * catches, and two hand-written blocks would drift silently.
+ *
+ * `workspaceName` is the higher-stakes of the two. It is not a column on
+ * `users`; it rides the signup body to a database hook and becomes
+ * `accounts.name`. What this file pins is the *validation*; that it survives
+ * the trip and lands on the right row is pinned by
+ * `test/signup-workspace-name.test.ts` against a real database.
+ */
+const NAME_FIELDS = [
+  ['workspaceName', /name your workspace/i, /workspace name under 120/i],
+  ['name', /enter your name/i, /your name under 120/i],
+] as const;
+
+const TRIMMABLE_NAME = 'Acme Logistics';
+
+describe.each(NAME_FIELDS)(
+  'signUpSchema %s',
+  (field, requiredMessage, tooLongMessage) => {
+    it('accepts an ordinary value and stores it unchanged', () => {
+      expect(
+        parsedFieldOf(signUpSchema, signUpWith({ [field]: TRIMMABLE_NAME }), field),
+      ).toBe(TRIMMABLE_NAME);
+    });
+
+    it.each([
+      ['the empty string', ''],
+      ['a single space', ' '],
+      ['only whitespace', '   '],
+      ['a tab and a newline', '\t\n'],
+    ])('rejects %s, naming this field and only this field', (_label, submitted) => {
+      expect(
+        issuesFor(signUpSchema, signUpWith({ [field]: submitted })),
+      ).toStrictEqual([
+        { path: field, message: expect.stringMatching(requiredMessage) },
+      ]);
+    });
+
+    it('rejects the field being absent entirely', () => {
+      const body = signUpWith();
+      delete body[field];
+
+      expect(issuesFor(signUpSchema, body)).toStrictEqual([
+        { path: field, message: expect.stringMatching(requiredMessage) },
+      ]);
+    });
+
+    /**
+     * A non-string reads as the field's own copy, not as Zod's type error.
+     * Reachable from a server caller even though the form cannot produce it.
+     */
+    it.each([
+      ['null', null],
+      ['a number', 42],
+    ])('rejects %s with the same copy an empty value gets', (_label, submitted) => {
+      expect(
+        issuesFor(signUpSchema, signUpWith({ [field]: submitted })),
+      ).toStrictEqual([
+        { path: field, message: expect.stringMatching(requiredMessage) },
+      ]);
+    });
+
+    it('trims the stored value', () => {
+      expect(
+        parsedFieldOf(
+          signUpSchema,
+          signUpWith({ [field]: `  \t${TRIMMABLE_NAME}\n  ` }),
+          field,
+        ),
+        'accepted, but the padding survived into the parsed value',
+      ).toBe(TRIMMABLE_NAME);
+    });
+
+    it('accepts exactly the maximum length', () => {
+      const atMaximum = 'x'.repeat(NAME_MAX_LENGTH);
+
+      expect(
+        parsedFieldOf(signUpSchema, signUpWith({ [field]: atMaximum }), field),
+      ).toBe(atMaximum);
+    });
+
+    it('rejects one character over the maximum, naming the length rule', () => {
+      expect(
+        issuesFor(
+          signUpSchema,
+          signUpWith({ [field]: 'x'.repeat(NAME_MAX_LENGTH + 1) }),
+        ),
+      ).toStrictEqual([
+        { path: field, message: expect.stringMatching(tooLongMessage) },
+      ]);
+    });
+
+    /**
+     * The cap is measured after trimming, so padding cannot push a legal name
+     * over it. The over-length padded case below is the other half.
+     */
+    it('accepts the maximum length wrapped in padding', () => {
+      const atMaximum = 'x'.repeat(NAME_MAX_LENGTH);
+
+      expect(
+        parsedFieldOf(
+          signUpSchema,
+          signUpWith({ [field]: `  ${atMaximum}  ` }),
+          field,
+        ),
+      ).toBe(atMaximum);
+    });
+
+    it('still rejects an over-length name that was padded', () => {
+      expect(
+        issuesFor(
+          signUpSchema,
+          signUpWith({ [field]: `  ${'x'.repeat(NAME_MAX_LENGTH + 1)}  ` }),
+        ),
+      ).toStrictEqual([
+        { path: field, message: expect.stringMatching(tooLongMessage) },
+      ]);
+    });
+  },
+);
+
+/**
+ * Password confirmation, which now belongs to **reset only**.
+ *
+ * Sign-up is dropping its confirm field: the password input has a show/hide
+ * toggle, and the owner judged the second box redundant against it. Reset keeps
+ * one, and the asymmetry is the interesting part — on reset the person cannot
+ * see what they are replacing and has no second attempt behind them, so the
+ * confirmation is doing work there that the toggle cannot do for it.
+ *
+ * This block is deliberately keyed on a list of schemas rather than folded into
+ * the shared password table above. The two schemas still share every *length*
+ * rule, and they no longer share this one; keeping them in one table would mean
+ * the sign-up split had to be unpicked out of assertions about something else.
+ */
+const SCHEMAS_WITH_CONFIRMATION = [
+  ['resetPasswordSchema', resetPasswordSchema] as const,
+] as const;
+
+describe.each(SCHEMAS_WITH_CONFIRMATION)('%s confirmation', (_name, schema) => {
+  const atMinimum = passwordOfLength(PASSWORD_MIN_LENGTH);
+  const belowMinimum = passwordOfLength(PASSWORD_MIN_LENGTH - 1);
+
+  const build = (password: string, confirmPassword: string) => ({
+    password,
+    confirmPassword,
+  });
+
   /**
    * The mismatch lands **on the confirm field**, which is the one the customer
    * has to retype. An error floating at the form root is the version that makes
-   * them guess which of two boxes is wrong, and it is the version a careless
-   * `.refine` without a `path` produces — so the path is the assertion here,
-   * not a detail alongside it.
+   * them guess which of two boxes is wrong, and it is what a careless `.refine`
+   * without a `path` produces — so the path is the assertion, not a detail
+   * alongside it.
    */
   it('reports a mismatch on confirmPassword, not at the form root', () => {
     expect(issuesFor(schema, build(atMinimum, `${atMinimum}x`))).toStrictEqual([
-      {
-        path: 'confirmPassword',
-        message: expect.stringMatching(/match/i),
-      },
+      { path: 'confirmPassword', message: expect.stringMatching(/match/i) },
     ]);
   });
 
@@ -332,26 +512,16 @@ describe.each(PASSWORD_SETTING_SCHEMAS)('%s', (_name, schema, build) => {
     });
   });
 
-  it('accepts a matching pair at the minimum length', () => {
-    expect(accepts(schema, build(atMinimum, atMinimum))).toBe(true);
-  });
-
   /**
-   * A password that is both too short *and* mismatched reports **both**, in
-   * one pass.
+   * A password both too short *and* mismatched reports **both**, in one pass.
    *
-   * This is worth pinning because the opposite is the intuitive guess and it is
-   * wrong: Zod 4 still evaluates a `.refine` on the object when the inner
-   * fields failed, so the equality check runs against a password it already
-   * rejected. The customer-visible consequence is the good one — fix both
-   * problems from one submission rather than learning about the second only
-   * after fixing the first — so the behaviour is worth protecting rather than
-   * merely recording.
-   *
-   * If this ever flips to reporting only the length, the flow silently becomes
-   * a two-round-trip correction and nothing else would notice.
+   * The intuitive guess is the opposite and it is wrong: Zod 4 evaluates the
+   * object-level `.refine` even when the inner fields failed. The
+   * customer-visible consequence is the good one — fix both problems from one
+   * submission instead of learning about the second after fixing the first — so
+   * it is worth protecting rather than merely recording.
    */
-  it('reports both the length and the mismatch when the password is short and mismatched', () => {
+  it('reports both the length and the mismatch together', () => {
     expect(
       issuesFor(schema, build(belowMinimum, 'something else')),
     ).toStrictEqual([
@@ -361,10 +531,7 @@ describe.each(PASSWORD_SETTING_SCHEMAS)('%s', (_name, schema, build) => {
           new RegExp(`at least ${PASSWORD_MIN_LENGTH}`, 'i'),
         ),
       },
-      {
-        path: 'confirmPassword',
-        message: expect.stringMatching(/match/i),
-      },
+      { path: 'confirmPassword', message: expect.stringMatching(/match/i) },
     ]);
   });
 });
