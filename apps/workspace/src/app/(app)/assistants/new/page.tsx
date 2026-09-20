@@ -1,10 +1,19 @@
+import { Suspense } from 'react';
+import { AssistantEditorSkeleton } from '../assistant-editor-skeleton';
+
 import { createAssistantAction } from '@/app/actions';
 import { requireShell } from '../../shell-data';
 import { AssistantForm } from '../assistant-form';
 
-export const dynamic = 'force-dynamic';
+export default function NewAssistantPage() {
+  return (
+    <Suspense fallback={<AssistantEditorSkeleton />}>
+      <NewAssistant />
+    </Suspense>
+  );
+}
 
-export default async function NewAssistantPage() {
+async function NewAssistant() {
   await requireShell();
 
   return (

@@ -1,3 +1,5 @@
+import { Suspense } from 'react';
+import { AssistantEditorSkeleton } from '../assistant-editor-skeleton';
 import { notFound } from 'next/navigation';
 
 import { updateAssistantAction } from '@/app/actions';
@@ -9,9 +11,15 @@ type PageProps = {
   params: Promise<{ id: string }>;
 };
 
-export const dynamic = 'force-dynamic';
+export default function EditAssistantPage(props: PageProps) {
+  return (
+    <Suspense fallback={<AssistantEditorSkeleton />}>
+      <EditAssistant {...props} />
+    </Suspense>
+  );
+}
 
-export default async function EditAssistantPage({ params }: PageProps) {
+async function EditAssistant({ params }: PageProps) {
   const { account } = await requireShell();
 
   const { id } = await params;
