@@ -1,6 +1,6 @@
 'use client';
 
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeSlash as EyeOff } from '@phosphor-icons/react';
 import { useId, useState, type ComponentProps } from 'react';
 
 import {

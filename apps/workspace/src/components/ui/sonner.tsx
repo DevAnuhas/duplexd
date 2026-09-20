@@ -1,12 +1,12 @@
 "use client"
 
 import {
-  CircleCheckIcon,
-  InfoIcon,
-  Loader2Icon,
-  OctagonXIcon,
-  TriangleAlertIcon,
-} from "lucide-react"
+  CheckCircle as CircleCheckIcon,
+  CircleNotch as Loader2Icon,
+  Info as InfoIcon,
+  Warning as TriangleAlertIcon,
+  XCircle as OctagonXIcon,
+} from "@phosphor-icons/react"
 import { useTheme } from "next-themes"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 

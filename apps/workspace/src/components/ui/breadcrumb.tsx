@@ -1,6 +1,6 @@
 import * as React from "react"
 import { cn } from "cn"
-import { ChevronRight, MoreHorizontal } from "lucide-react"
+import { CaretRight as ChevronRight, DotsThree as MoreHorizontal } from '@phosphor-icons/react/ssr';
 import { Slot } from "radix-ui"
 
 function Breadcrumb({ ...props }: React.ComponentProps<"nav">) {

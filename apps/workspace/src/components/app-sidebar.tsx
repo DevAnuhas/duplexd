@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Bot, KeyRound, LayoutGrid, PhoneCall, Settings } from 'lucide-react';
+import { Gear as Settings, Key as KeyRound, Phone as PhoneCall, Robot as Bot, SquaresFour as LayoutGrid } from '@phosphor-icons/react';
 import type { ComponentProps } from 'react';
 
 import { NavUser } from '@/components/nav-user';

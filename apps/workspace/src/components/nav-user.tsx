@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
-import { ChevronsUpDown, Laptop, LogOut, Moon, Sun } from 'lucide-react';
+import { CaretUpDown as ChevronsUpDown, Laptop, Moon, SignOut as LogOut, Sun } from '@phosphor-icons/react';
 import { useState } from 'react';
 
 import { authClient } from '@/lib/auth-client';
