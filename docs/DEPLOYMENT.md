@@ -37,9 +37,17 @@ Writing these steps does not prove the dashboards are configured. The first prev
 | `NEON_PRODUCTION_BRANCH_ID` | Preview                                                          | Production branch ID; the preview preflight refuses an equal branch       |
 | `VERCEL_GIT_COMMIT_REF`     | Preview, supplied by Vercel                                      | Git branch name; preview migration refuses `main`                         |
 | `BETTER_AUTH_SECRET`        | Preview and Production, different values                         | Session signing                                                           |
-| `BETTER_AUTH_URL`           | Preview and Production, matching each public origin              | Auth callback/cookie origin                                               |
+| `BETTER_AUTH_URL`           | Production, matching the public origin; leave **unset** on Preview | Auth callback/cookie origin                                               |
 | `ASSISTANT_SECRET_KEY`      | Preview and Production, different values                         | AES-256-GCM key for webhook secrets                                       |
 | `PIPECAT_API_KEY`           | Preview and Production                                           | Starts the Pipecat agent; previews must not receive a customer credential |
+
+### Why `BETTER_AUTH_URL` is unset on Preview
+
+A preview origin cannot be configured ahead of time: every pull request gets a generated domain, so no value in the Preview scope matches the origin a reviewer opens. Setting one is worse than leaving it blank, because this variable decides the cookie domain and the `__Secure-` prefix — a wrong origin signs in and then silently fails to keep the session.
+
+Left unset on a preview, `requireAuthUrl()` builds the origin from `VERCEL_BRANCH_URL`, which Vercel injects per deployment. That is not the request's `Host` header, so the deployment still states its own identity rather than inferring it from traffic; the branch URL is used rather than the per-deployment `VERCEL_URL` because it survives a redeploy of the same pull request, and because `VERCEL_URL` does not work under Standard Deployment Protection.
+
+The fallback is **preview-only**. Production missing `BETTER_AUTH_URL` still fails closed rather than minting cookies for a `vercel.app` domain instead of the real one. Both halves are mutation-proven in `apps/workspace/test/env.test.ts`.
 
 ### Sweep-only environment
 
