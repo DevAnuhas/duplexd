@@ -206,6 +206,57 @@ describeDatabase('customer call creation authentication and ownership', () => {
     expect(provider.start).toHaveBeenCalledTimes(1);
   });
 
+  it('maps a key deleted after authentication to invalid_api_key instead of a 500', async () => {
+    const account = await signUpNewAccount();
+    const assistantId = await createAssistant(account);
+    const key = await createKey(account);
+    const before = await countCalls(account.accountId);
+
+    // Deterministically reproduce the database error from the real race: a
+    // hard delete can commit after verifyApiKey succeeds but before the rate
+    // limiter or starting-call insert checks its API-key foreign key.
+    await withTestPool(async (pool) => {
+      await pool.query(`
+        CREATE OR REPLACE FUNCTION test_raise_deleted_api_key_fk()
+        RETURNS trigger LANGUAGE plpgsql AS $fn$
+        BEGIN
+          RAISE EXCEPTION 'synthetic deleted-key race' USING ERRCODE = '23503';
+        END
+        $fn$;
+        DROP TRIGGER IF EXISTS test_deleted_api_key_fk ON call_rate_limits;
+        CREATE TRIGGER test_deleted_api_key_fk
+          BEFORE INSERT ON call_rate_limits
+          FOR EACH ROW EXECUTE FUNCTION test_raise_deleted_api_key_fk();
+      `);
+    });
+
+    try {
+      const response = await createCall(
+        createRequest({ assistantId }, key.raw),
+      );
+      const body = await expectProblem(response, 401, 'invalid_api_key');
+
+      expect(body.detail).toBe('The API key is invalid.');
+      expect(body.detail).not.toContain(key.raw);
+      expect(provider.start).not.toHaveBeenCalled();
+      expect(await countCalls(account.accountId)).toBe(before);
+    } finally {
+      await withTestPool(async (pool) => {
+        await pool.query(`
+          DROP TRIGGER IF EXISTS test_deleted_api_key_fk ON call_rate_limits;
+          DROP FUNCTION IF EXISTS test_raise_deleted_api_key_fk();
+        `);
+      });
+    }
+
+    // The trigger only creates the race error. Removing it proves this route
+    // still accepts the same otherwise-valid request.
+    expect(
+      (await createCall(createRequest({ assistantId }, key.raw))).status,
+    ).toBe(200);
+    expect(provider.start).toHaveBeenCalledTimes(1);
+  });
+
   it('names all eight missing runtime fields for an assistant saved with only a name', async () => {
     const account = await signUpNewAccount();
     const name = `incomplete assistant ${randomUUID()}`;

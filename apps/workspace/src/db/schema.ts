@@ -226,6 +226,7 @@ export const calls = pgTable(
       table.accountId,
       table.createdAt.desc(),
     ),
+    index('calls_api_key_idx').on(table.apiKeyId),
     // Partial: the sweeper only ever looks for calls still claiming to run.
     index('calls_active_idx')
       .on(table.state)

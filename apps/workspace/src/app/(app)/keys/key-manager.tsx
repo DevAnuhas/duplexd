@@ -6,7 +6,11 @@ import { useState, useTransition } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 
-import { mintApiKeyAction, revokeApiKeyAction } from '@/app/actions';
+import {
+  deleteApiKeyAction,
+  mintApiKeyAction,
+  revokeApiKeyAction,
+} from '@/app/actions';
 import { CopyButton } from '@/components/copy-button';
 import {
   AlertDialog,
@@ -61,7 +65,7 @@ type KeyRow = {
 };
 
 /**
- * Minting, revealing once, and revoking.
+ * Minting, revealing once, revoking, and deleting unused keys.
  *
  * The reveal is held in component state and nowhere else. Not the URL, not
  * `history.state`, not `localStorage` or `sessionStorage` — each of those
@@ -241,83 +245,155 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
                 <TableHead>Created</TableHead>
                 <TableHead>Last used</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="text-right">Action</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-            {keys.map((key) => (
-              <TableRow key={key.id}>
-                <TableCell className="font-medium">{key.name}</TableCell>
-                <TableCell className="tabular-nums">{key.prefix}…</TableCell>
-                <TableCell>{formatDate(key.createdAt)}</TableCell>
-                <TableCell>
-                  {key.lastUsedAt === null
-                    ? 'Never'
-                    : formatDate(key.lastUsedAt)}
-                </TableCell>
-                <TableCell>
-                  <Badge
-                    variant="outline"
-                    className={
-                      key.revokedAt === null
-                        ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                        : 'bg-secondary text-secondary-foreground'
-                    }
-                  >
-                    {key.revokedAt === null ? 'Active' : 'Revoked'}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-right">
-                  {key.revokedAt === null && (
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          className="h-11"
-                        >
-                          Revoke
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>
-                            Revoke {key.name}?
-                          </AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Projects using {key.prefix}… will no longer be able
-                            to start calls. Existing call history is kept.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel className="h-11">
-                            Keep active
-                          </AlertDialogCancel>
-                          <AlertDialogAction
-                            variant="destructive"
-                            className="h-11"
-                            onClick={() => {
-                              withRefresh(async () => {
-                                try {
-                                  await revokeApiKeyAction(key.id);
-                                  toast.success(`${key.name} revoked`);
-                                } catch {
-                                  toast.error(
-                                    `Could not revoke ${key.prefix}. It is still active — try again.`,
-                                  );
-                                }
-                              });
-                            }}
+              {keys.map((key) => (
+                <TableRow key={key.id}>
+                  <TableCell className="font-medium">{key.name}</TableCell>
+                  <TableCell className="tabular-nums">{key.prefix}…</TableCell>
+                  <TableCell>{formatDate(key.createdAt)}</TableCell>
+                  <TableCell>
+                    {key.lastUsedAt === null
+                      ? 'Never'
+                      : formatDate(key.lastUsedAt)}
+                  </TableCell>
+                  <TableCell>
+                    <Badge
+                      variant="outline"
+                      className={
+                        key.revokedAt === null
+                          ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                          : 'bg-secondary text-secondary-foreground'
+                      }
+                    >
+                      {key.revokedAt === null ? 'Active' : 'Revoked'}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex min-w-max justify-end gap-1">
+                      {key.revokedAt === null && (
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              disabled={pending}
+                              aria-label={`Revoke ${key.name}`}
+                              className="h-11"
+                            >
+                              Revoke
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>
+                                Revoke {key.name}?
+                              </AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Projects using {key.prefix}… will no longer be
+                                able to start calls. Existing call history is
+                                kept.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel className="h-11">
+                                Keep active
+                              </AlertDialogCancel>
+                              <AlertDialogAction
+                                variant="destructive"
+                                disabled={pending}
+                                className="h-11"
+                                onClick={() => {
+                                  withRefresh(async () => {
+                                    try {
+                                      await revokeApiKeyAction(key.id);
+                                      toast.success(`${key.name} revoked`);
+                                    } catch {
+                                      toast.error(
+                                        `Could not revoke ${key.prefix}. It is still active — try again.`,
+                                      );
+                                    }
+                                  });
+                                }}
+                              >
+                                Revoke key
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      )}
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            disabled={pending}
+                            aria-label={`Delete ${key.name}`}
+                            className="h-11 text-destructive hover:text-destructive"
                           >
-                            Revoke key
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
+                            Delete
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>
+                              Delete {key.name}?
+                            </AlertDialogTitle>
+                            <AlertDialogDescription>
+                              {key.lastUsedAt !== null && (
+                                <>
+                                  {key.name} was last used on{' '}
+                                  {formatDate(key.lastUsedAt)}.{' '}
+                                </>
+                              )}
+                              This can&apos;t be undone. A key with calls attributed
+                              to it cannot be deleted; revoke it instead so call
+                              history stays attributable.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel className="h-11">
+                              Keep key
+                            </AlertDialogCancel>
+                            <AlertDialogAction
+                              variant="destructive"
+                              disabled={pending}
+                              className="h-11"
+                              onClick={() => {
+                                withRefresh(async () => {
+                                  try {
+                                    const result = await deleteApiKeyAction(
+                                      key.id,
+                                    );
+
+                                    if (!result.ok) {
+                                      toast.error(
+                                        result.issues[0]?.message ??
+                                          'That key was not deleted.',
+                                      );
+                                      return;
+                                    }
+
+                                    toast.success(`${key.name} deleted`);
+                                  } catch {
+                                    toast.error(
+                                      `Could not delete ${key.prefix}. The key was not changed — try again.`,
+                                    );
+                                  }
+                                });
+                              }}
+                            >
+                              Delete key
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
             </TableBody>
           </Table>
         </div>

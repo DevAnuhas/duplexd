@@ -49,20 +49,33 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  if (!(await consumeCallCreationSlot(auth.keyId))) {
-    return problem(
-      429,
-      'capacity_exceeded',
-      'The API key call-creation rate limit was exceeded.',
-    );
-  }
+  let created: Awaited<ReturnType<typeof insertStartingCall>>;
 
-  const created = await insertStartingCall({
-    accountId: auth.accountId,
-    assistantId,
-    apiKeyId: auth.keyId,
-    snapshot: prepared.snapshot,
-  });
+  try {
+    if (!(await consumeCallCreationSlot(auth.keyId))) {
+      return problem(
+        429,
+        'capacity_exceeded',
+        'The API key call-creation rate limit was exceeded.',
+      );
+    }
+
+    created = await insertStartingCall({
+      accountId: auth.accountId,
+      assistantId,
+      apiKeyId: auth.keyId,
+      snapshot: prepared.snapshot,
+    });
+  } catch (error) {
+    // A zero-call key may be deleted after authentication but before either
+    // foreign-key write above. Treat that race exactly like a key deleted
+    // before the request began; do not turn a deleted credential into a 500.
+    if (hasDatabaseCode(error, '23503')) {
+      return problem(401, 'invalid_api_key', 'The API key is invalid.');
+    }
+
+    throw error;
+  }
 
   try {
     const upstream = await startPipecatSession({
@@ -94,6 +107,27 @@ export async function POST(request: Request): Promise<Response> {
       ? problem(429, kind, 'Pipecat Cloud has no available call capacity.')
       : problem(502, kind, 'The call provider is unavailable.');
   }
+}
+
+function hasDatabaseCode(error: unknown, expected: string): boolean {
+  const seen = new Set<object>();
+  let current = error;
+
+  while (typeof current === 'object' && current !== null && !seen.has(current)) {
+    seen.add(current);
+
+    if (
+      'code' in current &&
+      typeof current.code === 'string' &&
+      current.code === expected
+    ) {
+      return true;
+    }
+
+    current = 'cause' in current ? current.cause : null;
+  }
+
+  return false;
 }
 
 export async function GET(request: Request): Promise<Response> {

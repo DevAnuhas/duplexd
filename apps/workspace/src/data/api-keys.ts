@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { and, desc, eq, isNull, lt, or } from 'drizzle-orm';
 
 import { getDb } from '@/db/client';
-import { apiKeys } from '@/db/schema';
+import { apiKeys, calls } from '@/db/schema';
 import { hashCredential } from '@/lib/credentials';
 import { secretsMatch } from '@/lib/crypto';
 
@@ -163,6 +163,55 @@ export async function revokeApiKey(
     .returning({ id: apiKeys.id });
 
   return rows.length > 0;
+}
+
+export type DeleteApiKeyResult = 'deleted' | 'has_calls' | 'not_found';
+
+/**
+ * Permanently deletes an account's key only when no call points at it.
+ *
+ * This is intentionally stricter than the database foreign key, which can set
+ * `calls.api_key_id` to null. Losing that link would make historical calls
+ * look unattributed, so a referenced key must be revoked instead. Locking the
+ * key row makes the check and delete one decision: a concurrent call cannot
+ * acquire its foreign-key lock between them and erase its own attribution.
+ */
+export async function deleteApiKey(
+  accountId: string,
+  keyId: string,
+): Promise<DeleteApiKeyResult> {
+  return getDb().transaction(async (tx) => {
+    const ownedKeys = await tx
+      .select({ id: apiKeys.id })
+      .from(apiKeys)
+      .where(and(eq(apiKeys.id, keyId), eq(apiKeys.accountId, accountId)))
+      .for('update')
+      .limit(1);
+
+    if (ownedKeys.length === 0) {
+      return 'not_found';
+    }
+
+    // Deliberately keyed only by the globally unique key id. A corrupt
+    // cross-account call reference must block deletion too; adding accountId
+    // here could erase the key and let ON DELETE SET NULL hide that corruption.
+    const attributedCalls = await tx
+      .select({ id: calls.id })
+      .from(calls)
+      .where(eq(calls.apiKeyId, keyId))
+      .limit(1);
+
+    if (attributedCalls.length > 0) {
+      return 'has_calls';
+    }
+
+    const deleted = await tx
+      .delete(apiKeys)
+      .where(and(eq(apiKeys.id, keyId), eq(apiKeys.accountId, accountId)))
+      .returning({ id: apiKeys.id });
+
+    return deleted.length > 0 ? 'deleted' : 'not_found';
+  });
 }
 
 /**

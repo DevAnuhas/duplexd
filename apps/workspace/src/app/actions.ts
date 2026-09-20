@@ -8,7 +8,7 @@ import {
   updateAssistantForAccount,
   type AssistantInput,
 } from '@/data/assistants';
-import { mintApiKey, revokeApiKey } from '@/data/api-keys';
+import { deleteApiKey, mintApiKey, revokeApiKey } from '@/data/api-keys';
 import { requireCurrentAccount } from '@/lib/account';
 import { apiKeyNameSchema } from '@/lib/api-key-schemas';
 import { validateServerUrl, validateTools, type ValidationIssue } from '@/lib/validate';
@@ -186,6 +186,34 @@ export async function revokeApiKeyAction(keyId: string): Promise<ActionResult> {
   const { accountId } = await requireCurrentAccount();
 
   await revokeApiKey(accountId, keyId);
+  revalidatePath('/keys');
+
+  return { ok: true };
+}
+
+export async function deleteApiKeyAction(keyId: string): Promise<ActionResult> {
+  const { accountId } = await requireCurrentAccount();
+  const result = await deleteApiKey(accountId, keyId);
+
+  if (result === 'has_calls') {
+    return {
+      ok: false,
+      issues: [
+        {
+          field: 'keyId',
+          message: 'This key has calls attributed to it; revoke it instead',
+        },
+      ],
+    };
+  }
+
+  if (result === 'not_found') {
+    return {
+      ok: false,
+      issues: [{ field: 'keyId', message: 'That API key no longer exists.' }],
+    };
+  }
+
   revalidatePath('/keys');
 
   return { ok: true };

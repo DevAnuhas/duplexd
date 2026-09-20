@@ -40,6 +40,7 @@ const { closeDb } = await import('@/db/client');
 const {
   archiveAssistantAction,
   createAssistantAction,
+  deleteApiKeyAction,
   mintApiKeyAction,
   revokeApiKeyAction,
   updateAssistantAction,
@@ -51,8 +52,12 @@ const {
   listAssistantsForAccount,
   updateAssistantForAccount,
 } = await import('@/data/assistants');
-const { listApiKeysForAccount, mintApiKey, revokeApiKey, verifyApiKey } =
-  await import('@/data/api-keys');
+const {
+  listApiKeysForAccount,
+  mintApiKey,
+  revokeApiKey,
+  verifyApiKey,
+} = await import('@/data/api-keys');
 const { signUpNewAccount } = await import('./helpers/auth.ts');
 const { isDatabaseConfigured } = await import('./helpers/environment.ts');
 
@@ -275,6 +280,42 @@ describeDatabase('two accounts, one another’s API keys', () => {
       await verifyApiKey(ownerKey.raw),
       'the intruder revoked the owner’s key through the action',
     ).not.toBeNull();
+  });
+
+  it('cannot delete the owner’s key through the action either', async () => {
+    const protectedKey = await mintApiKey(
+      owner.accountId,
+      'owner key protected from delete',
+      owner.userId,
+    );
+    requestHeaders.current = new Headers({ cookie: intruder.cookie });
+
+    const result = await deleteApiKeyAction(protectedKey.id);
+
+    expect(result).toStrictEqual({
+      ok: false,
+      issues: [{ field: 'keyId', message: 'That API key no longer exists.' }],
+    });
+    expect(
+      await verifyApiKey(protectedKey.raw),
+      'the intruder deleted the owner’s key through the action',
+    ).toStrictEqual({
+      accountId: owner.accountId,
+      keyId: protectedKey.id,
+    });
+  });
+
+  it('can delete its own unused key through the action (control)', async () => {
+    const disposable = await mintApiKey(
+      intruder.accountId,
+      'intruder disposable key',
+      intruder.userId,
+    );
+    requestHeaders.current = new Headers({ cookie: intruder.cookie });
+
+    expect(await deleteApiKeyAction(disposable.id)).toStrictEqual({ ok: true });
+    expect(await verifyApiKey(disposable.raw)).toBeNull();
+    expect(await verifyApiKey(ownerKey.raw)).not.toBeNull();
   });
 
   it('can revoke its own, which stops verifying (control)', async () => {
