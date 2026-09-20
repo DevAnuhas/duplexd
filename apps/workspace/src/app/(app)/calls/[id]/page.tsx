@@ -250,7 +250,7 @@ async function CallDetailContent({
                           : 'ml-8 rounded-lg border bg-card p-4 sm:ml-20'
                       }
                     >
-                      <div className="flex items-center justify-between gap-4">
+                      <div className="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                         <p className="text-sm font-medium">
                           {caller ? 'Caller' : 'Assistant'}
                         </p>
@@ -258,7 +258,7 @@ async function CallDetailContent({
                           {timestamp(item.event.at)}
                         </time>
                       </div>
-                      <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">
+                      <p className="mt-2 min-w-0 whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">
                         {item.event.payload.text}
                       </p>
                     </div>
@@ -278,8 +278,8 @@ async function CallDetailContent({
                 <li key={item.event.seq} className="relative">
                   <span className="absolute top-5 -left-[1.85rem] size-2 rounded-full bg-primary" />
                   <Card className="gap-0 py-0 shadow-none">
-                    <CardContent className="flex items-center justify-between gap-4 px-4 py-4">
-                      <p className="text-sm">
+                    <CardContent className="flex flex-col items-start gap-1 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                      <p className="min-w-0 text-sm [overflow-wrap:anywhere]">
                         <span className="font-medium">
                           {item.event.payload.tool}
                         </span>{' '}
@@ -301,7 +301,7 @@ async function CallDetailContent({
             <CollapsibleTrigger asChild>
               <Button
                 variant="ghost"
-                className="h-auto w-full justify-between rounded-lg px-4 py-3"
+                className="min-h-11 w-full justify-between rounded-lg px-4 py-3"
               >
                 Technical events
                 <span className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -318,7 +318,7 @@ async function CallDetailContent({
                 {technical.map((event) => (
                   <li
                     key={event.seq}
-                    className="flex items-center justify-between gap-4 border-b py-2 text-xs last:border-0"
+                    className="flex flex-col items-start gap-1 border-b py-2 text-xs last:border-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
                   >
                     <span className="capitalize">
                       {technicalLabel(event.type)}
@@ -362,7 +362,7 @@ export default function CallDetailPage({
   return (
     <main className="space-y-8">
       <header className="space-y-4">
-        <Button variant="ghost" size="sm" asChild className="-ml-3">
+        <Button variant="ghost" asChild className="-ml-3 h-11">
           <Link href="/calls">
             <ArrowLeft aria-hidden="true" />
             All calls

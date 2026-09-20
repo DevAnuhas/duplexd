@@ -73,7 +73,7 @@ async function CallsContent({
           <p className="mt-1 max-w-md text-sm text-muted-foreground">
             Calls started through the API appear here.
           </p>
-          <Button asChild className="mt-5">
+          <Button asChild className="mt-5 h-11">
             <Link href="/keys">View API keys</Link>
           </Button>
         </div>
@@ -97,7 +97,7 @@ async function CallsContent({
                     <Link
                       href={`/calls/${call.id}`}
                       prefetch={true}
-                      className="font-medium underline-offset-4 hover:underline"
+                      className="inline-flex min-h-11 items-center font-medium underline-offset-4 hover:underline"
                     >
                       {formatTimestamp(call.startedAt)}
                     </Link>
@@ -138,7 +138,7 @@ async function CallsContent({
       )}
 
       {result.nextCursor !== null && (
-        <Button variant="outline" asChild>
+        <Button variant="outline" asChild className="h-11">
           <Link href={`/calls?cursor=${encodeURIComponent(result.nextCursor)}`}>
             Older calls
           </Link>

@@ -1,10 +1,10 @@
 'use client';
 
-import { Check, Copy } from 'lucide-react';
-import { useState } from 'react';
+import { Copy } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 
 export function CopyButton({
   value,
@@ -17,8 +17,6 @@ export function CopyButton({
   successLabel?: string;
   compact?: boolean;
 }) {
-  const [copied, setCopied] = useState(false);
-
   /**
    * `navigator.clipboard` is not always there, and `writeText` can reject.
    *
@@ -39,8 +37,7 @@ export function CopyButton({
       }
 
       await navigator.clipboard.writeText(value);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2_000);
+      toast.success(successLabel);
     } catch {
       toast.error('Could not copy', {
         description: 'Your browser blocked clipboard access — select the value and copy it by hand.',
@@ -52,12 +49,13 @@ export function CopyButton({
     <Button
       type="button"
       variant="ghost"
-      size={compact ? 'icon-xs' : 'sm'}
+      size={compact ? 'icon' : 'default'}
+      className={cn('h-11', compact && 'w-11')}
       onClick={copy}
-      aria-label={copied ? successLabel : label}
+      aria-label={label}
     >
-      {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-      {!compact && <span>{copied ? successLabel : label}</span>}
+      <Copy aria-hidden="true" data-icon="inline-start" />
+      {!compact && <span>{label}</span>}
     </Button>
   );
 }

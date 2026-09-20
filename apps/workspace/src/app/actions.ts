@@ -10,6 +10,7 @@ import {
 } from '@/data/assistants';
 import { mintApiKey, revokeApiKey } from '@/data/api-keys';
 import { requireCurrentAccount } from '@/lib/account';
+import { apiKeyNameSchema } from '@/lib/api-key-schemas';
 import { validateServerUrl, validateTools, type ValidationIssue } from '@/lib/validate';
 
 /**
@@ -163,16 +164,19 @@ export async function mintApiKeyAction(
   formData: FormData,
 ): Promise<{ ok: true; raw: string; prefix: string } | { ok: false; issues: ValidationIssue[] }> {
   const { accountId, userId } = await requireCurrentAccount();
-  const name = formData.get('name');
+  const parsed = apiKeyNameSchema.safeParse({ name: formData.get('name') });
 
-  if (typeof name !== 'string' || name.trim() === '') {
+  if (!parsed.success) {
     return {
       ok: false,
-      issues: [{ field: 'name', message: 'A key needs a name so you can tell it apart later.' }],
+      issues: parsed.error.issues.map((issue) => ({
+        field: 'name',
+        message: issue.message,
+      })),
     };
   }
 
-  const minted = await mintApiKey(accountId, name.trim(), userId);
+  const minted = await mintApiKey(accountId, parsed.data.name, userId);
   revalidatePath('/keys');
 
   return { ok: true, raw: minted.raw, prefix: minted.prefix };

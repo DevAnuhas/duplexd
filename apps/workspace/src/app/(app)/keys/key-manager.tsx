@@ -1,11 +1,24 @@
 'use client';
 
+import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
-import { useState, useTransition, type FormEvent } from 'react';
+import { useState, useTransition } from 'react';
+import { Controller, useForm } from 'react-hook-form';
+import { toast } from 'sonner';
 
 import { mintApiKeyAction, revokeApiKeyAction } from '@/app/actions';
 import { CopyButton } from '@/components/copy-button';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -17,8 +30,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
   Table,
   TableBody,
@@ -27,6 +46,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  apiKeyNameSchema,
+  type ApiKeyNameValues,
+} from '@/lib/api-key-schemas';
 
 type KeyRow = {
   id: string;
@@ -50,8 +73,10 @@ type KeyRow = {
 export function KeyManager({ keys }: { keys: KeyRow[] }) {
   const router = useRouter();
   const [revealed, setRevealed] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const form = useForm<ApiKeyNameValues>({
+    resolver: zodResolver(apiKeyNameSchema),
+    defaultValues: { name: '' },
+  });
 
   /**
    * **`router.refresh()` has to run inside a transition or the new server
@@ -70,7 +95,7 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
    * was just as inert there. Only the path with no local state change exposed
    * it — the same shape as a test that passes for the wrong reason.
    */
-  const [, startTransition] = useTransition();
+  const [pending, startTransition] = useTransition();
 
   /**
    * Runs a server action **inside a transition**.
@@ -93,35 +118,26 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
     });
   }
 
-  /**
-   * A rejected action must not leave the form unusable — see the same note on
-   * the assistant form. Without the `finally`, a server throw left the button
-   * disabled forever with nothing said.
-   */
-  async function onMint(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true);
-    setError(null);
-
-    const form = event.currentTarget;
-
-    const data = new FormData(form);
-
+  function onMint(values: ApiKeyNameValues) {
     withRefresh(async () => {
       try {
+        const data = new FormData();
+        data.set('name', values.name);
         const result = await mintApiKeyAction(data);
 
         if (!result.ok) {
-          setError(result.issues[0]?.message ?? 'That key was not created.');
+          const message =
+            result.issues[0]?.message ?? 'That key was not created.';
+          form.setError('name', { message });
+          toast.error(message);
           return;
         }
 
         setRevealed(result.raw);
         form.reset();
+        toast.success('API key minted');
       } catch {
-        setError('Something went wrong. No key was created — try again.');
-      } finally {
-        setBusy(false);
+        toast.error('Something went wrong. No key was created — try again.');
       }
     });
   }
@@ -139,6 +155,7 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
         <DialogContent
           data-testid="revealed-key"
           className="border-primary/30 sm:max-w-xl"
+          showCloseButton={false}
         >
           <DialogHeader>
             <DialogTitle>Copy this key now</DialogTitle>
@@ -161,7 +178,7 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
           )}
           <DialogFooter>
             <DialogClose asChild>
-              <Button>I have saved it</Button>
+              <Button className="h-11">I have saved it</Button>
             </DialogClose>
           </DialogFooter>
         </DialogContent>
@@ -169,29 +186,43 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
 
       <form
         method="post"
-        onSubmit={onMint}
-        className="flex flex-col gap-3 rounded-lg border bg-card p-4 sm:flex-row sm:items-end"
+        noValidate
+        onSubmit={form.handleSubmit(onMint)}
+        className="rounded-lg border bg-card p-4"
       >
-        <div className="min-w-0 flex-1 space-y-2">
-          <Label htmlFor="keyName">Key name</Label>
-          <Input
-            id="keyName"
+        <FieldGroup className="gap-4">
+          <Controller
             name="name"
-            required
-            placeholder="Production backend"
-            autoComplete="off"
+            control={form.control}
+            render={({ field, fieldState }) => (
+              <Field data-invalid={fieldState.invalid} className="gap-2">
+                <FieldLabel htmlFor={field.name}>Key name</FieldLabel>
+                <Input
+                  {...field}
+                  id={field.name}
+                  aria-invalid={fieldState.invalid}
+                  maxLength={80}
+                  placeholder="Production backend"
+                  autoComplete="off"
+                  className="h-11"
+                />
+                <FieldDescription>
+                  Use a name that identifies the project or environment.
+                </FieldDescription>
+                <FieldError errors={[fieldState.error]} />
+              </Field>
+            )}
           />
-        </div>
-        <Button type="submit" disabled={busy}>
-          {busy ? 'Minting…' : 'Mint a key'}
-        </Button>
+          <Button
+            type="submit"
+            disabled={pending}
+            aria-busy={pending}
+            className="h-11 self-start"
+          >
+            {pending ? 'Minting…' : 'Mint a key'}
+          </Button>
+        </FieldGroup>
       </form>
-
-      {error !== null && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
 
       {keys.length === 0 ? (
         <div className="border-y py-10">
@@ -238,30 +269,51 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
                 </TableCell>
                 <TableCell className="text-right">
                   {key.revokedAt === null && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        // A rejection here was a silent no-op: the key stayed
-                        // live, the row did not change, and nothing said so.
-                        // Revocation failing silently is the worst of the
-                        // three, because the customer believes a leaked key
-                        // is dead when it is not.
-                        withRefresh(async () => {
-                          try {
-                            setError(null);
-                            await revokeApiKeyAction(key.id);
-                          } catch {
-                            setError(
-                              `Could not revoke ${key.prefix}. It is still active — try again.`,
-                            );
-                          }
-                        });
-                      }}
-                    >
-                      Revoke
-                    </Button>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="h-11"
+                        >
+                          Revoke
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>
+                            Revoke {key.name}?
+                          </AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Projects using {key.prefix}… will no longer be able
+                            to start calls. Existing call history is kept.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel className="h-11">
+                            Keep active
+                          </AlertDialogCancel>
+                          <AlertDialogAction
+                            variant="destructive"
+                            className="h-11"
+                            onClick={() => {
+                              withRefresh(async () => {
+                                try {
+                                  await revokeApiKeyAction(key.id);
+                                  toast.success(`${key.name} revoked`);
+                                } catch {
+                                  toast.error(
+                                    `Could not revoke ${key.prefix}. It is still active — try again.`,
+                                  );
+                                }
+                              });
+                            }}
+                          >
+                            Revoke key
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   )}
                 </TableCell>
               </TableRow>
