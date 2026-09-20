@@ -51,7 +51,7 @@ const { ForgotPasswordForm } = await import(
   '@/app/forgot-password/forgot-password-form'
 );
 
-const ADDRESS = 'kevin@example.com';
+const ADDRESS = 'person@example.com';
 const UNKNOWN_ADDRESS = 'nobody-here@example.com';
 
 /** Better Auth's shape for a call that completed but reported a problem. */
@@ -112,6 +112,33 @@ describe('the forgot-password form', () => {
     ).not.toHaveBeenCalled();
 
     expect(rendered).toMatch(/valid email/i);
+  });
+
+  /**
+   * The schema trims, and **the trimmed value is what reaches the network**.
+   *
+   * `auth-schemas.test.ts` proves the schema normalizes the address; this is
+   * the other half, and the half that matters to the person locked out. A
+   * pasted address with a trailing space is the case the trim exists for, and
+   * nothing else asserts that `zodResolver` hands the *parsed* value to the
+   * submit handler rather than the raw input. If it ever handed over the raw
+   * value, every schema test would still pass and Better Auth would be asked
+   * about an address with a space in it.
+   */
+  it.each([
+    ['a trailing space', `${ADDRESS} `],
+    ['surrounding spaces', `  ${ADDRESS}  `],
+    ['a tab and a newline', `\t${ADDRESS}\n`],
+  ])('submits the trimmed address when it was pasted with %s', async (_label, typed) => {
+    requestPasswordReset.mockResolvedValue({ data: {}, error: null });
+
+    await submitAddress(typed);
+
+    expect(requestPasswordReset).toHaveBeenCalledTimes(1);
+    expect(
+      requestPasswordReset,
+      'the padding reached the network, so the schema trimmed but the form did not',
+    ).toHaveBeenCalledWith(expect.objectContaining({ email: ADDRESS }));
   });
 
   /**

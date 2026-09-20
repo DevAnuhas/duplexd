@@ -6,6 +6,7 @@ import {
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   resetPasswordSchema,
+  SIGN_UP_STEP_ONE_FIELDS,
   signInSchema,
   signUpSchema,
 } from '@/lib/auth-schemas';
@@ -374,6 +375,13 @@ describe.each(NAME_FIELDS)(
       ['a single space', ' '],
       ['only whitespace', '   '],
       ['a tab and a newline', '\t\n'],
+      // Both fields now carry the invisible-character guard. `trim()` does
+      // not strip these, so without it a name that renders as nothing
+      // reaches the sidebar or the user menu and blanks it.
+      ['a zero-width space', '\u200B'],
+      ['a word joiner', '\u2060'],
+      ['a byte-order mark', '\uFEFF'],
+      ['zero-widths among ordinary spaces', ' \u200B \u2060 '],
     ])('rejects %s, naming this field and only this field', (_label, submitted) => {
       const issues = issuesFor(signUpSchema, signUpWith({ [field]: submitted }));
 
@@ -491,17 +499,25 @@ describe.each(NAME_FIELDS)(
  * the sign-up split had to be unpicked out of assertions about something else.
  */
 const SCHEMAS_WITH_CONFIRMATION = [
-  ['resetPasswordSchema', resetPasswordSchema] as const,
+  [
+    'signUpSchema',
+    signUpSchema,
+    (password: string, confirmPassword: string) =>
+      signUpWith({ password, confirmPassword }),
+  ],
+  [
+    'resetPasswordSchema',
+    resetPasswordSchema,
+    (password: string, confirmPassword: string) => ({
+      password,
+      confirmPassword,
+    }),
+  ],
 ] as const;
 
-describe.each(SCHEMAS_WITH_CONFIRMATION)('%s confirmation', (_name, schema) => {
+describe.each(SCHEMAS_WITH_CONFIRMATION)('%s confirmation', (_n, schema, build) => {
   const atMinimum = passwordOfLength(PASSWORD_MIN_LENGTH);
   const belowMinimum = passwordOfLength(PASSWORD_MIN_LENGTH - 1);
-
-  const build = (password: string, confirmPassword: string) => ({
-    password,
-    confirmPassword,
-  });
 
   /**
    * The mismatch lands **on the confirm field**, which is the one the customer
@@ -544,6 +560,40 @@ describe.each(SCHEMAS_WITH_CONFIRMATION)('%s confirmation', (_name, schema) => {
       },
       { path: 'confirmPassword', message: expect.stringMatching(/match/i) },
     ]);
+  });
+});
+
+/**
+ * Confirmation is collected in **step one**, with the password it confirms.
+ *
+ * The two-step split makes the grouping a real decision rather than layout: a
+ * mismatch discovered at the final submit would send someone back to a password
+ * they typed two screens ago, which is the failure the split exists to avoid.
+ */
+describe('SIGN_UP_STEP_ONE_FIELDS', () => {
+  it('collects the password and its confirmation together', () => {
+    expect(SIGN_UP_STEP_ONE_FIELDS).toContain('password');
+    expect(
+      SIGN_UP_STEP_ONE_FIELDS,
+      'the mismatch would surface a screen after the password it is about',
+    ).toContain('confirmPassword');
+  });
+
+  it('leaves the names to step two', () => {
+    expect(SIGN_UP_STEP_ONE_FIELDS).not.toContain('workspaceName');
+    expect(SIGN_UP_STEP_ONE_FIELDS).not.toContain('name');
+  });
+
+  /** Every field it names must be one the schema actually requires. */
+  it('names only fields signUpSchema requires', () => {
+    expect(accepts(signUpSchema, signUpWith())).toBe(true);
+
+    for (const field of SIGN_UP_STEP_ONE_FIELDS) {
+      expect(
+        issuesFor(signUpSchema, signUpWith({ [field]: undefined })),
+        field + ' is in step one but the schema does not require it',
+      ).toContainEqual({ path: field, message: expect.any(String) });
+    }
   });
 });
 

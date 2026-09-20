@@ -114,6 +114,18 @@ async function signUpAndRead(
   return stored;
 }
 
+/** How many users sit on an account. The signup hook must never add a second. */
+async function usersOnAccount(accountId: string): Promise<number> {
+  return withTestPool(async (pool) => {
+    const { rows } = await pool.query<{ members: string }>(
+      'SELECT count(*)::text AS members FROM users WHERE account_id = $1',
+      [accountId],
+    );
+
+    return Number(rows[0]?.members ?? 0);
+  });
+}
+
 const describeDatabase = describe.skipIf(!isDatabaseConfigured());
 
 afterAll(async () => {
@@ -298,4 +310,155 @@ describeDatabase('the workspace name given at signup', () => {
       'an invisible workspace name was stored, so the sidebar renders blank',
     ).toBe(email);
   });
+
+  /**
+   * The person's name gets the same treatment, for the same reason.
+   *
+   * `users.name` arrives on Better Auth's own body, so before it was
+   * normalized in the hook the form schema was the only thing bounding it —
+   * the client-side-only shape the workspace name had. It is what the user
+   * menu shows instead of the address, so an invisible name renders that menu
+   * blank.
+   */
+  it('stores a real person name verbatim', async () => {
+    const stored = await signUpAndRead({
+      email: uniqueEmail(),
+      password: PASSWORD,
+      name: 'Alex Doe',
+      workspaceName: 'Acme Logistics',
+    });
+
+    expect(stored.personName).toBe('Alex Doe');
+  });
+
+  it.each([
+    ['a zero-width space', '\u200B'],
+    ['a word joiner', '\u2060'],
+    ['only whitespace', '   '],
+    ['zero-widths among spaces', ' \u200B \u2060 '],
+  ])('falls back to the email when the person name is %s', async (_label, invisible) => {
+    const email = uniqueEmail();
+    const stored = await signUpAndRead({
+      email,
+      password: PASSWORD,
+      name: invisible,
+      workspaceName: 'Acme Logistics',
+    });
+
+    expect(
+      stored.personName,
+      'an invisible person name was stored, so the user menu renders blank',
+    ).toBe(email);
+
+    // The workspace name is unaffected — the two fall back independently.
+    expect(stored.accountName).toBe('Acme Logistics');
+  });
+
+  it('bounds an over-long person name at the cap', async () => {
+    const stored = await signUpAndRead({
+      email: uniqueEmail(),
+      password: PASSWORD,
+      name: 'z'.repeat(500),
+      workspaceName: 'Acme Logistics',
+    });
+
+    expect(stored.personName).toBe('z'.repeat(WORKSPACE_NAME_MAX_LENGTH));
+  });
+
+  /**
+   * **The signup body cannot choose its own account** — and it is stopped
+   * twice, which is worth knowing precisely because the code comment says
+   * otherwise.
+   *
+   * The same catch-all that carries `workspaceName` carries anything, so a
+   * caller can put `accountId` in the signup body. The hook's defence is that
+   * it spreads its own `accountId` **after** `...user`, and its comment says
+   * that ordering is the only thing protecting the tenant boundary.
+   *
+   * Measured, it is not: Better Auth refuses the field outright with
+   * `400 FIELD_NOT_ALLOWED` before the hook ever runs, because `accountId` is
+   * a known column on the user model that is not marked as caller-settable.
+   * The spread ordering is a backstop behind that, not the front line.
+   *
+   * Both halves are pinned below, because either could change independently —
+   * a Better Auth upgrade could relax the field guard, and a refactor could
+   * reorder the spread. The first test is the one that would notice a library
+   * change; the second is the one that notices a near-miss spelling slipping
+   * past both.
+   */
+  it('refuses a signup that names an accountId, and writes nothing', async () => {
+    const existingEmail = uniqueEmail();
+    const existing = await signUpAndRead({
+      email: existingEmail,
+      password: PASSWORD,
+      name: 'Alex Doe',
+      workspaceName: 'Existing Workspace',
+    });
+
+    const joinerEmail = uniqueEmail();
+    const response = await signUp({
+      email: joinerEmail,
+      password: PASSWORD,
+      name: 'Sam Roe',
+      workspaceName: 'Joiner Workspace',
+      accountId: existing.accountId,
+    });
+
+    expect(
+      response.status,
+      'the signup body was allowed to name an account',
+    ).toBe(400);
+
+    // Asserted as post-state, not just as a status code: a refusal that
+    // wrote a row anyway satisfies the first and fails this.
+    expect(await storedNamesFor(joinerEmail)).toBeNull();
+
+    expect(
+      await usersOnAccount(existing.accountId),
+      'a second user landed on an existing account',
+    ).toBe(1);
+  });
+
+  /**
+   * The near misses. None of these is a column the hook reads, so each must be
+   * inert — accepted, ignored, and given its own account like any signup.
+   *
+   * The positive control is inside each case: the signup has to *succeed* and
+   * get its own workspace. Without that, a signup that failed for an unrelated
+   * reason would satisfy "did not join the other tenant" and prove nothing.
+   */
+  it.each(['account_id', 'accountID', 'id', 'emailVerified'])(
+    'ignores a %s supplied in the signup body',
+    async (field) => {
+      const existingEmail = uniqueEmail();
+      const existing = await signUpAndRead({
+        email: existingEmail,
+        password: PASSWORD,
+        name: 'Alex Doe',
+        workspaceName: 'Existing Workspace',
+      });
+
+      const joiner = await signUpAndRead({
+        email: uniqueEmail(),
+        password: PASSWORD,
+        name: 'Sam Roe',
+        workspaceName: 'Joiner Workspace',
+        [field]: existing.accountId,
+      });
+
+      expect(
+        joiner.accountId,
+        `${field} chose the account, so a stranger joined a tenant`,
+      ).not.toBe(existing.accountId);
+
+      expect(joiner.accountName).toBe('Joiner Workspace');
+      expect(await usersOnAccount(existing.accountId)).toBe(1);
+      expect(await usersOnAccount(joiner.accountId)).toBe(1);
+
+      expect(
+        (await storedNamesFor(existingEmail))?.accountName,
+        "the existing tenant's workspace was renamed by someone else's signup",
+      ).toBe('Existing Workspace');
+    },
+  );
 });
