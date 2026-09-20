@@ -4,7 +4,7 @@ import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 
 import { getDb } from '@/db/client';
-import { requireAuthSecret, requireAuthUrl } from '@/db/env';
+import { requireAuthSecret, resolveAuthBaseUrl } from '@/db/env';
 import * as schema from '@/db/schema';
 import { WORKSPACE_NAME_MAX_LENGTH } from '@/lib/auth-schemas';
 import { sendPasswordResetEmail } from '@/lib/email';
@@ -35,15 +35,18 @@ import { sendPasswordResetEmail } from '@/lib/email';
  *    cross-origin sign-in succeeding whether or not production would reject
  *    it — measuring the absence of a check that is switched off. Assert this
  *    against a running server, or not at all.
- *  - `Secure` and the `__Secure-` cookie prefix follow `BETTER_AUTH_URL`'s
- *    scheme, which is why that variable is required and validated at boot
- *    rather than derived from the request.
+ *  - `Secure` and the `__Secure-` cookie prefix follow the base URL's scheme,
+ *    which is why it is resolved and validated at boot rather than left to the
+ *    request. On Vercel previews the base URL is `DynamicBaseURLConfig` with
+ *    `protocol: 'https'` and an allowlist of the deployment's own two hosts —
+ *    per-request, but never an origin the deployment does not already know
+ *    about. See `resolveAuthBaseUrl` for why both hosts have to be accepted.
  */
 
 function createAuth() {
   return betterAuth({
     secret: requireAuthSecret(),
-    baseURL: requireAuthUrl(),
+    baseURL: resolveAuthBaseUrl(),
     database: drizzleAdapter(getDb(), {
       provider: 'pg',
       schema: {
