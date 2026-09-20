@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 
 import { renameAccount } from '@/data/accounts';
 import { requireCurrentAccount } from '@/lib/account';
+import { WORKSPACE_NAME_MAX_LENGTH } from '@/lib/auth-schemas';
 
 /**
  * The account's own write surface.
@@ -30,8 +31,8 @@ import { requireCurrentAccount } from '@/lib/account';
 
 export type RenameResult = { ok: true } | { ok: false; message: string };
 
-/** Longer than any real organization name, short enough to stay a label. */
-const MAX_NAME_LENGTH = 120;
+/** Shared with the signup hook and the form schema — see `auth-schemas.ts`. */
+const MAX_NAME_LENGTH = WORKSPACE_NAME_MAX_LENGTH;
 
 /**
  * Characters that render as nothing: whitespace, control codes, and the

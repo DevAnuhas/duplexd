@@ -84,12 +84,26 @@ export const signInSchema = z.object({
   password: z.string().min(1, { error: 'Enter your password.' }),
 });
 
+/**
+ * The longest an organization name may be.
+ *
+ * **Exported because three places write `accounts.name` and they must agree.**
+ * The signup hook, the rename action and this schema all bound it here; when
+ * the bound lived only in the form and the rename action, a direct API signup
+ * could set a 500-character name that the rename path would then refuse to
+ * accept back — and that name renders in the sidebar and breadcrumb of every
+ * page.
+ */
+export const WORKSPACE_NAME_MAX_LENGTH = 120;
+
 /** The organization's display name, set at signup and editable in Settings. */
 const workspaceName = z
   .string({ error: 'Name your workspace.' })
   .trim()
   .min(1, { error: 'Name your workspace.' })
-  .max(120, { error: 'Keep the workspace name under 120 characters.' });
+  .max(WORKSPACE_NAME_MAX_LENGTH, {
+    error: `Keep the workspace name under ${WORKSPACE_NAME_MAX_LENGTH} characters.`,
+  });
 
 /** The person's own name, shown in the user menu instead of their address. */
 const personName = z

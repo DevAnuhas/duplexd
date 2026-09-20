@@ -6,6 +6,7 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { getDb } from '@/db/client';
 import { requireAuthSecret, requireAuthUrl } from '@/db/env';
 import * as schema from '@/db/schema';
+import { WORKSPACE_NAME_MAX_LENGTH } from '@/lib/auth-schemas';
 import { sendPasswordResetEmail } from '@/lib/email';
 
 /**
@@ -210,9 +211,30 @@ function createAuth() {
              */
             const submitted = (context as { body?: { workspaceName?: unknown } } | undefined)
               ?.body?.workspaceName;
+            const trimmed =
+              typeof submitted === 'string' ? submitted.trim() : '';
+
+            /**
+             * **The length bound is enforced here, not only in the form.**
+             *
+             * The form's schema is the only thing a browser passes through,
+             * but this endpoint is reachable directly, and without this a
+             * caller could set a 500-character workspace name that then
+             * renders in the sidebar and breadcrumb of every page — and that
+             * the rename action would refuse to accept back, since it bounds
+             * the same column at the same number. Two writers to one column
+             * disagreeing is the bug; `WORKSPACE_NAME_MAX_LENGTH` is the one
+             * definition all three share.
+             *
+             * Over-length is **truncated rather than rejected**. This runs
+             * inside signup: throwing would fail account creation outright for
+             * what is a display string, and the person would have no account
+             * and no obvious reason why. The stored name stays within the
+             * bound either way, and Settings can correct it.
+             */
             const workspaceName =
-              typeof submitted === 'string' && submitted.trim() !== ''
-                ? submitted.trim()
+              trimmed !== ''
+                ? trimmed.slice(0, WORKSPACE_NAME_MAX_LENGTH)
                 : user.email;
 
             await getDb().insert(schema.accounts).values({
