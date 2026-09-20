@@ -54,6 +54,15 @@ type Account = SignedUpUser;
 /** Matches `MAX_NAME_LENGTH` in the action. Duplicated so a silent widening fails here. */
 const MAX_NAME_LENGTH = 120;
 
+/**
+ * The two distinct rejections, so every case can assert **which** rule caught
+ * it rather than only that something did. A name rejected for the right reason
+ * and a name rejected for the wrong one are the same `ok: false`, and only the
+ * first of those tells the customer what to change.
+ */
+const NEEDS_A_NAME = /needs a name/i;
+const TOO_LONG = new RegExp(`under ${MAX_NAME_LENGTH} characters`, 'i');
+
 function actAs(account: Account | null): void {
   requestHeaders.current =
     account === null ? new Headers() : new Headers({ cookie: account.cookie });
@@ -213,6 +222,40 @@ describeDatabase('renameAccountAction is scoped by the session', () => {
     expect(await nameOf(first.accountId)).toBe(name);
   });
 
+  /**
+   * The control the rejection list above needs.
+   *
+   * A rule that rejects names which render as nothing is one careless regex
+   * away from rejecting anything unfamiliar — a non-Latin script, an emoji, a
+   * name that merely *contains* a zero-width character. Each of these must
+   * still save, so the rule cannot quietly become "reject anything unusual"
+   * without this block going red.
+   *
+   * They must also save **verbatim**. The action's contract is reject-or-store,
+   * never silently sanitize: a name handed back with its zero-widths stripped
+   * would be a second, quieter bug wearing a passing test.
+   */
+  it.each([
+    ['an embedded zero-width space', 'Acme\u200BCorp'],
+    ['an embedded word joiner', 'Acme\u2060Corp'],
+    ['one visible character among zero-widths', '\u200Bx\u2060'],
+    ['a non-Latin script', '株式会社'],
+    ['an emoji', '🎉'],
+  ])('accepts a name with %s and stores it verbatim', async (_label, name) => {
+    actAs(first);
+
+    expect(await renameAccountAction(formDataFor({ name }))).toStrictEqual({
+      ok: true,
+    });
+
+    expect(
+      await nameOf(first.accountId),
+      'accepted, but stored as something else — it sanitized silently',
+    ).toBe(name);
+
+    expect(revalidatePath).toHaveBeenCalledWith('/', 'layout');
+  });
+
   it('revalidates the whole layout, because the name is in every page shell', async () => {
     actAs(first);
 
@@ -222,43 +265,74 @@ describeDatabase('renameAccountAction is scoped by the session', () => {
   });
 
   /**
-   * Rejections, each asserted as "the stored name did not move".
+   * Rejections, each asserted as "the stored name did not move" **and** as the
+   * rule that fired.
    *
-   * The trailing over-length case is one character past the limit rather than
-   * wildly over it, so the boundary is pinned from both sides — the accepted
-   * case above is exactly `MAX_NAME_LENGTH`.
+   * The over-length cases are one character past the limit rather than wildly
+   * over it, so the boundary is pinned from both sides — the accepted case
+   * above is exactly `MAX_NAME_LENGTH`.
+   *
+   * The zero-width entries are the interesting half. `String.trim()` strips
+   * U+00A0 but not U+200B, U+2060 or U+202E, so an emptiness check built on
+   * `trim()` alone accepts a name that renders as a blank sidebar and a blank
+   * breadcrumb on every page. Every one is written as an escape on purpose: a
+   * literal would be invisible in this source, and an editor would "tidy" it
+   * into an ordinary space without anyone noticing.
    */
   it.each([
-    ['the empty string', ''],
-    ['a single space', ' '],
-    ['only whitespace', '   \t\n  '],
-    // Written as an escape on purpose: a literal one is invisible here, and
-    // an editor would "tidy" it into an ordinary space without noticing.
-    ['a non-breaking space', '\u00A0'],
-    ['one character over the limit', 'x'.repeat(MAX_NAME_LENGTH + 1)],
+    ['the empty string', '', NEEDS_A_NAME],
+    ['a single space', ' ', NEEDS_A_NAME],
+    ['only whitespace', '   \t\n  ', NEEDS_A_NAME],
+    ['a non-breaking space', '\u00A0', NEEDS_A_NAME],
+    ['a zero-width space', '\u200B', NEEDS_A_NAME],
+    ['a word joiner', '\u2060', NEEDS_A_NAME],
+    ['a byte-order mark', '\uFEFF', NEEDS_A_NAME],
+    ['a right-to-left override', '\u202E', NEEDS_A_NAME],
+    ['a control character', '\u0001', NEEDS_A_NAME],
+    [
+      'zero-width characters mixed with ordinary spaces',
+      ' \u200B \u2060\uFEFF ',
+      NEEDS_A_NAME,
+    ],
+    ['one character over the limit', 'x'.repeat(MAX_NAME_LENGTH + 1), TOO_LONG],
     [
       'whitespace padding a name that is still over the limit',
       `  ${'x'.repeat(MAX_NAME_LENGTH + 1)}  `,
+      TOO_LONG,
     ],
-  ])('rejects %s without writing', async (_label, submitted) => {
-    actAs(first);
+    // Both rules match this one. The emptiness check runs first and the message
+    // says so, because telling someone their invisible name is too long is
+    // useless advice.
+    [
+      'an over-length run of zero-width characters',
+      '\u200B'.repeat(MAX_NAME_LENGTH + 1),
+      NEEDS_A_NAME,
+    ],
+  ])(
+    'rejects %s without writing',
+    async (_label, submitted, expectedMessage) => {
+      actAs(first);
 
-    const before = await nameOf(first.accountId);
-    const result = await renameAccountAction(formDataFor({ name: submitted }));
+      const before = await nameOf(first.accountId);
+      const result = await renameAccountAction(formDataFor({ name: submitted }));
 
-    expect(result.ok).toBe(false);
-    expect(result).toHaveProperty('message', expect.stringMatching(/\S/));
+      expect(result.ok).toBe(false);
+      expect(
+        result,
+        'rejected, but by the wrong rule — the message would misdirect the user',
+      ).toHaveProperty('message', expect.stringMatching(expectedMessage));
 
-    expect(
-      await nameOf(first.accountId),
-      'a rejected rename wrote anyway',
-    ).toBe(before);
+      expect(
+        await nameOf(first.accountId),
+        'a rejected rename wrote anyway',
+      ).toBe(before);
 
-    expect(
-      revalidatePath,
-      'a rejected rename revalidated, which says it thought it had written',
-    ).not.toHaveBeenCalled();
-  });
+      expect(
+        revalidatePath,
+        'a rejected rename revalidated, which says it thought it had written',
+      ).not.toHaveBeenCalled();
+    },
+  );
 
   it('rejects a form with no name field at all', async () => {
     actAs(first);
