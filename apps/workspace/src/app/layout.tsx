@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import localFont from 'next/font/local';
 
 import { ThemeProvider } from '@/components/theme-provider';
+import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
 import './globals.css';
@@ -34,6 +35,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body className={`${foundersGrotesk.variable} font-sans`}>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <TooltipProvider>{children}</TooltipProvider>
+          {/*
+            Mounted once, at the root, so a toast raised anywhere has somewhere
+            to land. Without it `toast()` is a silent no-op — which is exactly
+            the failure the copy button's error path exists to avoid.
+          */}
+          <Toaster />
         </ThemeProvider>
       </body>
     </html>

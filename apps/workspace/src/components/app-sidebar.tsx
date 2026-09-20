@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Bot, KeyRound, PhoneCall, Settings } from 'lucide-react';
-import type { ComponentProps, ReactNode } from 'react';
+import { Suspense, type ComponentProps, type ReactNode } from 'react';
 
 import {
   Sidebar,
@@ -21,10 +21,10 @@ import {
 /**
  * The tenant's navigation — the **static** half of the shell.
  *
- * Nothing here reads the session or the database, so it prerenders and is
- * served immediately. The three request-time pieces arrive as slots: the
- * identity block, the user menu, and each link's count, every one of them
- * wrapped in its own `<Suspense>` by the layout.
+ * The links themselves prerender and are served immediately. Three kinds of
+ * thing stream in behind Suspense boundaries: the identity block, the user
+ * menu and the counts (passed in as slots by the layout), and the active-link
+ * highlight (see `NavButton`).
  *
  * **Every link is backed by a query that runs today.** No Phone numbers,
  * Squads, Webhooks, Integrations, Billing or Metrics — there is no data behind
@@ -54,8 +54,6 @@ export function AppSidebar({
   apiKeysBadge: ReactNode;
   callsBadge: ReactNode;
 } & ComponentProps<typeof Sidebar>) {
-  const pathname = usePathname();
-
   const build: NavItem[] = [
     { href: '/assistants', label: 'Assistants', icon: Bot, badge: assistantsBadge },
   ];
@@ -66,22 +64,10 @@ export function AppSidebar({
     { href: '/calls', label: 'Calls', icon: PhoneCall, badge: callsBadge },
   ];
 
-  /**
-   * `/assistants/new` must light up `Assistants`, so this is a prefix match —
-   * but an exact check first, or a bare `/` would match everything.
-   */
-  const isActive = (href: string): boolean =>
-    pathname === href || pathname.startsWith(`${href}/`);
-
   const renderItems = (items: NavItem[]) =>
     items.map((item) => (
       <SidebarMenuItem key={item.href}>
-        <SidebarMenuButton asChild isActive={isActive(item.href)} tooltip={item.label}>
-          <Link href={item.href}>
-            <item.icon />
-            <span>{item.label}</span>
-          </Link>
-        </SidebarMenuButton>
+        <NavButton href={item.href} label={item.label} icon={item.icon} />
         {item.badge}
       </SidebarMenuItem>
     ));
@@ -109,12 +95,7 @@ export function AppSidebar({
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton asChild isActive={isActive('/settings')} tooltip="Settings">
-              <Link href="/settings">
-                <Settings />
-                <span>Settings</span>
-              </Link>
-            </SidebarMenuButton>
+            <NavButton href="/settings" label="Settings" icon={Settings} />
           </SidebarMenuItem>
         </SidebarMenu>
         {userMenu}
@@ -123,4 +104,57 @@ export function AppSidebar({
       <SidebarRail />
     </Sidebar>
   );
+}
+
+/**
+ * A nav link whose highlight streams in after the link itself.
+ *
+ * `usePathname()` cannot run while the shell is being prerendered — under
+ * Cache Components it is a build error (`CLIENT_HOOK_DYNAMIC`), because the
+ * path is not knowable until there is a request. Wrapping only the highlight
+ * keeps the rest static: the **fallback is the same link, unhighlighted**, so
+ * the nav is present and clickable in the prerendered shell and the active
+ * state settles a moment later. The alternative — one boundary around the
+ * whole nav — would hold the links themselves behind a skeleton, which is the
+ * thing partial prerendering exists to avoid.
+ */
+function NavButton({
+  href,
+  label,
+  icon: Icon,
+}: {
+  href: string;
+  label: string;
+  icon: typeof Bot;
+}) {
+  const link = (isActive: boolean) => (
+    <SidebarMenuButton asChild isActive={isActive} tooltip={label}>
+      <Link href={href}>
+        <Icon />
+        <span>{label}</span>
+      </Link>
+    </SidebarMenuButton>
+  );
+
+  return (
+    <Suspense fallback={link(false)}>
+      <ActiveNavButton href={href}>{link}</ActiveNavButton>
+    </Suspense>
+  );
+}
+
+function ActiveNavButton({
+  href,
+  children,
+}: {
+  href: string;
+  children: (isActive: boolean) => ReactNode;
+}) {
+  const pathname = usePathname();
+
+  /**
+   * `/assistants/new` must light up `Assistants`, so this is a prefix match —
+   * but an exact check first, or a bare `/` would match everything.
+   */
+  return children(pathname === href || pathname.startsWith(`${href}/`));
 }
