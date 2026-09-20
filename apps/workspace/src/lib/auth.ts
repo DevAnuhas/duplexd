@@ -90,28 +90,26 @@ function createAuth() {
        * The rate limiter keys on `ip ?? NO_TRUSTED_IP_KEY`, so when no trusted
        * address can be resolved every caller shares a single bucket — and a
        * limiter meant to slow one prober would instead lock out everybody.
-       * Behind Fly's proxy the socket address is the proxy, so the real client
-       * comes from `fly-client-ip`.
+       * Behind Vercel's proxy the socket address is the proxy, so the real
+       * client comes from `x-real-ip`, the single-valued address calculated by
+       * Vercel Proxy and used by Vercel's own functions SDK.
        *
-       * Only `fly-client-ip` is trusted, and deliberately not
-       * `x-forwarded-for`. A client can set any header it likes; Fly overwrites
-       * `fly-client-ip` on every proxied request, but `x-forwarded-for` is a
-       * list the client can prepend to. Trusting it would let a prober send a
-       * different forged address each time, land in a fresh bucket every
-       * request, and skip the limit entirely — a limiter that is trivially
-       * bypassed is worse than none, because it reads as protection.
+       * Vercel also documents that it overwrites `x-forwarded-for` to prevent
+       * spoofing. `x-real-ip` is chosen anyway: it cannot turn into a forwarded
+       * chain when another proxy is placed in front of Vercel, while Better
+       * Auth deliberately refuses an untrusted multi-hop chain. That refusal
+       * resolves no address and collapses every caller into the same bucket.
        *
        * This is why the list is one header rather than a fallback chain: a
        * fallback is only as trustworthy as its weakest entry.
        *
-       * The trust is in Fly Proxy, not in the header's name. `fly-client-ip`
-       * is believable here only because Fly overwrites it on every proxied
-       * request. Deployed anywhere that does not, a client can set it freely
-       * and the limiter stops holding — so moving off Fly means revisiting
-       * this line, not just the hostname.
+       * The trust is in Vercel Proxy's calculation, not in the header's name.
+       * A platform that does not overwrite `x-real-ip`, or a front proxy that
+       * replaces that contract, invalidates this choice and requires a new
+       * single trusted header plus a deployed edge check.
        */
       ipAddress: {
-        ipAddressHeaders: ['fly-client-ip'],
+        ipAddressHeaders: ['x-real-ip'],
       },
     },
     user: {

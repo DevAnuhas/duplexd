@@ -1,11 +1,8 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import {
-  EXPECTED_TABLES,
-  applyMigrations,
-  resetAndMigrate,
-  withTestPool,
-} from './helpers/database.ts';
+import { applyMigrations as applyApplicationMigrations } from '@/db/migrate';
+
+import { EXPECTED_TABLES, withTestPool } from './helpers/database.ts';
 import { isDatabaseConfigured } from './helpers/environment.ts';
 
 /**
@@ -31,11 +28,17 @@ const describeDatabase = describe.skipIf(!isDatabaseConfigured());
 describeDatabase('migrations from an empty database', () => {
   let indexes: IndexRow[] = [];
   let tables: string[] = [];
+  let firstReport = { before: -1, after: -1, applied: -1 };
 
   beforeAll(async () => {
     // Unguarded on purpose. If DATABASE_URL is set and this fails, the run
     // fails; it never downgrades to a skip.
-    await resetAndMigrate();
+    await withTestPool(async (pool) => {
+      await pool.query('DROP SCHEMA IF EXISTS drizzle CASCADE');
+      await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
+      await pool.query('CREATE SCHEMA public');
+    });
+    firstReport = await applyApplicationMigrations();
 
     ({ indexes, tables } = await withTestPool(async (pool) => {
       const tableRows = await pool.query<{ table_name: string }>(
@@ -74,6 +77,11 @@ describeDatabase('migrations from an empty database', () => {
     });
 
     expect(applied).toBeGreaterThan(0);
+    expect(firstReport).toStrictEqual({
+      before: 0,
+      after: applied,
+      applied,
+    });
   });
 
   describe('indexes from the data model', () => {
@@ -86,7 +94,9 @@ describeDatabase('migrations from an empty database', () => {
     }
 
     it('indexes api_keys (prefix) uniquely', () => {
-      expect(definitionOf('api_keys_prefix_idx')).toMatch(/CREATE UNIQUE INDEX/i);
+      expect(definitionOf('api_keys_prefix_idx')).toMatch(
+        /CREATE UNIQUE INDEX/i,
+      );
       expect(definitionOf('api_keys_prefix_idx')).toMatch(/\(prefix\)/i);
     });
 
@@ -145,7 +155,10 @@ describeDatabase('migrations from an empty database', () => {
   it('is idempotent on a second run, with no change to the schema', async () => {
     const before = await snapshot();
 
-    await expect(applyMigrations()).resolves.toBeUndefined();
+    const second = await applyApplicationMigrations();
+
+    expect(second.applied).toBe(0);
+    expect(second.after).toBe(second.before);
 
     expect(await snapshot()).toStrictEqual(before);
   });

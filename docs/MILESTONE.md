@@ -20,14 +20,15 @@ Proceed with the decisions already recorded in `CONTEXT.md` and the tech plan. C
 
 Each is a ticket, each independently mergeable, in this order because each needs the one before.
 
-| # | Ticket | Ends when | State |
-| --- | --- | --- | --- |
-| P01 | Prune the retired engine and re-orient the docs | The repository describes the platform and the build commands are green on what remains | [#24](https://github.com/DevAnuhas/duplexd/issues/24) — done |
-| P02 | Workspace foundation: Next.js app, Better Auth, Drizzle, the schema, deploy configuration | A human signs in to an empty workspace | [#25](https://github.com/DevAnuhas/duplexd/issues/25) — done |
-| P03 | Assistants and API keys: CRUD, tool-list validation, key issue and revoke | An assistant with tools exists and a key can be minted and revoked | [#26](https://github.com/DevAnuhas/duplexd/issues/26) — done |
-| P04 | Agent runtime: the gate spike generalized, config fetched from the API, deployed to Pipecat Cloud | A real call runs against a real assistant record | [#27](https://github.com/DevAnuhas/duplexd/issues/27) |
-| P05 | Control API: `POST /v1/calls`, room handoff, call rows, agent event ingest, completion, stale-call sweep | A call placed by API key is recorded start to finish | [#28](https://github.com/DevAnuhas/duplexd/issues/28) |
-| P06 | Acceptance: a Boring Host page places a call against a real backend tool | The goal above | [#29](https://github.com/DevAnuhas/duplexd/issues/29) |
+| #       | Ticket                                                                                                   | Ends when                                                                              | State                                                               |
+| ------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| P01     | Prune the retired engine and re-orient the docs                                                          | The repository describes the platform and the build commands are green on what remains | [#24](https://github.com/DevAnuhas/duplexd/issues/24) — done        |
+| P02     | Workspace foundation: Next.js app, Better Auth, Drizzle, the schema, deploy configuration                | A human signs in to an empty workspace                                                 | [#25](https://github.com/DevAnuhas/duplexd/issues/25) — done        |
+| P03     | Assistants and API keys: CRUD, tool-list validation, key issue and revoke                                | An assistant with tools exists and a key can be minted and revoked                     | [#26](https://github.com/DevAnuhas/duplexd/issues/26) — done        |
+| P04     | Agent runtime: the gate spike generalized, config fetched from the API, deployed to Pipecat Cloud        | A real call runs against a real assistant record                                       | [#27](https://github.com/DevAnuhas/duplexd/issues/27) — done        |
+| P05     | Control API: `POST /v1/calls`, room handoff, call rows, agent event ingest, completion, stale-call sweep | A call placed by API key is recorded start to finish                                   | [#28](https://github.com/DevAnuhas/duplexd/issues/28) — done        |
+| Hosting | Vercel configuration, isolated preview migrations, external sweep                                        | The platform can be deployed without a permanent workspace process                     | [#42](https://github.com/DevAnuhas/duplexd/issues/42) — in progress |
+| P06     | Acceptance: a Boring Host page places a call against a real backend tool                                 | The goal above                                                                         | [#29](https://github.com/DevAnuhas/duplexd/issues/29)               |
 
 P04 and P05 can overlap: the agent can be exercised from the CLI before the control API exists, which is exactly how the gate spike ran.
 

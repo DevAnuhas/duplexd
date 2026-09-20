@@ -1,0 +1,23 @@
+name: Sweep stale calls
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  sweep:
+    name: sweep
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sweep stale calls
+        env:
+          CALL_SWEEP_TOKEN: ${{ secrets.CALL_SWEEP_TOKEN }}
+          WORKSPACE_URL: ${{ secrets.WORKSPACE_URL }}
+        run: >-
+          curl --fail-with-body --silent --show-error
+          --request POST
+          --header "Authorization: Bearer $CALL_SWEEP_TOKEN"
+          "$WORKSPACE_URL/v1/internal/sweep"

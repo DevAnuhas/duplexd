@@ -1,15 +1,15 @@
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import {
+  spawn,
+  spawnSync,
+  type ChildProcessWithoutNullStreams,
+} from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import {
-  ACTIVE_STALE_AFTER_MS,
-  AGENT_EVENT_TYPES,
-  SWEEP_INTERVAL_MS,
-} from '@/control/constants';
+import { ACTIVE_STALE_AFTER_MS, AGENT_EVENT_TYPES } from '@/control/constants';
 import { mintApiKey } from '@/data/api-keys';
 import { closeDb, getDb } from '@/db/client';
 import { callEvents, calls } from '@/db/schema';
@@ -23,6 +23,7 @@ import { isDatabaseConfigured } from './helpers/environment.ts';
 const describeDatabase = describe.skipIf(!isDatabaseConfigured());
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const standaloneServer = `${repositoryRoot}apps/workspace/.next/standalone/apps/workspace/server.js`;
+const SWEEP_TOKEN = 'standalone-synthetic-sweep-token';
 
 let server: ChildProcessWithoutNullStreams | undefined;
 let serverOutput = '';
@@ -35,6 +36,12 @@ beforeAll(() => {
     'BETTER_AUTH_URL',
     'ASSISTANT_SECRET_KEY',
     'PIPECAT_API_KEY',
+    'CALL_SWEEP_TOKEN',
+    'DATABASE_URL_UNPOOLED',
+    'NEON_PRODUCTION_BRANCH_ID',
+    'TEST',
+    'VITEST',
+    'VITEST_WORKER_ID',
   ]) {
     delete buildEnvironment[name];
   }
@@ -59,7 +66,9 @@ afterAll(async () => {
     ]);
     if (server.exitCode === null) {
       server.kill('SIGKILL');
-      await new Promise<void>((resolve) => server?.once('exit', () => resolve()));
+      await new Promise<void>((resolve) =>
+        server?.once('exit', () => resolve()),
+      );
     }
   }
   await closeDb();
@@ -67,11 +76,16 @@ afterAll(async () => {
 
 function productionEnvironment(port: number): NodeJS.ProcessEnv {
   return {
-    ...process.env,
     NODE_ENV: 'production',
     PORT: String(port),
     HOSTNAME: '127.0.0.1',
+    PATH: process.env.PATH,
+    DATABASE_URL: process.env.DATABASE_URL,
+    BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
     BETTER_AUTH_URL: `http://127.0.0.1:${port}`,
+    ASSISTANT_SECRET_KEY: process.env.ASSISTANT_SECRET_KEY,
+    PIPECAT_API_KEY: process.env.PIPECAT_API_KEY,
+    CALL_SWEEP_TOKEN: SWEEP_TOKEN,
   };
 }
 
@@ -94,12 +108,58 @@ async function unusedPort(): Promise<number> {
   });
 }
 
-function launch(port: number, env = productionEnvironment(port)): ChildProcessWithoutNullStreams {
+function launch(
+  port: number,
+  env = productionEnvironment(port),
+): ChildProcessWithoutNullStreams {
   return spawn(process.execPath, [standaloneServer], {
     cwd: repositoryRoot,
     env,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
+}
+
+async function stop(child: ChildProcessWithoutNullStreams): Promise<void> {
+  if (child.exitCode !== null) return;
+  child.kill('SIGTERM');
+  await Promise.race([
+    new Promise<void>((resolve) => child.once('exit', () => resolve())),
+    new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
+  ]);
+  if (child.exitCode === null) {
+    child.kill('SIGKILL');
+    await new Promise<void>((resolve) => child.once('exit', () => resolve()));
+  }
+}
+
+async function waitForHttp(port: number): Promise<void> {
+  await waitFor(
+    `server on port ${port}`,
+    async () => {
+      try {
+        await fetch(`http://127.0.0.1:${port}/`, { redirect: 'manual' });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    20_000,
+  );
+}
+
+async function routeClassStatuses(port: number): Promise<number[]> {
+  const origin = `http://127.0.0.1:${port}`;
+  const responses = await Promise.all([
+    fetch(`${origin}/`, { redirect: 'manual' }),
+    fetch(`${origin}/v1/calls`, { redirect: 'manual' }),
+    fetch(`${origin}/v1/agent/calls/missing/config`, { redirect: 'manual' }),
+    fetch(`${origin}/v1/internal/sweep`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${SWEEP_TOKEN}` },
+      redirect: 'manual',
+    }),
+  ]);
+  return responses.map((response) => response.status);
 }
 
 async function waitFor(
@@ -131,28 +191,30 @@ async function seedStandaloneCall(input: {
     input.webhookPlaintext ?? `standalone-webhook-${randomUUID()}`;
   const ciphertext = encryptSecret(webhookPlaintext);
 
-  await getDb().insert(calls).values({
-    id: callId,
-    accountId: input.accountId,
-    assistantSnapshot: {
-      assistantId: `assistant-${callId}`,
-      voice: 'marin',
-      instructions: 'Standalone synthetic instructions.',
-      accentStyle: '',
-      waitingBehavior: '',
-      backendModel: 'gpt-test-responses',
-      backendInstructions: 'Use only synthetic inputs.',
-      serverUrl: 'https://customer.example.invalid/tools',
-      serverSecretCiphertext: ciphertext,
-      tools: [],
-    },
-    agentTokenHash: hashCredential(rawToken),
-    state: input.state,
-    createdAt: input.createdAt,
-    startedAt: input.startedAt ?? null,
-    lastHeartbeatAt: input.heartbeat ?? null,
-    durationSecs: input.durationSecs ?? null,
-  });
+  await getDb()
+    .insert(calls)
+    .values({
+      id: callId,
+      accountId: input.accountId,
+      assistantSnapshot: {
+        assistantId: `assistant-${callId}`,
+        voice: 'marin',
+        instructions: 'Standalone synthetic instructions.',
+        accentStyle: '',
+        waitingBehavior: '',
+        backendModel: 'gpt-test-responses',
+        backendInstructions: 'Use only synthetic inputs.',
+        serverUrl: 'https://customer.example.invalid/tools',
+        serverSecretCiphertext: ciphertext,
+        tools: [],
+      },
+      agentTokenHash: hashCredential(rawToken),
+      state: input.state,
+      createdAt: input.createdAt,
+      startedAt: input.startedAt ?? null,
+      lastHeartbeatAt: input.heartbeat ?? null,
+      durationSecs: input.durationSecs ?? null,
+    });
 
   return { callId, rawToken, ciphertext };
 }
@@ -169,7 +231,54 @@ async function callRecord(callId: string): Promise<Record<string, unknown>> {
 }
 
 describeDatabase('standalone startup validation', () => {
-  it('fails before binding when the P05 provider key is missing', async () => {
+  it('serves all route classes when configured and is genuinely outside Better Auth test mode', async () => {
+    const port = await unusedPort();
+    const child = launch(port);
+    let output = '';
+    child.stdout.on('data', (chunk) => (output += String(chunk)));
+    child.stderr.on('data', (chunk) => (output += String(chunk)));
+    await waitForHttp(port);
+
+    expect(await routeClassStatuses(port)).toStrictEqual([307, 401, 401, 200]);
+    expect(output).toContain(
+      'Better Auth production mode verified (isTest=false)',
+    );
+    await stop(child);
+  });
+
+  it('keeps customer routes serving when only the sweep token is absent', async () => {
+    const port = await unusedPort();
+    const env = productionEnvironment(port);
+    delete env.CALL_SWEEP_TOKEN;
+    const child = launch(port, env);
+    let output = '';
+    child.stdout.on('data', (chunk) => (output += String(chunk)));
+    child.stderr.on('data', (chunk) => (output += String(chunk)));
+    await waitForHttp(port);
+
+    expect(await routeClassStatuses(port)).toStrictEqual([307, 401, 401, 401]);
+    expect(output).toContain('CALL_SWEEP_TOKEN');
+    await stop(child);
+  });
+
+  it('returns 500 on every route class for an invalid encryption key without logging its value', async () => {
+    const port = await unusedPort();
+    const env = productionEnvironment(port);
+    const canary = 'startup-canary-not-hex';
+    env.ASSISTANT_SECRET_KEY = canary;
+    const child = launch(port, env);
+    let output = '';
+    child.stdout.on('data', (chunk) => (output += String(chunk)));
+    child.stderr.on('data', (chunk) => (output += String(chunk)));
+    await waitForHttp(port);
+
+    expect(await routeClassStatuses(port)).toStrictEqual([500, 500, 500, 500]);
+    expect(output).toContain('ASSISTANT_SECRET_KEY');
+    expect(output).not.toContain(canary);
+    await stop(child);
+  });
+
+  it('returns 500 when the P05 provider key is missing', async () => {
     const port = await unusedPort();
     const env = productionEnvironment(port);
     env.PIPECAT_API_KEY = '';
@@ -177,14 +286,13 @@ describeDatabase('standalone startup validation', () => {
     let output = '';
     child.stdout.on('data', (chunk) => (output += String(chunk)));
     child.stderr.on('data', (chunk) => (output += String(chunk)));
+    await waitForHttp(port);
 
-    const exitCode = await new Promise<number | null>((resolve) => {
-      child.once('exit', resolve);
-    });
-
-    expect(exitCode).not.toBe(0);
+    expect(
+      (await fetch(`http://127.0.0.1:${port}/`, { redirect: 'manual' })).status,
+    ).toBe(500);
     expect(output).toContain('PIPECAT_API_KEY');
-    await expect(fetch(`http://127.0.0.1:${port}/`)).rejects.toThrow();
+    await stop(child);
   });
 });
 
@@ -221,31 +329,53 @@ describeDatabase('real standalone server behavior', () => {
     });
     freshCallId = fresh.callId;
     staleCallId = stale.callId;
-    await getDb().insert(callEvents).values({
-      callId: staleCallId,
-      seq: 1,
-      at: new Date(now - 180_000),
-      type: 'interruption',
-      payload: { beforeBoot: true },
-    });
+    await getDb()
+      .insert(callEvents)
+      .values({
+        callId: staleCallId,
+        seq: 1,
+        at: new Date(now - 180_000),
+        type: 'interruption',
+        payload: { beforeBoot: true },
+      });
     bootSnapshot = await callRecord(staleCallId);
 
     server = launch(port);
     server.stdout.on('data', (chunk) => (serverOutput += String(chunk)));
     server.stderr.on('data', (chunk) => (serverOutput += String(chunk)));
-    await waitFor('the standalone server to report ready', () => /Ready/i.test(serverOutput), 20_000);
+    await waitFor(
+      'the standalone server to report ready',
+      () => /Ready/i.test(serverOutput),
+      20_000,
+    );
   }, 45_000);
 
-  it('changes nothing at boot, then sweeps only after the first delayed timer tick', async () => {
+  it('changes nothing at boot and sweeps only through the authenticated external endpoint', async () => {
     expect(await callRecord(staleCallId)).toStrictEqual(bootSnapshot);
     expect((await callRecord(freshCallId)).state).toBe('active');
     expect(await eventCount(staleCallId)).toBe(1);
 
-    await waitFor(
-      'the delayed sweep timer',
-      async () => (await callRecord(staleCallId)).state === 'incomplete',
-      SWEEP_INTERVAL_MS + 15_000,
+    const stalePage = await fetch(
+      `http://127.0.0.1:${port}/calls/${staleCallId}`,
+      { headers: { cookie: pageAccount.cookie }, redirect: 'manual' },
     );
+    const staleHtml = await stalePage.text();
+    expect(stalePage.status).toBe(200);
+    expect(staleHtml).toContain('incomplete');
+    expect(staleHtml).toContain('agent_lost');
+    expect(staleHtml).toContain('not recorded');
+    expect(await callRecord(staleCallId)).toStrictEqual(bootSnapshot);
+    expect(await eventCount(staleCallId)).toBe(1);
+
+    const first = await fetch(`http://127.0.0.1:${port}/v1/internal/sweep`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${SWEEP_TOKEN}` },
+    });
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({
+      incomplete: expect.any(Number),
+      failed: expect.any(Number),
+    });
 
     expect(await callRecord(staleCallId)).toMatchObject({
       state: 'incomplete',
@@ -254,7 +384,68 @@ describeDatabase('real standalone server behavior', () => {
     });
     expect((await callRecord(freshCallId)).state).toBe('active');
     expect(await eventCount(staleCallId)).toBe(2);
-  }, SWEEP_INTERVAL_MS + 20_000);
+
+    const second = await fetch(`http://127.0.0.1:${port}/v1/internal/sweep`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${SWEEP_TOKEN}` },
+    });
+    expect(second.status).toBe(200);
+    expect(await second.json()).toMatchObject({
+      incomplete: expect.any(Number),
+      failed: expect.any(Number),
+    });
+    expect(await callRecord(staleCallId)).toMatchObject({
+      state: 'incomplete',
+      ended_reason: 'agent_lost',
+    });
+    expect(await eventCount(staleCallId)).toBe(2);
+
+    const get = await fetch(`http://127.0.0.1:${port}/v1/internal/sweep`);
+    expect(get.status).toBe(405);
+  });
+
+  it('uses x-real-ip buckets and ignores every forgeable fallback header', async () => {
+    const origin = `http://127.0.0.1:${port}`;
+    const ipA = '203.0.113.10';
+    const ipB = '203.0.113.11';
+
+    async function signup(
+      ip: string,
+      forged: Record<string, string> = {},
+    ): Promise<Response> {
+      const email = `rate-${randomUUID()}@example.invalid`;
+      return fetch(`${origin}/api/auth/sign-up/email`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          origin,
+          'x-real-ip': ip,
+          ...forged,
+        },
+        body: JSON.stringify({
+          email,
+          name: email,
+          password: `Rate-limit-${randomUUID()}!`,
+        }),
+      });
+    }
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      expect((await signup(ipA)).status).toBe(200);
+    }
+    expect((await signup(ipA)).status).toBe(429);
+
+    expect((await signup(ipB)).status).toBe(200);
+
+    for (const header of [
+      'x-forwarded-for',
+      'x-vercel-forwarded-for',
+      'fly-client-ip',
+    ]) {
+      expect((await signup(ipB, { [header]: ipA })).status).toBe(200);
+      expect((await signup(ipA, { [header]: ipB })).status).toBe(429);
+    }
+  }, 60_000);
 
   it('runs the real Python PlatformClient through config, all events, and completion', async () => {
     const transcriptCanary = `transcript-canary-${randomUUID()}`;
@@ -314,7 +505,9 @@ describeDatabase('real standalone server behavior', () => {
         encoding: 'utf8',
       },
     );
-    expect(python.status, `real Python client failed: ${python.stderr}`).toBe(0);
+    expect(python.status, `real Python client failed: ${python.stderr}`).toBe(
+      0,
+    );
 
     expect(await callRecord(started.callId)).toMatchObject({
       state: 'ended',
@@ -335,7 +528,11 @@ describeDatabase('real standalone server behavior', () => {
   }, 60_000);
 
   it('scopes real-session pages, redirects unauthenticated requests, and renders durations', async () => {
-    const ownKey = await mintApiKey(pageAccount.accountId, 'page canary key', pageAccount.userId);
+    const ownKey = await mintApiKey(
+      pageAccount.accountId,
+      'page canary key',
+      pageAccount.userId,
+    );
     const own = await seedStandaloneCall({
       accountId: pageAccount.accountId,
       state: 'ended',

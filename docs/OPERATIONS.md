@@ -1,6 +1,6 @@
 # Operations
 
-Hosting and environments. Nothing here is deployed; this records the intended shape so the first deployment does not improvise it.
+Hosting and environments. Repository configuration exists, but the owner dashboard actions and first real deployment are still unverified. [DEPLOYMENT.md](DEPLOYMENT.md) is the canonical setup and recovery runbook.
 
 ## Local
 
@@ -12,25 +12,24 @@ Tool webhooks are called from the agent, not from the developer's machine, so a 
 
 ## Hosted
 
-**Workspace and control API: Fly.io.** A Node server rather than serverless, because the control API keeps live event streaming available later without a rewrite, because a Dockerfile deploy is simple, because regions include the EU for data residency, and because idle cost is low. [ADR 005](decisions/005-fly-hosting.md) is superseded as written — it chose Fly for the retired engine's server — but its choice survives for the app that replaces it.
+**Workspace and control API: Vercel.** Next.js pages and route handlers run as serverless functions; the live media path belongs to the Pipecat agent, so the platform has no long-lived socket that justifies a permanent server. [ADR 011](decisions/011-vercel-hosting.md) records the decision and supersedes ADR 005 for this layer.
 
 **Agent: Pipecat Cloud.** The agent image is built and deployed by `pipecat cloud deploy`, with the provider key and the platform token held in a Pipecat Cloud secret set. `min_agents = 0` at launch, with `max_agents` set as a cost guard; cold start is measured on a real call rather than paid for in advance. Self-hosted regions are available if pricing or data residency demands them.
 
-**Database: Neon.** Postgres with Drizzle migrations. A branch per preview if useful. See the local section above for what development uses.
+**Database: Neon.** Postgres with Drizzle migrations. The Neon-Managed Vercel integration gives each preview an isolated branch; production migration is staged before promotion. See [DEPLOYMENT.md](DEPLOYMENT.md).
 
-**Secrets:** Fly secrets for `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `ASSISTANT_SECRET_KEY`, and `PIPECAT_API_KEY` — the encryption key protects customers' webhook secrets at rest, while the Pipecat key starts the deployed agent. Pipecat Cloud separately holds the model/provider key used by the running agent. Never in an image, never in the repository.
+**Secrets:** Vercel environment variables hold five app-wide runtime requirements—`DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `ASSISTANT_SECRET_KEY`, and `PIPECAT_API_KEY`—plus the route-required `CALL_SWEEP_TOKEN`. Preview builds additionally require integration-injected `DATABASE_URL_UNPOOLED` and the configured `NEON_PRODUCTION_BRANCH_ID`. GitHub holds the narrowly scoped deploy, migration, and scheduler credentials listed in [DEPLOYMENT.md](DEPLOYMENT.md). Pipecat Cloud separately holds the model/provider key used by the running agent. Never in an image or repository.
 
-All five are required and none is defaulted. The server exits at boot naming any that is missing, before it binds the port, so a deploy missing one fails visibly rather than serving 500s from a machine that looks healthy. `BETTER_AUTH_URL` is the public origin, never derived from the request, because behind a proxy the `Host` header would decide what the deployment thinks it is.
+The five app-wide variables are required and none is defaulted. Serverless registration throws when one is missing, so every affected function invocation fails with 500 and the platform logs name the missing variable; there is no permanent application port to release. `CALL_SWEEP_TOKEN` is checked only by the sweep route: absence produces a uniform 401 and a server-side configuration log while unrelated routes keep serving. `BETTER_AUTH_URL` is the public origin, never derived from the request, because behind a proxy the `Host` header would decide what the deployment thinks it is.
 
-**Migrations run as a Fly release command**, before any new machine serves traffic, so a deploy cannot serve a schema that has not been applied. The image deliberately does not migrate on boot: every container in a deploy would race the others.
+**Migrations never run at function startup.** Previews preflight and migrate only their isolated Neon branch during build. Production uses the repository workflow to build without a domain, migrate once, then promote. The order is structural rather than a dashboard convention.
 
 ## Environments
 
-| Environment | Source            | Purpose                                                        |
-| ----------- | ----------------- | -------------------------------------------------------------- |
-| Preview     | Each pull request | Ephemeral, synthetic tool webhooks, no real telephony          |
-| Staging     | `main`            | Shared verification with real provider access and test numbers |
-| Production  | Tagged release    | Human approval required                                        |
+| Environment | Source                                          | Purpose                                               |
+| ----------- | ----------------------------------------------- | ----------------------------------------------------- |
+| Preview     | Each pull request                               | Ephemeral, synthetic tool webhooks, no real telephony |
+| Production  | `main` through the protected GitHub environment | Real traffic after staged migration and promotion     |
 
 Preview environments never hold production keys or real phone numbers.
 
@@ -58,9 +57,9 @@ An API key cannot be recovered. The row holds a prefix and a hash, so support ca
 
 ## Call liveness and recovery
 
-The workspace arms a 30-second interval timer at server start. It does **not** sweep during boot; the first possible sweep is one full interval later. This matters because the agent runs on separate infrastructure: restarting the workspace says nothing about whether a caller is still talking.
+The workspace owns no timer. GitHub Actions calls the authenticated sweep endpoint every five minutes, and can call it manually or repeatedly without harm. GitHub may disable schedules after 60 days of repository inactivity, so read paths independently derive stale state: a late sweep delays persistence only and never makes a stale call read as active.
 
-Every accepted event batch, including an empty heartbeat batch, advances `last_heartbeat_at`. On a timer tick:
+Every accepted event batch, including an empty heartbeat batch, advances `last_heartbeat_at`. On a sweep:
 
 - an `active` call whose heartbeat is more than two minutes old becomes `incomplete` with `ended_reason = agent_lost`. The agent has not reported an authoritative duration before `/complete`, so a production-shaped incomplete call retains `duration_secs = NULL`; the sweeper does not estimate a duration from timestamps;
 - a `starting` call more than two minutes old becomes `failed` with `ended_reason = agent_never_started`.

@@ -84,9 +84,10 @@ export function requireAuthSecret(): string {
  * makes the deployment state its own identity instead of inferring it from
  * traffic.
  *
- * It is also what keeps `.env.example` honest: every variable listed there
- * fails at start when missing, so the file is a complete account of what the
- * app needs rather than a mix of requirements and suggestions.
+ * `.env.example` distinguishes the five app-wide prerequisites from values
+ * that are route-required or optional. This belongs to the app-wide set:
+ * every request needs one stable public origin, not an origin inferred from
+ * whichever `Host` header happened to arrive.
  */
 export function requireAuthUrl(): string {
   const url = process.env.BETTER_AUTH_URL;
@@ -112,4 +113,15 @@ export function requirePipecatApiKey(): string {
   }
 
   return key.trim();
+}
+
+/** High-entropy bearer credential protecting the external sweep endpoint. */
+export function readCallSweepToken(): string | null {
+  const token = process.env.CALL_SWEEP_TOKEN;
+
+  if (token === undefined || token.trim() === '') {
+    return null;
+  }
+
+  return token.trim();
 }

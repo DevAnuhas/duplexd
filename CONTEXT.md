@@ -22,25 +22,25 @@ The first customers are the user's own products, Boring Host and Dorian. They ar
 
 - **The workspace is the product surface.** A human configuring an assistant is the point, not a side observation panel. This is the sharpest reversal from the retired milestone, which explicitly disclaimed being a dashboard product.
 - **Two toolchains, one repository.** TypeScript for the workspace and control API; Python with `uv` for the agent. `spikes/pipecat-gate/` already proves a `uv` project lives inside this repo with CI green.
-- **API keys get the security care.** Two auth systems exist and only one is load-bearing: humans logging in, which just needs to work, and API keys, which are what integrating projects actually hold. Keys are hashed, scoped, rotatable and revocable.
+- **Both auth boundaries are load-bearing.** Human sessions can mint API keys and change the webhook destination that receives credentials, while API keys authorize integrating projects. Workspace auth therefore needs the same fail-closed treatment as the API-key boundary. Keys are hashed, scoped, rotatable and revocable.
 - **Honest states over tidy ones.** A call that stopped reporting is recorded as incomplete, not as finished. Nothing claims a clean ending it did not observe.
 
 ## Settled, in the tech plan
 
 Decided on 2026-09-18 and not worth reopening without new information:
 
-| Decision | Choice |
-| --- | --- |
-| Repo shape | Keep this repo. Add `agent/` (Python, `uv`) and `apps/workspace` (Next.js). The dead TypeScript packages and specs are pruned. |
-| Where the control API lives | Next.js route handlers under `/v1`, in the workspace app, deployed as a Node server. |
-| Backend model | A per-assistant field, called through the **Responses API** — reasoning models reject function tools on chat completions. |
-| Waiting behaviour | A per-assistant field folded into the voice model's instructions. The platform injects no filler of its own. |
-| Workspace auth | Better Auth on the platform's own Postgres. Not load-bearing; API keys are. |
-| API keys | 32 bytes of CSPRNG, shown once, stored as prefix plus SHA-256, compared in constant time, revocable. |
-| Webhook secrets | The customer's own secret, encrypted at rest with AES-256-GCM, decrypted only when the agent fetches config. Never returned, never logged. |
-| Tool webhook auth | HMAC-SHA256 over `"<t>." + raw body`, 300 s tolerance, per-assistant secret. The scheme from ADR 008 survives its contract. |
-| Database | Postgres on Neon, Drizzle for schema and migrations. |
-| Concurrency | `min_agents = 0` at launch; cold start is measured, not paid for in advance. |
+| Decision                    | Choice                                                                                                                                               |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Repo shape                  | Keep this repo. Add `agent/` (Python, `uv`) and `apps/workspace` (Next.js). The dead TypeScript packages and specs are pruned.                       |
+| Where the control API lives | Next.js route handlers under `/v1`, in the workspace app, deployed to Vercel serverless functions ([ADR 011](docs/decisions/011-vercel-hosting.md)). |
+| Backend model               | A per-assistant field, called through the **Responses API** — reasoning models reject function tools on chat completions.                            |
+| Waiting behaviour           | A per-assistant field folded into the voice model's instructions. The platform injects no filler of its own.                                         |
+| Workspace auth              | Better Auth on the platform's own Postgres. Load-bearing: a session can mint keys and redirect credentialed webhooks.                                |
+| API keys                    | 32 bytes of CSPRNG, shown once, stored as prefix plus SHA-256, compared in constant time, revocable.                                                 |
+| Webhook secrets             | The customer's own secret, encrypted at rest with AES-256-GCM, decrypted only when the agent fetches config. Never returned, never logged.           |
+| Tool webhook auth           | HMAC-SHA256 over `"<t>." + raw body`, 300 s tolerance, per-assistant secret. The scheme from ADR 008 survives its contract.                          |
+| Database                    | Postgres on Neon, Drizzle for schema and migrations.                                                                                                 |
+| Concurrency                 | `min_agents = 0` at launch; cold start is measured, not paid for in advance.                                                                         |
 
 ## Still open
 
@@ -54,7 +54,7 @@ Verify a candidate against a real compatibility check before committing to it. D
 
 ## Scope boundaries
 
-One account per signup, one assistant, browser calls only in the first milestone. Accounts are isolated from each other from the first schema — that is a security boundary, not a feature — but *multi-user* accounts need an invite flow nobody has asked for, so a signup owns exactly one account. Live call watching and a second provider are deliberately deferred so the first acceptance run stays reachable.
+One account per signup, one assistant, browser calls only in the first milestone. Accounts are isolated from each other from the first schema — that is a security boundary, not a feature — but _multi-user_ accounts need an invite flow nobody has asked for, so a signup owns exactly one account. Live call watching and a second provider are deliberately deferred so the first acceptance run stays reachable.
 
 Recording retention, outbound calling compliance, and provider region placement are unresolved. Do not imply the platform handles a customer's regulatory obligations; that stays with the customer.
 
@@ -64,4 +64,4 @@ The engine milestone is retired. Its packages, specs, and wire-contract document
 
 What exists at this commit: the documentation and decision trail, the CI workflow with its path classifier, `spikes/pipecat-gate/` — the passing gate, kept as the regression test for a future Pipecat upgrade rather than as dead weight — and `apps/workspace`, the Next.js app.
 
-The workspace app covers signing in, assistants and API keys: an assistant can be created and edited with its voice, instructions, tools and a webhook secret that is encrypted at rest and never readable afterwards, and a key can be minted, shown once, and revoked. **There is no control API and no agent yet**, so no call has been placed and nothing is deployed. The current build target and its acceptance evidence are in [the milestone](docs/MILESTONE.md).
+The workspace, assistants, API keys, `/v1` control API, call history, and Python Pipecat agent are implemented and proven locally against the real database/provider seams available to the repository. Vercel/Neon configuration and an external sweep now exist in the tree, but dashboard setup and the first deployed preview/production run are still blocked owner actions. No production deployment or first-customer acceptance call has been claimed. The current build target and its acceptance evidence are in [the milestone](docs/MILESTONE.md).

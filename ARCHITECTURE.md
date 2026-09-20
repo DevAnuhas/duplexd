@@ -1,20 +1,16 @@
 # Architecture
 
-Target boundaries. Most of this describes the system as it should exist once the platform milestone lands, not what exists today — `CONTEXT.md` owns status. Every section that describes machinery is marked *Planned* where it is not yet built; the two that state trust rules and what would reopen the design are not marked, because they are constraints on whatever gets built rather than claims about what exists. What exists at this commit is the decision trail, the CI workflow, the Pipecat gate spike, and `apps/workspace` — sign-in, assistants, and API keys. There is no control API and no agent, so no call has been placed.
+Current boundaries. The workspace, control API, database schema, and Pipecat agent are implemented and proven locally. Vercel/Neon repository configuration exists, but the owner dashboard setup and first internet deployment remain blocked; `CONTEXT.md` owns current status.
 
 ## The shape in one paragraph
-
-*Partly built. This is the system P02 through P05 build, described in the present tense for readability. The workspace half runs — an assistant with its tools and webhook secret can be created and edited, and a key minted and revoked. Everything from "asks the control API to start a call" onwards is planned: there is no control API, no agent, and no call has been placed.*
 
 A project holds an API key and asks the control API to start a call against one of its assistants. The control API verifies the key, loads the assistant, writes a call row, and asks Pipecat Cloud to spawn an agent. The agent fetches the assistant's full record back from the control API over a short-lived token, opens a session with the voice model carrying instructions and no tools, and runs the call. When the voice model needs something done, a backend text model — owned by the platform, holding the assistant's tools — picks a tool and calls the customer's webhook with a signed request. The result is spoken back while the caller keeps talking. The agent reports transcript and tool events to the control API as it goes, and reports completion at the end.
 
 ## Components
 
-*Partly built. `apps/workspace` exists, with its assistants and keys interfaces and the Neon Postgres behind it. Its calls UI, the `/v1` control API route handlers, the agent and Pipecat Cloud do not.*
-
 ```
                         ┌──────────────────────────────────────────┐
-  the user's team ──────┤ apps/workspace  (Next.js, Node server)    │
+  the user's team ──────┤ apps/workspace  (Next.js on Vercel)       │
   (browser)             │                                          │
                         │   workspace UI: assistants, keys, calls   │
   Boring Host, Dorian ──┤   control API:  /v1 route handlers        ├──── Postgres (Neon)
@@ -32,16 +28,14 @@ A project holds an API key and asks the control API to start a call against one 
 
 ### `apps/workspace` — workspace and control API
 
-One Next.js app, deployed as a Node server rather than serverless. It holds two surfaces that share a database client and an auth layer:
+One Next.js app, deployed to Vercel serverless functions. It holds two surfaces that share a database client and an auth layer:
 
 - **Workspace**, for humans: sign in, create and edit assistants, mint and revoke API keys, browse calls, transcripts, and usage. Login is Better Auth against the platform's own Postgres.
 - **Control API**, for machines: route handlers under `/v1`. Start a call against an assistant with an API key, receive events, read per-key records and metering.
 
-They are one deploy because the control API checks a key, loads a record, calls one upstream, and writes rows — a second service would buy two deploys and cross-service auth for no benefit at this size. A Node server rather than serverless keeps live event streaming available later without a rewrite. Recorded in the tech plan's decision table.
+They are one deploy because the control API checks a key, loads a record, calls one upstream, and writes rows — a second service would buy two deploys and cross-service auth for no benefit at this size. Live media and long-lived connections belong to the Pipecat agent, so the platform request layer has no server-lifetime requirement. [ADR 011](docs/decisions/011-vercel-hosting.md) records the hosting decision.
 
 ### `agent/` — the Pipecat agent
-
-*Lands in P04. Does not exist at this commit; `spikes/pipecat-gate/` is the working precedent.*
 
 One data-driven agent image, not one image per assistant. Per call it loads the assistant record and builds the pipeline: the voice model in client delegation, a backend text model through OpenAI's Responses API holding the assistant's tools, and each tool a signed webhook call to the assistant's server URL.
 
@@ -50,8 +44,6 @@ A Python `uv` project outside the pnpm workspace, following the layout `spikes/p
 The backend model is called through the **Responses API**, not chat completions. Current reasoning models reject function tools on chat completions with a 400, and Pipecat's backend worker turns that error into an empty answer — the gate spike failed exactly this way before the fix.
 
 ## Lifecycle of one call
-
-*Planned. The provider half — delegate, keep talking, relay — is the part the gate spike already proved.*
 
 ```mermaid
 sequenceDiagram
@@ -99,7 +91,7 @@ Four parties, and the whole design is about keeping authority where it belongs.
 
 ## Persistence
 
-*The schema exists and is applied by committed migrations. The tables below are real; the code that reads most of them is not written yet.*
+_The schema and its read/write paths exist and are applied by committed migrations._
 
 Postgres on Neon, through Drizzle, with migrations generated and committed. Everything is owned by an account; there is no global object. The tables are accounts and users, API keys, assistants, calls, and call events.
 
@@ -107,7 +99,7 @@ Three rules in that schema are decisions rather than detail:
 
 - **A key is stored as a prefix plus a SHA-256 hash**, never the key itself. It is shown once at creation and is not recoverable afterwards. Lookup is by prefix, then a constant-time hash comparison. Revocation is a soft delete, so a revoked key's calls stay attributable.
 - **A call carries a snapshot of the assistant it ran against.** Editing an assistant tomorrow must not silently rewrite what yesterday's call did; the transcript would stop matching the instructions that produced it.
-- **Call states are honest.** `ended` is written only by the agent reporting completion. A call whose container died is `incomplete` with its last known duration, written by a sweeper, and the workspace says so rather than showing a tidy record of something that never happened. This is the one idea from the retired engine worth carrying forward intact.
+- **Call states are honest.** `ended` is written only by the agent reporting completion. Read paths derive a stale active call as `incomplete` immediately; an authenticated external sweep persists that observation later. Scheduler delay therefore postpones persistence, not truth in the UI or API.
 
 Audio is not stored, and neither is the raw provider event stream: one is a recording feature nobody has asked for and a compliance surface, the other is debugging noise that would dwarf the useful rows.
 

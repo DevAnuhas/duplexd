@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
-import { and, desc, eq, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 
 import {
-  ACTIVE_STALE_AFTER_MS,
   AGENT_SEQUENCE_LIMIT,
   CALL_RATE_LIMIT,
   CALL_RATE_WINDOW_MS,
@@ -11,10 +10,10 @@ import {
   FUNCTION_CALL_TIMEOUT_SECS,
   PLATFORM_CORRECTION_SEQUENCE,
   PLATFORM_SWEEP_SEQUENCE,
-  STARTING_STALE_AFTER_MS,
   WEBHOOK_TIMEOUT_SECS,
   type AgentEndReason,
 } from '@/control/constants';
+import { deriveStaleTransition, staleCutoffs } from '@/control/staleness';
 import {
   getAssistantRuntimeSourceForAccount,
   type AssistantRuntimeSource,
@@ -102,13 +101,16 @@ const publicCallColumns = {
   lastHeartbeatAt: calls.lastHeartbeatAt,
 } as const;
 
-function publicCall(row: PublicCallRow): PublicCall {
+function publicCall(row: PublicCallRow, now = new Date()): PublicCall {
+  const transition = deriveStaleTransition(row, now);
+  const projected = transition === null ? row : { ...row, ...transition };
+
   return {
-    ...row,
-    createdAt: row.createdAt.toISOString(),
-    startedAt: row.startedAt?.toISOString() ?? null,
-    endedAt: row.endedAt?.toISOString() ?? null,
-    lastHeartbeatAt: row.lastHeartbeatAt?.toISOString() ?? null,
+    ...projected,
+    createdAt: projected.createdAt.toISOString(),
+    startedAt: projected.startedAt?.toISOString() ?? null,
+    endedAt: projected.endedAt?.toISOString() ?? null,
+    lastHeartbeatAt: projected.lastHeartbeatAt?.toISOString() ?? null,
   };
 }
 
@@ -418,7 +420,7 @@ export async function listCallsForAccount(
 
   return {
     kind: 'ok',
-    calls: page.map(publicCall),
+    calls: page.map((row) => publicCall(row)),
     nextCursor: hasNext && last !== undefined ? encodeCursor(last) : null,
   };
 }
@@ -676,21 +678,76 @@ export async function sweepStaleCalls(now = new Date()): Promise<{
   incomplete: number;
   failed: number;
 }> {
-  const activeCutoff = new Date(now.getTime() - ACTIVE_STALE_AFTER_MS);
-  const startingCutoff = new Date(now.getTime() - STARTING_STALE_AFTER_MS);
-
   return getDb().transaction(async (tx) => {
-    const staleActive = await tx
-      .update(calls)
-      .set({
-        state: 'incomplete',
-        endedReason: 'agent_lost',
-        endedAt: now,
+    const cutoffs = staleCutoffs(now);
+    const candidates = await tx
+      .select({
+        id: calls.id,
+        state: calls.state,
+        createdAt: calls.createdAt,
+        lastHeartbeatAt: calls.lastHeartbeatAt,
       })
+      .from(calls)
       .where(
-        and(eq(calls.state, 'active'), lt(calls.lastHeartbeatAt, activeCutoff)),
+        or(
+          and(
+            eq(calls.state, 'active'),
+            lt(calls.lastHeartbeatAt, cutoffs.active),
+          ),
+          and(
+            eq(calls.state, 'starting'),
+            lt(calls.createdAt, cutoffs.starting),
+          ),
+        ),
       )
-      .returning({ id: calls.id });
+      .orderBy(calls.id);
+
+    const activeIds: string[] = [];
+    const startingIds: string[] = [];
+    let activeTransition: ReturnType<typeof deriveStaleTransition> = null;
+    let startingTransition: ReturnType<typeof deriveStaleTransition> = null;
+
+    for (const candidate of candidates) {
+      const transition = deriveStaleTransition(candidate, now);
+      if (transition === null) continue;
+      if (transition.state === 'incomplete') {
+        activeIds.push(candidate.id);
+        activeTransition = transition;
+      } else {
+        startingIds.push(candidate.id);
+        startingTransition = transition;
+      }
+    }
+
+    const staleActive =
+      activeTransition === null
+        ? []
+        : await tx
+            .update(calls)
+            .set({ ...activeTransition, endedAt: now })
+            .where(
+              and(
+                inArray(calls.id, activeIds),
+                eq(calls.state, 'active'),
+                lt(calls.lastHeartbeatAt, cutoffs.active),
+              ),
+            )
+            .returning({ id: calls.id });
+
+    const staleStarting =
+      startingTransition === null
+        ? []
+        : await tx
+            .update(calls)
+            .set({ ...startingTransition, endedAt: now })
+            .where(
+              and(
+                inArray(calls.id, startingIds),
+                eq(calls.state, 'starting'),
+                lt(calls.createdAt, cutoffs.starting),
+              ),
+            )
+            .returning({ id: calls.id });
 
     if (staleActive.length > 0) {
       await tx
@@ -706,18 +763,6 @@ export async function sweepStaleCalls(now = new Date()): Promise<{
         )
         .onConflictDoNothing({ target: [callEvents.callId, callEvents.seq] });
     }
-
-    const staleStarting = await tx
-      .update(calls)
-      .set({
-        state: 'failed',
-        endedReason: 'agent_never_started',
-        endedAt: now,
-      })
-      .where(
-        and(eq(calls.state, 'starting'), lt(calls.createdAt, startingCutoff)),
-      )
-      .returning({ id: calls.id });
 
     return { incomplete: staleActive.length, failed: staleStarting.length };
   });

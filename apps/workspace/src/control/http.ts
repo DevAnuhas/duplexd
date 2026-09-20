@@ -8,7 +8,9 @@ export type ProblemCode =
   | 'invalid_request'
   | 'invalid_agent_token'
   | 'agent_token_expired'
-  | 'call_not_found';
+  | 'call_not_found'
+  | 'invalid_sweep_token'
+  | 'sweep_failed';
 
 export function problem(
   status: number,
