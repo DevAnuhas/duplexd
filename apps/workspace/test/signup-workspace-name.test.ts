@@ -4,6 +4,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 import { closeDb } from '@/db/client';
 import { getAuth } from '@/lib/auth';
+import { WORKSPACE_NAME_MAX_LENGTH } from '@/lib/auth-schemas';
 
 import { withTestPool } from './helpers/database.ts';
 import { isDatabaseConfigured } from './helpers/environment.ts';
@@ -235,34 +236,66 @@ describeDatabase('the workspace name given at signup', () => {
   });
 
   /**
-   * **This documents current behaviour, not desired behaviour.**
+   * The cap is enforced where the value is **written**, not only where it is
+   * typed.
    *
-   * The 120-character cap on the workspace name lives only in
-   * `signUpSchema`, which is client-side validation. The hook applies no
-   * length check of its own and `accounts.name` is an unbounded `text`
-   * column, so a direct API call can name a workspace with an arbitrarily long
-   * string — and that string then renders in the sidebar and the breadcrumb of
-   * every page.
+   * This test was originally the opposite: it pinned that a direct API call
+   * could set a name of any length, because the 120 bound lived in
+   * `signUpSchema` and the rename action but not in the hook. It failed the
+   * moment that was closed, which is what it was written to do — the comment
+   * said to invert it rather than treat the failure as a regression.
    *
-   * `renameAccountAction` *does* enforce the cap server-side, so the two ways
-   * of setting the same column disagree. If that is closed — by capping in the
-   * hook — this test should be inverted to assert the rejection or the
-   * truncation, and its failure is the intended signal rather than a
-   * regression.
+   * Signup **truncates** where the rename action rejects, and the asymmetry is
+   * deliberate: an authenticated edit should be told it did nothing, while a
+   * signup has a sensible answer available and no good moment to argue.
    */
-  it('does not enforce the 120-character cap server-side', async () => {
+  it('bounds an over-long workspace name at the cap', async () => {
+    const stored = await signUpAndRead({
+      email: uniqueEmail(),
+      password: PASSWORD,
+      name: 'Alex Doe',
+      workspaceName: 'x'.repeat(500),
+    });
+
+    expect(stored.accountName).toBe('x'.repeat(WORKSPACE_NAME_MAX_LENGTH));
+  });
+
+  it('leaves a name at exactly the cap untouched', async () => {
+    const atCap = 'y'.repeat(WORKSPACE_NAME_MAX_LENGTH);
+    const stored = await signUpAndRead({
+      email: uniqueEmail(),
+      password: PASSWORD,
+      name: 'Alex Doe',
+      workspaceName: atCap,
+    });
+
+    expect(stored.accountName).toBe(atCap);
+  });
+
+  /**
+   * A name made only of invisible characters falls back like an empty one.
+   *
+   * `trim()` does not strip U+200B, so without a dedicated guard this would
+   * name the workspace something that renders as a blank sidebar on every
+   * page — the same defect that was closed for the rename action, reaching the
+   * column by its other writer.
+   */
+  it.each([
+    ['a zero-width space', '\u200B'],
+    ['a word joiner', '\u2060'],
+    ['zero-widths around ordinary spaces', ' \u200B \u2060 '],
+  ])('falls back to the email when the name is only %s', async (_label, invisible) => {
     const email = uniqueEmail();
-    const overlong = 'x'.repeat(500);
     const stored = await signUpAndRead({
       email,
       password: PASSWORD,
       name: 'Alex Doe',
-      workspaceName: overlong,
+      workspaceName: invisible,
     });
 
     expect(
       stored.accountName,
-      'the cap is now enforced at signup — invert this test, it has done its job',
-    ).toBe(overlong);
+      'an invisible workspace name was stored, so the sidebar renders blank',
+    ).toBe(email);
   });
 });

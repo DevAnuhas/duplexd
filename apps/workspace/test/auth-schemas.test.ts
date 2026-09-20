@@ -375,11 +375,22 @@ describe.each(NAME_FIELDS)(
       ['only whitespace', '   '],
       ['a tab and a newline', '\t\n'],
     ])('rejects %s, naming this field and only this field', (_label, submitted) => {
+      const issues = issuesFor(signUpSchema, signUpWith({ [field]: submitted }));
+
+      expect(issues).toContainEqual({
+        path: field,
+        message: expect.stringMatching(requiredMessage),
+      });
+
+      // Not an exact-length assertion: `workspaceName` carries both a `min(1)`
+      // and an invisible-character refine, and an empty value trips both with
+      // the same message. Harmless — React Hook Form surfaces one error per
+      // field — but it means the count is not the contract. What is the
+      // contract is that no *other* field gets blamed for this one.
       expect(
-        issuesFor(signUpSchema, signUpWith({ [field]: submitted })),
-      ).toStrictEqual([
-        { path: field, message: expect.stringMatching(requiredMessage) },
-      ]);
+        issues.every((issue) => issue.path === field),
+        'a different field was blamed for this one',
+      ).toBe(true);
     });
 
     it('rejects the field being absent entirely', () => {
