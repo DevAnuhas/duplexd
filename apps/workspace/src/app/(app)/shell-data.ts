@@ -1,8 +1,8 @@
-import { redirect } from 'next/navigation';
-import { cache } from 'react';
+import { redirect } from "next/navigation"
+import { cache } from "react"
 
-import { getShellContext, type ShellContext } from '@/data/accounts';
-import { getCurrentAccount } from '@/lib/account';
+import { getShellContext, type ShellContext } from "@/data/accounts"
+import { getCurrentAccount } from "@/lib/account"
 
 /**
  * The signed-in tenant, resolved once per request.
@@ -18,19 +18,19 @@ import { getCurrentAccount } from '@/lib/account';
  * account, so there is no branch worth giving them.
  */
 export const requireShell = cache(async (): Promise<ShellContext> => {
-  const account = await getCurrentAccount();
+  const account = await getCurrentAccount()
 
   if (account === null) {
-    redirect('/sign-in');
+    redirect("/sign-in")
   }
 
-  const shell = await getShellContext(account.accountId, account.userId);
+  const shell = await getShellContext(account.accountId, account.userId)
 
   if (shell === null) {
     // The session resolved to an account whose row is gone — a deleted tenant
     // holding a live cookie. Signed out is the honest reading.
-    redirect('/sign-in');
+    redirect("/sign-in")
   }
 
-  return shell;
-});
+  return shell
+})

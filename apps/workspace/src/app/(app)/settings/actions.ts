@@ -1,13 +1,10 @@
-'use server';
+"use server"
 
-import { revalidatePath } from 'next/cache';
+import { revalidatePath } from "next/cache"
 
-import { renameAccount } from '@/data/accounts';
-import { requireCurrentAccount } from '@/lib/account';
-import {
-  rendersAsNothing,
-  WORKSPACE_NAME_MAX_LENGTH,
-} from '@/lib/auth-schemas';
+import { renameAccount } from "@/data/accounts"
+import { requireCurrentAccount } from "@/lib/account"
+import { rendersAsNothing, WORKSPACE_NAME_MAX_LENGTH } from "@/lib/auth-schemas"
 
 /**
  * The account's own write surface.
@@ -32,18 +29,18 @@ import {
  * here at the same time as the model, not after.
  */
 
-export type RenameResult = { ok: true } | { ok: false; message: string };
+export type RenameResult = { ok: true } | { ok: false; message: string }
 
 /** Shared with the signup hook and the form schema — see `auth-schemas.ts`. */
-const MAX_NAME_LENGTH = WORKSPACE_NAME_MAX_LENGTH;
+const MAX_NAME_LENGTH = WORKSPACE_NAME_MAX_LENGTH
 
 export async function renameAccountAction(
-  formData: FormData,
+  formData: FormData
 ): Promise<RenameResult> {
-  const { accountId } = await requireCurrentAccount();
+  const { accountId } = await requireCurrentAccount()
 
-  const raw = formData.get('name');
-  const name = typeof raw === 'string' ? raw.trim() : '';
+  const raw = formData.get("name")
+  const name = typeof raw === "string" ? raw.trim() : ""
 
   /*
     `rendersAsNothing` rather than a local regex: the signup hook and the form
@@ -55,21 +52,21 @@ export async function renameAccountAction(
     did nothing.
   */
   if (rendersAsNothing(name)) {
-    return { ok: false, message: 'An organization needs a name.' };
+    return { ok: false, message: "An organization needs a name." }
   }
 
   if (name.length > MAX_NAME_LENGTH) {
     return {
       ok: false,
       message: `Keep the name under ${MAX_NAME_LENGTH} characters.`,
-    };
+    }
   }
 
-  await renameAccount(accountId, name);
+  await renameAccount(accountId, name)
 
   // The name is in the sidebar and the breadcrumb of every page, not just this
   // one, so the whole shell has to re-render rather than only `/settings`.
-  revalidatePath('/', 'layout');
+  revalidatePath("/", "layout")
 
-  return { ok: true };
+  return { ok: true }
 }

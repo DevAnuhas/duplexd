@@ -1,7 +1,7 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from "drizzle-orm"
 
-import { getDb } from '@/db/client';
-import { accounts, apiKeys, assistants, calls, users } from '@/db/schema';
+import { getDb } from "@/db/client"
+import { accounts, apiKeys, assistants, calls, users } from "@/db/schema"
 
 /**
  * Server-side data access for the account itself — the tenant's own identity,
@@ -17,14 +17,14 @@ import { accounts, apiKeys, assistants, calls, users } from '@/db/schema';
  */
 
 export type AccountProfile = {
-  id: string;
-  name: string;
-  createdAt: Date;
-};
+  id: string
+  name: string
+  createdAt: Date
+}
 
 /** The tenant's identity, for the sidebar and Settings. */
 export async function getAccountProfile(
-  accountId: string,
+  accountId: string
 ): Promise<AccountProfile | null> {
   const rows = await getDb()
     .select({
@@ -34,9 +34,9 @@ export async function getAccountProfile(
     })
     .from(accounts)
     .where(eq(accounts.id, accountId))
-    .limit(1);
+    .limit(1)
 
-  return rows[0] ?? null;
+  return rows[0] ?? null
 }
 
 /**
@@ -51,25 +51,22 @@ export async function getAccountProfile(
  */
 export async function renameAccount(
   accountId: string,
-  name: string,
+  name: string
 ): Promise<void> {
-  await getDb()
-    .update(accounts)
-    .set({ name })
-    .where(eq(accounts.id, accountId));
+  await getDb().update(accounts).set({ name }).where(eq(accounts.id, accountId))
 }
 
 export type ShellContext = {
-  account: AccountProfile;
-  userEmail: string;
-  userName: string | null;
+  account: AccountProfile
+  userEmail: string
+  userName: string | null
   counts: {
-    assistants: number;
-    apiKeys: number;
-    calls: number;
-    incompleteCalls: number;
-  };
-};
+    assistants: number
+    apiKeys: number
+    calls: number
+    incompleteCalls: number
+  }
+}
 
 /**
  * Everything the signed-in shell renders, in one round trip.
@@ -92,7 +89,7 @@ export type ShellContext = {
  */
 export async function getShellContext(
   accountId: string,
-  userId: string,
+  userId: string
 ): Promise<ShellContext | null> {
   const rows = await getDb()
     .select({
@@ -131,15 +128,15 @@ export async function getShellContext(
     .from(accounts)
     .innerJoin(
       users,
-      and(eq(users.id, userId), eq(users.accountId, accounts.id)),
+      and(eq(users.id, userId), eq(users.accountId, accounts.id))
     )
     .where(eq(accounts.id, accountId))
-    .limit(1);
+    .limit(1)
 
-  const row = rows[0];
+  const row = rows[0]
 
   if (row === undefined) {
-    return null;
+    return null
   }
 
   return {
@@ -152,15 +149,15 @@ export async function getShellContext(
       calls: row.calls,
       incompleteCalls: row.incompleteCalls,
     },
-  };
+  }
 }
 
 export type AccountMember = {
-  id: string;
-  email: string;
-  name: string | null;
-  createdAt: Date;
-};
+  id: string
+  email: string
+  name: string | null
+  createdAt: Date
+}
 
 /**
  * Everyone in the account.
@@ -171,7 +168,7 @@ export type AccountMember = {
  * day a membership model exists.
  */
 export async function listAccountMembers(
-  accountId: string,
+  accountId: string
 ): Promise<AccountMember[]> {
   return getDb()
     .select({
@@ -182,5 +179,5 @@ export async function listAccountMembers(
     })
     .from(users)
     .where(eq(users.accountId, accountId))
-    .orderBy(users.createdAt);
+    .orderBy(users.createdAt)
 }

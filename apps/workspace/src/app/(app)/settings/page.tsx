@@ -1,11 +1,11 @@
-import { CopyButton } from '@/components/copy-button';
+import { CopyButton } from "@/components/copy-button"
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
+} from "@/components/ui/card"
 import {
   Table,
   TableBody,
@@ -13,20 +13,20 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table';
-import { listAccountMembers } from '@/data/accounts';
+} from "@/components/ui/table"
+import { listAccountMembers } from "@/data/accounts"
 
-import { requireShell } from '../shell-data';
-import { RenameForm } from './rename-form';
+import { requireShell } from "../shell-data"
+import { RenameForm } from "./rename-form"
 
 /** `18 Sep 2026` — unambiguous between `09/18` and `18/09` readers. */
 function day(value: Date): string {
-  return new Intl.DateTimeFormat('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-    timeZone: 'UTC',
-  }).format(value);
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(value)
 }
 
 /**
@@ -45,11 +45,11 @@ function day(value: Date): string {
  * around a genuinely slow read with no interactive descendants; it is
  * interactivity behind a boundary that breaks.
  */
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic"
 
 export default async function SettingsPage() {
-  const { account } = await requireShell();
-  const members = await listAccountMembers(account.id);
+  const { account } = await requireShell()
+  const members = await listAccountMembers(account.id)
 
   return (
     <div className="space-y-6">
@@ -90,7 +90,7 @@ export default async function SettingsPage() {
             no space in it, so inside the card's padding it is wider than the
             viewport and would scroll the whole page sideways.
           */}
-          <code className="bg-muted min-w-0 break-all rounded px-2 py-1 text-sm tabular-nums">
+          <code className="min-w-0 rounded bg-muted px-2 py-1 text-sm break-all tabular-nums">
             {account.id}
           </code>
           <CopyButton value={account.id} label="Copy ID" />
@@ -132,7 +132,7 @@ export default async function SettingsPage() {
                   */}
                   <TableCell className="text-muted-foreground">
                     {member.name === null || member.name === member.email
-                      ? '—'
+                      ? "—"
                       : member.name}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
@@ -151,11 +151,11 @@ export default async function SettingsPage() {
             sentence is the honest version — it turns a thin page into a stated
             roadmap, which is the difference between a gap and a lie.
           */}
-          <p className="text-muted-foreground text-sm">
+          <p className="text-sm text-muted-foreground">
             Single-user workspace. Teammate access is not available yet.
           </p>
         </CardContent>
       </Card>
     </div>
-  );
+  )
 }

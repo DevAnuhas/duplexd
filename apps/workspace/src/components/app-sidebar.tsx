@@ -1,17 +1,17 @@
-'use client';
+"use client"
 
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import Link from "next/link"
+import { usePathname } from "next/navigation"
 import {
   Gear as Settings,
   Key as KeyRound,
   Phone as PhoneCall,
   SquaresFour as LayoutGrid,
   Waveform,
-} from '@phosphor-icons/react';
-import type { ComponentProps } from 'react';
+} from "@phosphor-icons/react"
+import type { ComponentProps } from "react"
 
-import { NavUser } from '@/components/nav-user';
+import { NavUser } from "@/components/nav-user"
 import {
   Sidebar,
   SidebarContent,
@@ -24,7 +24,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
-} from '@/components/ui/sidebar';
+} from "@/components/ui/sidebar"
 
 /**
  * The tenant's navigation.
@@ -45,13 +45,13 @@ import {
  */
 
 type NavItem = {
-  href: string;
-  label: string;
-  icon: typeof Waveform;
-  count?: number;
-};
+  href: string
+  label: string
+  icon: typeof Waveform
+  count?: number
+}
 
-export type AccountSummary = { id: string; name: string };
+export type AccountSummary = { id: string; name: string }
 
 export function AppSidebar({
   account,
@@ -60,15 +60,15 @@ export function AppSidebar({
   counts,
   ...props
 }: {
-  account: AccountSummary;
-  userEmail: string;
-  userName: string | null;
-  counts: { assistants: number; apiKeys: number; calls: number };
+  account: AccountSummary
+  userEmail: string
+  userName: string | null
+  counts: { assistants: number; apiKeys: number; calls: number }
 } & ComponentProps<typeof Sidebar>) {
-  const pathname = usePathname();
+  const pathname = usePathname()
 
   const build: NavItem[] = [
-    { href: '/', label: 'Overview', icon: LayoutGrid },
+    { href: "/", label: "Overview", icon: LayoutGrid },
     /*
       Waveform, not a robot head: these are voice agents, and the head reads as
       chatbot. It also stays legible beside `Phone` at 16px, which `Headset`
@@ -76,18 +76,18 @@ export function AppSidebar({
       owns the handset.
     */
     {
-      href: '/assistants',
-      label: 'Assistants',
+      href: "/assistants",
+      label: "Assistants",
       icon: Waveform,
       count: counts.assistants,
     },
-  ];
+  ]
   const configure: NavItem[] = [
-    { href: '/keys', label: 'API keys', icon: KeyRound, count: counts.apiKeys },
-  ];
+    { href: "/keys", label: "API keys", icon: KeyRound, count: counts.apiKeys },
+  ]
   const observe: NavItem[] = [
-    { href: '/calls', label: 'Calls', icon: PhoneCall, count: counts.calls },
-  ];
+    { href: "/calls", label: "Calls", icon: PhoneCall, count: counts.calls },
+  ]
 
   /**
    * `/assistants/new` must light up `Assistants`, so this is a prefix match.
@@ -96,9 +96,9 @@ export function AppSidebar({
    * a slash, so a prefix test would light up Overview on every page.
    */
   const isActive = (href: string): boolean =>
-    href === '/'
-      ? pathname === '/'
-      : pathname === href || pathname.startsWith(`${href}/`);
+    href === "/"
+      ? pathname === "/"
+      : pathname === href || pathname.startsWith(`${href}/`)
 
   const renderItems = (items: NavItem[]) =>
     items.map((item) => (
@@ -123,7 +123,7 @@ export function AppSidebar({
           <SidebarMenuBadge>{item.count}</SidebarMenuBadge>
         )}
       </SidebarMenuItem>
-    ));
+    ))
 
   return (
     <Sidebar collapsible="icon" {...props}>
@@ -140,7 +140,7 @@ export function AppSidebar({
             */}
             <SidebarMenuButton size="lg" asChild tooltip={account.name}>
               <Link href="/settings">
-                <div className="bg-primary text-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg text-xs font-semibold">
+                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-xs font-semibold text-primary-foreground">
                   {account.name.slice(0, 2).toUpperCase()}
                 </div>
                 <div className="grid flex-1 text-left text-sm leading-tight">
@@ -151,7 +151,7 @@ export function AppSidebar({
                     line, and showing it proves the boundary to a sceptical
                     tenant: two browsers, two ids.
                   */}
-                  <span className="text-muted-foreground truncate text-xs tabular-nums">
+                  <span className="truncate text-xs text-muted-foreground tabular-nums">
                     acct {account.id.slice(0, 8)}
                   </span>
                 </div>
@@ -182,7 +182,7 @@ export function AppSidebar({
           <SidebarMenuItem>
             <SidebarMenuButton
               asChild
-              isActive={isActive('/settings')}
+              isActive={isActive("/settings")}
               tooltip="Settings"
               className="h-11"
             >
@@ -198,5 +198,5 @@ export function AppSidebar({
 
       <SidebarRail />
     </Sidebar>
-  );
+  )
 }

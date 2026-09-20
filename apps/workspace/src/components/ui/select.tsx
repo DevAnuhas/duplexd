@@ -2,7 +2,11 @@
 
 import * as React from "react"
 import { cn } from "cn"
-import { CaretDown as ChevronDownIcon, CaretUp as ChevronUpIcon, Check as CheckIcon } from '@phosphor-icons/react';
+import {
+  CaretDown as ChevronDownIcon,
+  CaretUp as ChevronUpIcon,
+  Check as CheckIcon,
+} from "@phosphor-icons/react"
 import { Select as SelectPrimitive } from "radix-ui"
 
 function Select({
@@ -146,10 +150,7 @@ function SelectScrollUpButton({
   return (
     <SelectPrimitive.ScrollUpButton
       data-slot="select-scroll-up-button"
-      className={cn(
-        "flex items-center justify-center py-1",
-        className
-      )}
+      className={cn("flex items-center justify-center py-1", className)}
       {...props}
     >
       <ChevronUpIcon className="size-4" />
@@ -164,10 +165,7 @@ function SelectScrollDownButton({
   return (
     <SelectPrimitive.ScrollDownButton
       data-slot="select-scroll-down-button"
-      className={cn(
-        "flex items-center justify-center py-1",
-        className
-      )}
+      className={cn("flex items-center justify-center py-1", className)}
       {...props}
     >
       <ChevronDownIcon className="size-4" />

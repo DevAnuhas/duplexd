@@ -1,8 +1,8 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID } from "node:crypto"
 
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 
-import type { SignedUpUser } from './helpers/auth.ts';
+import type { SignedUpUser } from "./helpers/auth.ts"
 
 /**
  * Account scoping on every surface that **writes**, plus the API key surfaces.
@@ -26,17 +26,17 @@ import type { SignedUpUser } from './helpers/auth.ts';
  * rows and the sessions are the ones the application actually produces.
  */
 
-const requestHeaders = { current: new Headers() };
+const requestHeaders = { current: new Headers() }
 
-vi.mock('next/headers', () => ({
+vi.mock("next/headers", () => ({
   headers: async () => requestHeaders.current,
-}));
+}))
 
-vi.mock('next/cache', () => ({
+vi.mock("next/cache", () => ({
   revalidatePath: () => undefined,
-}));
+}))
 
-const { closeDb } = await import('@/db/client');
+const { closeDb } = await import("@/db/client")
 const {
   archiveAssistantAction,
   createAssistantAction,
@@ -44,128 +44,130 @@ const {
   mintApiKeyAction,
   revokeApiKeyAction,
   updateAssistantAction,
-} = await import('@/app/actions');
+} = await import("@/app/actions")
 const {
   archiveAssistantForAccount,
   createAssistant,
   getAssistantForAccount,
   listAssistantsForAccount,
   updateAssistantForAccount,
-} = await import('@/data/assistants');
-const {
-  listApiKeysForAccount,
-  mintApiKey,
-  revokeApiKey,
-  verifyApiKey,
-} = await import('@/data/api-keys');
-const { signUpNewAccount } = await import('./helpers/auth.ts');
-const { isDatabaseConfigured } = await import('./helpers/environment.ts');
+} = await import("@/data/assistants")
+const { listApiKeysForAccount, mintApiKey, revokeApiKey, verifyApiKey } =
+  await import("@/data/api-keys")
+const { signUpNewAccount } = await import("./helpers/auth.ts")
+const { isDatabaseConfigured } = await import("./helpers/environment.ts")
 
 function formDataFor(fields: Record<string, string>): FormData {
-  const formData = new FormData();
+  const formData = new FormData()
 
   for (const [key, value] of Object.entries(fields)) {
-    formData.set(key, value);
+    formData.set(key, value)
   }
 
-  return formData;
+  return formData
 }
 
-const describeDatabase = describe.skipIf(!isDatabaseConfigured());
+const describeDatabase = describe.skipIf(!isDatabaseConfigured())
 
 afterAll(async () => {
-  await closeDb();
-});
+  await closeDb()
+})
 
-describeDatabase('two accounts, one another’s assistants', () => {
-  let owner: SignedUpUser;
-  let intruder: SignedUpUser;
-  let ownedId = '';
-  let intruderOwnId = '';
-  const ownedName = `owned ${randomUUID()}`;
+describeDatabase("two accounts, one another’s assistants", () => {
+  let owner: SignedUpUser
+  let intruder: SignedUpUser
+  let ownedId = ""
+  let intruderOwnId = ""
+  const ownedName = `owned ${randomUUID()}`
 
   beforeAll(async () => {
-    owner = await signUpNewAccount();
-    intruder = await signUpNewAccount();
+    owner = await signUpNewAccount()
+    intruder = await signUpNewAccount()
 
     const owned = await createAssistant(owner.accountId, {
       name: ownedName,
-      instructions: 'Belongs to the owner.',
-      serverUrl: 'https://owner.example.invalid/hook',
+      instructions: "Belongs to the owner.",
+      serverUrl: "https://owner.example.invalid/hook",
       serverSecret: `canary-owner-secret-${randomUUID()}`,
-    });
+    })
 
-    ownedId = String(owned.id);
+    ownedId = String(owned.id)
 
     const theirs = await createAssistant(intruder.accountId, {
       name: `intruder own ${randomUUID()}`,
-      instructions: 'Belongs to the intruder.',
-    });
+      instructions: "Belongs to the intruder.",
+    })
 
-    intruderOwnId = String(theirs.id);
-  });
+    intruderOwnId = String(theirs.id)
+  })
 
   /** Without this, every assertion below could be passing on an empty database. */
-  it('seeded rows each account can read (control)', async () => {
-    expect(owner.accountId).not.toBe(intruder.accountId);
-    expect(await getAssistantForAccount(owner.accountId, ownedId)).not.toBeNull();
+  it("seeded rows each account can read (control)", async () => {
+    expect(owner.accountId).not.toBe(intruder.accountId)
     expect(
-      await getAssistantForAccount(intruder.accountId, intruderOwnId),
-    ).not.toBeNull();
-  });
+      await getAssistantForAccount(owner.accountId, ownedId)
+    ).not.toBeNull()
+    expect(
+      await getAssistantForAccount(intruder.accountId, intruderOwnId)
+    ).not.toBeNull()
+  })
 
-  describe('through the data functions', () => {
-    it('cannot update the owner’s assistant, and does not change it', async () => {
-      const before = await getAssistantForAccount(owner.accountId, ownedId);
+  describe("through the data functions", () => {
+    it("cannot update the owner’s assistant, and does not change it", async () => {
+      const before = await getAssistantForAccount(owner.accountId, ownedId)
 
       expect(
         await updateAssistantForAccount(intruder.accountId, ownedId, {
-          name: 'renamed by the intruder',
-          instructions: 'Rewritten by the intruder.',
-        }),
-      ).toBeNull();
+          name: "renamed by the intruder",
+          instructions: "Rewritten by the intruder.",
+        })
+      ).toBeNull()
 
-      const after = await getAssistantForAccount(owner.accountId, ownedId);
+      const after = await getAssistantForAccount(owner.accountId, ownedId)
 
-      expect(after?.name).toBe(ownedName);
-      expect(after?.instructions).toBe(before?.instructions);
-    });
+      expect(after?.name).toBe(ownedName)
+      expect(after?.instructions).toBe(before?.instructions)
+    })
 
-    it('can update its own (control)', async () => {
-      const renamed = `intruder renamed ${randomUUID()}`;
+    it("can update its own (control)", async () => {
+      const renamed = `intruder renamed ${randomUUID()}`
 
       expect(
         await updateAssistantForAccount(intruder.accountId, intruderOwnId, {
           name: renamed,
-        }),
-      ).not.toBeNull();
+        })
+      ).not.toBeNull()
 
       expect(
-        (await getAssistantForAccount(intruder.accountId, intruderOwnId))?.name,
-      ).toBe(renamed);
-    });
+        (await getAssistantForAccount(intruder.accountId, intruderOwnId))?.name
+      ).toBe(renamed)
+    })
 
-    it('cannot archive the owner’s assistant, and it stays readable', async () => {
-      expect(await archiveAssistantForAccount(intruder.accountId, ownedId)).toBe(false);
+    it("cannot archive the owner’s assistant, and it stays readable", async () => {
+      expect(
+        await archiveAssistantForAccount(intruder.accountId, ownedId)
+      ).toBe(false)
 
       expect(
         await getAssistantForAccount(owner.accountId, ownedId),
-        'the intruder archived the owner’s assistant',
-      ).not.toBeNull();
+        "the intruder archived the owner’s assistant"
+      ).not.toBeNull()
       expect(
-        (await listAssistantsForAccount(owner.accountId)).map((row) => String(row.id)),
-      ).toContain(ownedId);
-    });
+        (await listAssistantsForAccount(owner.accountId)).map((row) =>
+          String(row.id)
+        )
+      ).toContain(ownedId)
+    })
 
-    it('lists none of the owner’s assistants', async () => {
-      const listed = (await listAssistantsForAccount(intruder.accountId)).map((row) =>
-        String(row.id),
-      );
+    it("lists none of the owner’s assistants", async () => {
+      const listed = (await listAssistantsForAccount(intruder.accountId)).map(
+        (row) => String(row.id)
+      )
 
-      expect(listed).toContain(intruderOwnId);
-      expect(listed).not.toContain(ownedId);
-    });
-  });
+      expect(listed).toContain(intruderOwnId)
+      expect(listed).not.toContain(ownedId)
+    })
+  })
 
   /**
    * The same attempts through the real server actions, acting as the intruder
@@ -173,174 +175,188 @@ describeDatabase('two accounts, one another’s assistants', () => {
    * from that session and from nothing the caller can set, so this is the shape
    * a real cross-account attempt takes.
    */
-  describe('through the server actions', () => {
+  describe("through the server actions", () => {
     beforeAll(() => {
-      requestHeaders.current = new Headers({ cookie: intruder.cookie });
-    });
+      requestHeaders.current = new Headers({ cookie: intruder.cookie })
+    })
 
-    it('refuses an edit of the owner’s assistant without a 500, and changes nothing', async () => {
+    it("refuses an edit of the owner’s assistant without a 500, and changes nothing", async () => {
       const result = await updateAssistantAction(
         ownedId,
-        formDataFor({ name: 'renamed through the action' }),
-      );
+        formDataFor({ name: "renamed through the action" })
+      )
 
-      expect(result.ok).toBe(false);
+      expect(result.ok).toBe(false)
 
-      const after = await getAssistantForAccount(owner.accountId, ownedId);
+      const after = await getAssistantForAccount(owner.accountId, ownedId)
 
-      expect(after?.name).toBe(ownedName);
-    });
+      expect(after?.name).toBe(ownedName)
+    })
 
-    it('reports success for an archive it did not perform, and performs none', async () => {
+    it("reports success for an archive it did not perform, and performs none", async () => {
       // The action reports `ok` because "not yours" and "already gone" are the
       // same answer on purpose — what matters is the post-state, which is that
       // the owner's assistant is untouched.
-      await archiveAssistantAction(ownedId);
+      await archiveAssistantAction(ownedId)
 
       expect(
         await getAssistantForAccount(owner.accountId, ownedId),
-        'the intruder archived the owner’s assistant through the action',
-      ).not.toBeNull();
-    });
+        "the intruder archived the owner’s assistant through the action"
+      ).not.toBeNull()
+    })
 
-    it('creates into its own account, never the owner’s (control)', async () => {
-      const name = `intruder created ${randomUUID()}`;
+    it("creates into its own account, never the owner’s (control)", async () => {
+      const name = `intruder created ${randomUUID()}`
 
       expect(await createAssistantAction(formDataFor({ name }))).toStrictEqual({
         ok: true,
         assistantId: expect.any(String),
-      });
+      })
 
       expect(
-        (await listAssistantsForAccount(intruder.accountId)).map((row) => row.name),
-      ).toContain(name);
+        (await listAssistantsForAccount(intruder.accountId)).map(
+          (row) => row.name
+        )
+      ).toContain(name)
       expect(
-        (await listAssistantsForAccount(owner.accountId)).map((row) => row.name),
-      ).not.toContain(name);
-    });
-  });
-});
+        (await listAssistantsForAccount(owner.accountId)).map((row) => row.name)
+      ).not.toContain(name)
+    })
+  })
+})
 
 /**
  * API keys. The contract is explicit that key scoping is proved through the
  * list and revoke paths rather than through `verifyApiKey`, which takes only a
  * key and so cannot check a caller's expectation.
  */
-describeDatabase('two accounts, one another’s API keys', () => {
-  let owner: SignedUpUser;
-  let intruder: SignedUpUser;
-  let ownerKey: Awaited<ReturnType<typeof mintApiKey>>;
-  let intruderKey: Awaited<ReturnType<typeof mintApiKey>>;
+describeDatabase("two accounts, one another’s API keys", () => {
+  let owner: SignedUpUser
+  let intruder: SignedUpUser
+  let ownerKey: Awaited<ReturnType<typeof mintApiKey>>
+  let intruderKey: Awaited<ReturnType<typeof mintApiKey>>
 
   beforeAll(async () => {
-    owner = await signUpNewAccount();
-    intruder = await signUpNewAccount();
+    owner = await signUpNewAccount()
+    intruder = await signUpNewAccount()
 
-    ownerKey = await mintApiKey(owner.accountId, 'owner key', owner.userId);
-    intruderKey = await mintApiKey(intruder.accountId, 'intruder key', intruder.userId);
-  });
+    ownerKey = await mintApiKey(owner.accountId, "owner key", owner.userId)
+    intruderKey = await mintApiKey(
+      intruder.accountId,
+      "intruder key",
+      intruder.userId
+    )
+  })
 
-  it('minted keys that verify to their own accounts (control)', async () => {
+  it("minted keys that verify to their own accounts (control)", async () => {
     expect(await verifyApiKey(ownerKey.raw)).toStrictEqual({
       accountId: owner.accountId,
       keyId: ownerKey.id,
-    });
-    expect((await verifyApiKey(intruderKey.raw))?.accountId).toBe(intruder.accountId);
-  });
+    })
+    expect((await verifyApiKey(intruderKey.raw))?.accountId).toBe(
+      intruder.accountId
+    )
+  })
 
-  it('lists only its own keys', async () => {
-    const theirs = (await listApiKeysForAccount(intruder.accountId)).map((key) => key.id);
-    const ours = (await listApiKeysForAccount(owner.accountId)).map((key) => key.id);
+  it("lists only its own keys", async () => {
+    const theirs = (await listApiKeysForAccount(intruder.accountId)).map(
+      (key) => key.id
+    )
+    const ours = (await listApiKeysForAccount(owner.accountId)).map(
+      (key) => key.id
+    )
 
-    expect(theirs).toContain(intruderKey.id);
-    expect(theirs).not.toContain(ownerKey.id);
-    expect(ours).toContain(ownerKey.id);
-    expect(ours).not.toContain(intruderKey.id);
-  });
+    expect(theirs).toContain(intruderKey.id)
+    expect(theirs).not.toContain(ownerKey.id)
+    expect(ours).toContain(ownerKey.id)
+    expect(ours).not.toContain(intruderKey.id)
+  })
 
   /**
    * The post-state assertion the contract asks for by name: not "revoke
    * returned false" but "the owner's key still verifies".
    */
-  it('cannot revoke the owner’s key, which keeps verifying', async () => {
-    expect(await revokeApiKey(intruder.accountId, ownerKey.id)).toBe(false);
+  it("cannot revoke the owner’s key, which keeps verifying", async () => {
+    expect(await revokeApiKey(intruder.accountId, ownerKey.id)).toBe(false)
 
     expect(
       await verifyApiKey(ownerKey.raw),
-      'the intruder revoked the owner’s key',
-    ).toStrictEqual({ accountId: owner.accountId, keyId: ownerKey.id });
-  });
+      "the intruder revoked the owner’s key"
+    ).toStrictEqual({ accountId: owner.accountId, keyId: ownerKey.id })
+  })
 
-  it('cannot revoke it through the action either', async () => {
-    requestHeaders.current = new Headers({ cookie: intruder.cookie });
+  it("cannot revoke it through the action either", async () => {
+    requestHeaders.current = new Headers({ cookie: intruder.cookie })
 
-    await revokeApiKeyAction(ownerKey.id);
+    await revokeApiKeyAction(ownerKey.id)
 
     expect(
       await verifyApiKey(ownerKey.raw),
-      'the intruder revoked the owner’s key through the action',
-    ).not.toBeNull();
-  });
+      "the intruder revoked the owner’s key through the action"
+    ).not.toBeNull()
+  })
 
-  it('cannot delete the owner’s key through the action either', async () => {
+  it("cannot delete the owner’s key through the action either", async () => {
     const protectedKey = await mintApiKey(
       owner.accountId,
-      'owner key protected from delete',
-      owner.userId,
-    );
-    requestHeaders.current = new Headers({ cookie: intruder.cookie });
+      "owner key protected from delete",
+      owner.userId
+    )
+    requestHeaders.current = new Headers({ cookie: intruder.cookie })
 
-    const result = await deleteApiKeyAction(protectedKey.id);
+    const result = await deleteApiKeyAction(protectedKey.id)
 
     expect(result).toStrictEqual({
       ok: false,
-      issues: [{ field: 'keyId', message: 'That API key no longer exists.' }],
-    });
+      issues: [{ field: "keyId", message: "That API key no longer exists." }],
+    })
     expect(
       await verifyApiKey(protectedKey.raw),
-      'the intruder deleted the owner’s key through the action',
+      "the intruder deleted the owner’s key through the action"
     ).toStrictEqual({
       accountId: owner.accountId,
       keyId: protectedKey.id,
-    });
-  });
+    })
+  })
 
-  it('can delete its own unused key through the action (control)', async () => {
+  it("can delete its own unused key through the action (control)", async () => {
     const disposable = await mintApiKey(
       intruder.accountId,
-      'intruder disposable key',
-      intruder.userId,
-    );
-    requestHeaders.current = new Headers({ cookie: intruder.cookie });
+      "intruder disposable key",
+      intruder.userId
+    )
+    requestHeaders.current = new Headers({ cookie: intruder.cookie })
 
-    expect(await deleteApiKeyAction(disposable.id)).toStrictEqual({ ok: true });
-    expect(await verifyApiKey(disposable.raw)).toBeNull();
-    expect(await verifyApiKey(ownerKey.raw)).not.toBeNull();
-  });
+    expect(await deleteApiKeyAction(disposable.id)).toStrictEqual({ ok: true })
+    expect(await verifyApiKey(disposable.raw)).toBeNull()
+    expect(await verifyApiKey(ownerKey.raw)).not.toBeNull()
+  })
 
-  it('can revoke its own, which stops verifying (control)', async () => {
-    expect(await revokeApiKey(intruder.accountId, intruderKey.id)).toBe(true);
-    expect(await verifyApiKey(intruderKey.raw)).toBeNull();
+  it("can revoke its own, which stops verifying (control)", async () => {
+    expect(await revokeApiKey(intruder.accountId, intruderKey.id)).toBe(true)
+    expect(await verifyApiKey(intruderKey.raw)).toBeNull()
 
     // And the owner's is still alive, so the control did not simply break
     // everything.
-    expect(await verifyApiKey(ownerKey.raw)).not.toBeNull();
-  });
+    expect(await verifyApiKey(ownerKey.raw)).not.toBeNull()
+  })
 
-  it('mints into its own account, never the owner’s', async () => {
-    requestHeaders.current = new Headers({ cookie: intruder.cookie });
+  it("mints into its own account, never the owner’s", async () => {
+    requestHeaders.current = new Headers({ cookie: intruder.cookie })
 
-    const result = await mintApiKeyAction(formDataFor({ name: 'minted by the intruder' }));
+    const result = await mintApiKeyAction(
+      formDataFor({ name: "minted by the intruder" })
+    )
 
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(true)
 
-    const raw = result.ok ? result.raw : '';
+    const raw = result.ok ? result.raw : ""
 
-    expect((await verifyApiKey(raw))?.accountId).toBe(intruder.accountId);
+    expect((await verifyApiKey(raw))?.accountId).toBe(intruder.accountId)
     expect(
-      (await listApiKeysForAccount(owner.accountId)).map((key) => key.name),
-    ).not.toContain('minted by the intruder');
-  });
+      (await listApiKeysForAccount(owner.accountId)).map((key) => key.name)
+    ).not.toContain("minted by the intruder")
+  })
 
   /**
    * An empty or unknown account id must not act as a wildcard. A scoping bug
@@ -348,11 +364,11 @@ describeDatabase('two accounts, one another’s API keys', () => {
    * to every test above, which always passes a real account.
    */
   it.each([
-    ['an empty account id', ''],
-    ['an unknown account id', 'no-such-account'],
-  ])('returns no keys for %s', async (_label, accountId) => {
-    expect(await listApiKeysForAccount(accountId)).toStrictEqual([]);
-    expect(await revokeApiKey(accountId, ownerKey.id)).toBe(false);
-    expect(await verifyApiKey(ownerKey.raw)).not.toBeNull();
-  });
-});
+    ["an empty account id", ""],
+    ["an unknown account id", "no-such-account"],
+  ])("returns no keys for %s", async (_label, accountId) => {
+    expect(await listApiKeysForAccount(accountId)).toStrictEqual([])
+    expect(await revokeApiKey(accountId, ownerKey.id)).toBe(false)
+    expect(await verifyApiKey(ownerKey.raw)).not.toBeNull()
+  })
+})

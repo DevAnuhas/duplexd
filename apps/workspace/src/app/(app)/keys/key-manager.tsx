@@ -1,17 +1,17 @@
-'use client';
+"use client"
 
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
-import { Controller, useForm } from 'react-hook-form';
-import { toast } from 'sonner';
+import { zodResolver } from "@hookform/resolvers/zod"
+import { useRouter } from "next/navigation"
+import { useState, useTransition } from "react"
+import { Controller, useForm } from "react-hook-form"
+import { toast } from "sonner"
 
 import {
   deleteApiKeyAction,
   mintApiKeyAction,
   revokeApiKeyAction,
-} from '@/app/actions';
-import { CopyButton } from '@/components/copy-button';
+} from "@/app/actions"
+import { CopyButton } from "@/components/copy-button"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,9 +22,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+} from "@/components/ui/alert-dialog"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogClose,
@@ -33,15 +33,15 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
+} from "@/components/ui/dialog"
 import {
   Field,
   FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
-} from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
+} from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
 import {
   Table,
   TableBody,
@@ -49,20 +49,17 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table';
-import {
-  apiKeyNameSchema,
-  type ApiKeyNameValues,
-} from '@/lib/api-key-schemas';
+} from "@/components/ui/table"
+import { apiKeyNameSchema, type ApiKeyNameValues } from "@/lib/api-key-schemas"
 
 type KeyRow = {
-  id: string;
-  name: string;
-  prefix: string;
-  createdAt: Date;
-  lastUsedAt: Date | null;
-  revokedAt: Date | null;
-};
+  id: string
+  name: string
+  prefix: string
+  createdAt: Date
+  lastUsedAt: Date | null
+  revokedAt: Date | null
+}
 
 /**
  * Minting, revealing once, revoking, and deleting unused keys.
@@ -75,12 +72,12 @@ type KeyRow = {
  * no code path that could fetch it back.
  */
 export function KeyManager({ keys }: { keys: KeyRow[] }) {
-  const router = useRouter();
-  const [revealed, setRevealed] = useState<string | null>(null);
+  const router = useRouter()
+  const [revealed, setRevealed] = useState<string | null>(null)
   const form = useForm<ApiKeyNameValues>({
     resolver: zodResolver(apiKeyNameSchema),
-    defaultValues: { name: '' },
-  });
+    defaultValues: { name: "" },
+  })
 
   /**
    * **`router.refresh()` has to run inside a transition or the new server
@@ -99,7 +96,7 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
    * was just as inert there. Only the path with no local state change exposed
    * it — the same shape as a test that passes for the wrong reason.
    */
-  const [pending, startTransition] = useTransition();
+  const [pending, startTransition] = useTransition()
 
   /**
    * Runs a server action **inside a transition**.
@@ -117,33 +114,33 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
    */
   function withRefresh(run: () => Promise<void>) {
     startTransition(async () => {
-      await run();
-      router.refresh();
-    });
+      await run()
+      router.refresh()
+    })
   }
 
   function onMint(values: ApiKeyNameValues) {
     withRefresh(async () => {
       try {
-        const data = new FormData();
-        data.set('name', values.name);
-        const result = await mintApiKeyAction(data);
+        const data = new FormData()
+        data.set("name", values.name)
+        const result = await mintApiKeyAction(data)
 
         if (!result.ok) {
           const message =
-            result.issues[0]?.message ?? 'That key was not created.';
-          form.setError('name', { message });
-          toast.error(message);
-          return;
+            result.issues[0]?.message ?? "That key was not created."
+          form.setError("name", { message })
+          toast.error(message)
+          return
         }
 
-        setRevealed(result.raw);
-        form.reset();
-        toast.success('API key minted');
+        setRevealed(result.raw)
+        form.reset()
+        toast.success("API key minted")
       } catch {
-        toast.error('Something went wrong. No key was created — try again.');
+        toast.error("Something went wrong. No key was created — try again.")
       }
-    });
+    })
   }
 
   return (
@@ -152,7 +149,7 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
         open={revealed !== null}
         onOpenChange={(open) => {
           if (!open) {
-            setRevealed(null);
+            setRevealed(null)
           }
         }}
       >
@@ -170,7 +167,7 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
           </DialogHeader>
           {revealed !== null && (
             <div className="flex items-start gap-2 rounded-lg border bg-primary/5 p-3">
-              <span className="min-w-0 flex-1 break-all text-sm leading-relaxed">
+              <span className="min-w-0 flex-1 text-sm leading-relaxed break-all">
                 {revealed}
               </span>
               <CopyButton
@@ -223,7 +220,7 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
             aria-busy={pending}
             className="h-11 self-start"
           >
-            {pending ? 'Minting…' : 'Mint a key'}
+            {pending ? "Minting…" : "Mint a key"}
           </Button>
         </FieldGroup>
       </form>
@@ -256,7 +253,7 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
                   <TableCell>{formatDate(key.createdAt)}</TableCell>
                   <TableCell>
                     {key.lastUsedAt === null
-                      ? 'Never'
+                      ? "Never"
                       : formatDate(key.lastUsedAt)}
                   </TableCell>
                   <TableCell>
@@ -264,11 +261,11 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
                       variant="outline"
                       className={
                         key.revokedAt === null
-                          ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                          : 'bg-secondary text-secondary-foreground'
+                          ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                          : "bg-secondary text-secondary-foreground"
                       }
                     >
-                      {key.revokedAt === null ? 'Active' : 'Revoked'}
+                      {key.revokedAt === null ? "Active" : "Revoked"}
                     </Badge>
                   </TableCell>
                   <TableCell>
@@ -308,14 +305,14 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
                                 onClick={() => {
                                   withRefresh(async () => {
                                     try {
-                                      await revokeApiKeyAction(key.id);
-                                      toast.success(`${key.name} revoked`);
+                                      await revokeApiKeyAction(key.id)
+                                      toast.success(`${key.name} revoked`)
                                     } catch {
                                       toast.error(
-                                        `Could not revoke ${key.prefix}. It is still active — try again.`,
-                                      );
+                                        `Could not revoke ${key.prefix}. It is still active — try again.`
+                                      )
                                     }
-                                  });
+                                  })
                                 }}
                               >
                                 Revoke key
@@ -344,13 +341,13 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
                             <AlertDialogDescription>
                               {key.lastUsedAt !== null && (
                                 <>
-                                  {key.name} was last used on{' '}
-                                  {formatDate(key.lastUsedAt)}.{' '}
+                                  {key.name} was last used on{" "}
+                                  {formatDate(key.lastUsedAt)}.{" "}
                                 </>
                               )}
-                              This can&apos;t be undone. A key with calls attributed
-                              to it cannot be deleted; revoke it instead so call
-                              history stays attributable.
+                              This can&apos;t be undone. A key with calls
+                              attributed to it cannot be deleted; revoke it
+                              instead so call history stays attributable.
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
@@ -365,24 +362,24 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
                                 withRefresh(async () => {
                                   try {
                                     const result = await deleteApiKeyAction(
-                                      key.id,
-                                    );
+                                      key.id
+                                    )
 
                                     if (!result.ok) {
                                       toast.error(
                                         result.issues[0]?.message ??
-                                          'That key was not deleted.',
-                                      );
-                                      return;
+                                          "That key was not deleted."
+                                      )
+                                      return
                                     }
 
-                                    toast.success(`${key.name} deleted`);
+                                    toast.success(`${key.name} deleted`)
                                   } catch {
                                     toast.error(
-                                      `Could not delete ${key.prefix}. The key was not changed — try again.`,
-                                    );
+                                      `Could not delete ${key.prefix}. The key was not changed — try again.`
+                                    )
                                   }
-                                });
+                                })
                               }}
                             >
                               Delete key
@@ -399,19 +396,19 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
         </div>
       )}
     </div>
-  );
+  )
 }
 
-const dateTime = new Intl.DateTimeFormat('en', {
-  year: 'numeric',
-  month: 'short',
-  day: 'numeric',
-  hour: 'numeric',
-  minute: '2-digit',
-  timeZone: 'UTC',
-  timeZoneName: 'short',
-});
+const dateTime = new Intl.DateTimeFormat("en", {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  timeZone: "UTC",
+  timeZoneName: "short",
+})
 
 function formatDate(value: Date): string {
-  return dateTime.format(new Date(value));
+  return dateTime.format(new Date(value))
 }

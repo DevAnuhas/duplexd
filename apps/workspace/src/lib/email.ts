@@ -1,6 +1,6 @@
-import { Resend } from 'resend';
+import { Resend } from "resend"
 
-import { readEmailFrom, readResendApiKey } from '@/db/env';
+import { readEmailFrom, readResendApiKey } from "@/db/env"
 
 /**
  * Outbound email. One provider, one message, one reason to exist: password
@@ -18,7 +18,7 @@ import { readEmailFrom, readResendApiKey } from '@/db/env';
  * aggregator.
  */
 
-export type EmailResult = { ok: true } | { ok: false; reason: string };
+export type EmailResult = { ok: true } | { ok: false; reason: string }
 
 /**
  * Sends the password reset link.
@@ -32,52 +32,52 @@ export async function sendPasswordResetEmail({
   to,
   url,
 }: {
-  to: string;
-  url: string;
+  to: string
+  url: string
 }): Promise<EmailResult> {
-  const apiKey = readResendApiKey();
-  const from = readEmailFrom();
+  const apiKey = readResendApiKey()
+  const from = readEmailFrom()
 
   if (apiKey === null || from === null) {
-    return { ok: false, reason: 'email_not_configured' };
+    return { ok: false, reason: "email_not_configured" }
   }
 
   try {
     const { error } = await new Resend(apiKey).emails.send({
       from,
       to,
-      subject: 'Reset your duplexd password',
+      subject: "Reset your duplexd password",
       /*
         Plain text alongside HTML. A text part is what keeps this out of spam
         folders and readable in clients that refuse HTML — and for a message
         whose entire payload is one link, the text part is not a downgrade.
       */
       text: [
-        'Someone asked to reset the password for your duplexd account.',
-        '',
-        'Open this link to choose a new one. It expires in one hour and can',
-        'be used once:',
-        '',
+        "Someone asked to reset the password for your duplexd account.",
+        "",
+        "Open this link to choose a new one. It expires in one hour and can",
+        "be used once:",
+        "",
         url,
-        '',
-        'If this was not you, ignore this email. Your password stays as it is',
-        'and nothing about your account has changed.',
-      ].join('\n'),
+        "",
+        "If this was not you, ignore this email. Your password stays as it is",
+        "and nothing about your account has changed.",
+      ].join("\n"),
       html: [
-        '<p>Someone asked to reset the password for your duplexd account.</p>',
+        "<p>Someone asked to reset the password for your duplexd account.</p>",
         `<p><a href="${url}">Choose a new password</a></p>`,
-        '<p>The link expires in one hour and can be used once.</p>',
-        '<p>If this was not you, ignore this email. Your password stays as it',
-        'is and nothing about your account has changed.</p>',
-      ].join('\n'),
-    });
+        "<p>The link expires in one hour and can be used once.</p>",
+        "<p>If this was not you, ignore this email. Your password stays as it",
+        "is and nothing about your account has changed.</p>",
+      ].join("\n"),
+    })
 
     return error === null || error === undefined
       ? { ok: true }
-      : { ok: false, reason: error.name };
+      : { ok: false, reason: error.name }
   } catch {
     // The provider was unreachable. The caller still tells the customer the
     // same thing it always does.
-    return { ok: false, reason: 'delivery_failed' };
+    return { ok: false, reason: "delivery_failed" }
   }
 }

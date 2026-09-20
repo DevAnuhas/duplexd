@@ -1,9 +1,9 @@
-import { listApiKeysForAccount } from '@/data/api-keys';
-import { requireShell } from '../shell-data';
-import { KeyManager } from './key-manager';
+import { listApiKeysForAccount } from "@/data/api-keys"
+import { requireShell } from "../shell-data"
+import { KeyManager } from "./key-manager"
 
-export const dynamic = 'force-dynamic';
-export const fetchCache = 'force-no-store';
+export const dynamic = "force-dynamic"
+export const fetchCache = "force-no-store"
 
 /**
  * This page is explicitly request-time and uncached. A minted key is revealed
@@ -11,8 +11,8 @@ export const fetchCache = 'force-no-store';
  * cache; the server stores only its prefix and hash.
  */
 export default async function KeysPage() {
-  const { account } = await requireShell();
-  const keys = await listApiKeysForAccount(account.id);
+  const { account } = await requireShell()
+  const keys = await listApiKeysForAccount(account.id)
 
   return (
     <main className="space-y-6">
@@ -24,5 +24,5 @@ export default async function KeysPage() {
       </header>
       <KeyManager keys={keys} />
     </main>
-  );
+  )
 }

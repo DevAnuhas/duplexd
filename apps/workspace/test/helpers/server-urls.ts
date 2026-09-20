@@ -17,35 +17,53 @@
 
 export type UrlCase = {
   /** Why this case is in the matrix, printed in the test name. */
-  label: string;
-  url: string;
-};
+  label: string
+  url: string
+}
 
 /** `https:` anywhere, `http:` on loopback. Every one of these must save. */
 export const ACCEPTED_SERVER_URLS: readonly UrlCase[] = [
-  { label: 'https with a path, a port and a query', url: 'https://hooks.example.invalid:8443/inbound?event=call' },
-  { label: 'https with a path', url: 'https://example.invalid/hook' },
-  { label: 'a public IPv4 literal', url: 'https://93.184.216.34/hook' },
-  { label: 'a public IPv6 literal', url: 'https://[2606:4700:4700::1111]/hook' },
-] as const;
+  {
+    label: "https with a path, a port and a query",
+    url: "https://hooks.example.invalid:8443/inbound?event=call",
+  },
+  { label: "https with a path", url: "https://example.invalid/hook" },
+  { label: "a public IPv4 literal", url: "https://93.184.216.34/hook" },
+  {
+    label: "a public IPv6 literal",
+    url: "https://[2606:4700:4700::1111]/hook",
+  },
+] as const
 
 /** Every one of these must be refused before anything is written. */
 export const REJECTED_SERVER_URLS: readonly UrlCase[] = [
-  { label: 'non-loopback http', url: 'http://example.invalid/hook' },
-  { label: 'uppercase LOCALHOST', url: 'http://LOCALHOST/hook' },
-  { label: 'a host that merely starts with localhost', url: 'http://localhost.evil.example' },
-  { label: 'a host that merely starts with 127.0.0.1', url: 'http://127.0.0.1.nip.io' },
-  { label: 'a host that merely starts with [::1]', url: 'http://[::1].evil.example' },
-  { label: 'the unspecified address 0.0.0.0', url: 'http://0.0.0.0' },
-  { label: 'credentials in the userinfo', url: 'https://user:pw@example.invalid/hook' },
-  { label: 'a fragment', url: 'https://example.invalid/hook#fragment' },
-  { label: 'whitespace inside the path', url: 'https://example.invalid/ho ok' },
-  { label: 'leading whitespace', url: ' https://example.invalid/hook' },
-  { label: 'a relative URL', url: '/hook' },
-  { label: 'an empty authority', url: 'https://:' },
-  { label: 'a non-numeric port', url: 'https://host:abc' },
-  { label: 'an unterminated IPv6 authority', url: 'https://[garbage' },
-] as const;
+  { label: "non-loopback http", url: "http://example.invalid/hook" },
+  { label: "uppercase LOCALHOST", url: "http://LOCALHOST/hook" },
+  {
+    label: "a host that merely starts with localhost",
+    url: "http://localhost.evil.example",
+  },
+  {
+    label: "a host that merely starts with 127.0.0.1",
+    url: "http://127.0.0.1.nip.io",
+  },
+  {
+    label: "a host that merely starts with [::1]",
+    url: "http://[::1].evil.example",
+  },
+  { label: "the unspecified address 0.0.0.0", url: "http://0.0.0.0" },
+  {
+    label: "credentials in the userinfo",
+    url: "https://user:pw@example.invalid/hook",
+  },
+  { label: "a fragment", url: "https://example.invalid/hook#fragment" },
+  { label: "whitespace inside the path", url: "https://example.invalid/ho ok" },
+  { label: "leading whitespace", url: " https://example.invalid/hook" },
+  { label: "a relative URL", url: "/hook" },
+  { label: "an empty authority", url: "https://:" },
+  { label: "a non-numeric port", url: "https://host:abc" },
+  { label: "an unterminated IPv6 authority", url: "https://[garbage" },
+] as const
 
 /**
  * Both halves, for the tests that assert on the matrix as a whole.
@@ -66,7 +84,7 @@ export const REJECTED_SERVER_URLS: readonly UrlCase[] = [
 export const SERVER_URL_MATRIX: readonly (UrlCase & { accepted: boolean })[] = [
   ...ACCEPTED_SERVER_URLS.map((entry) => ({ ...entry, accepted: true })),
   ...REJECTED_SERVER_URLS.map((entry) => ({ ...entry, accepted: false })),
-];
+]
 
 /**
  * Ports, judged by the second gate rather than by the pattern.
@@ -79,19 +97,28 @@ export const SERVER_URL_MATRIX: readonly (UrlCase & { accepted: boolean })[] = [
  * binding a socket, so it is never a destination.
  */
 export const REJECTED_PORTS: readonly UrlCase[] = [
-  { label: 'one past the maximum port', url: 'http://127.0.0.1:65536/hook' },
-  { label: 'a wildly out-of-range port', url: 'https://example.invalid:99999/hook' },
-  { label: 'port zero, which parses but is not a destination', url: 'https://example.invalid:0/hook' },
-  { label: 'port zero on loopback', url: 'http://localhost:0/hook' },
-] as const;
+  { label: "one past the maximum port", url: "http://127.0.0.1:65536/hook" },
+  {
+    label: "a wildly out-of-range port",
+    url: "https://example.invalid:99999/hook",
+  },
+  {
+    label: "port zero, which parses but is not a destination",
+    url: "https://example.invalid:0/hook",
+  },
+  { label: "port zero on loopback", url: "http://localhost:0/hook" },
+] as const
 
 /** Ports that are genuine destinations and must keep saving. */
 export const ACCEPTED_PORTS: readonly UrlCase[] = [
-  { label: 'a common TLS port', url: 'https://example.invalid:8443/hook' },
-  { label: 'the lowest usable port', url: 'https://example.invalid:1/hook' },
-  { label: 'the highest usable port', url: 'https://example.invalid:65535/hook' },
-  { label: 'no port at all', url: 'https://example.invalid/hook' },
-] as const;
+  { label: "a common TLS port", url: "https://example.invalid:8443/hook" },
+  { label: "the lowest usable port", url: "https://example.invalid:1/hook" },
+  {
+    label: "the highest usable port",
+    url: "https://example.invalid:65535/hook",
+  },
+  { label: "no port at all", url: "https://example.invalid/hook" },
+] as const
 
 /**
  * Loopback, which now needs `ALLOW_LOOPBACK_SERVER_URL=true`.
@@ -110,13 +137,22 @@ export const ACCEPTED_PORTS: readonly UrlCase[] = [
  * `https://0.0.0.0` sailed through.
  */
 export const FLAG_GATED_LOOPBACK: readonly UrlCase[] = [
-  { label: 'loopback http spelled localhost', url: 'http://localhost:3000/hook' },
-  { label: 'loopback http spelled 127.0.0.1', url: 'http://127.0.0.1:3000/hook' },
-  { label: 'loopback http spelled [::1]', url: 'http://[::1]:3000/hook' },
-  { label: 'loopback http with no port or path', url: 'http://127.0.0.1' },
-  { label: 'https on localhost', url: 'https://localhost' },
-  { label: 'https on localhost with a port', url: 'https://localhost:8443/hook' },
-] as const;
+  {
+    label: "loopback http spelled localhost",
+    url: "http://localhost:3000/hook",
+  },
+  {
+    label: "loopback http spelled 127.0.0.1",
+    url: "http://127.0.0.1:3000/hook",
+  },
+  { label: "loopback http spelled [::1]", url: "http://[::1]:3000/hook" },
+  { label: "loopback http with no port or path", url: "http://127.0.0.1" },
+  { label: "https on localhost", url: "https://localhost" },
+  {
+    label: "https on localhost with a port",
+    url: "https://localhost:8443/hook",
+  },
+] as const
 
 /**
  * Addresses inside the platform's own network. Refused **whatever the flag
@@ -128,14 +164,23 @@ export const FLAG_GATED_LOOPBACK: readonly UrlCase[] = [
  * classic way credentials walk out of a deployment.
  */
 export const REJECTED_PRIVATE_ADDRESSES: readonly UrlCase[] = [
-  { label: 'RFC1918 10/8', url: 'https://10.0.0.5/hook' },
-  { label: 'RFC1918 172.16/12 at its lower bound', url: 'https://172.16.0.1/hook' },
-  { label: 'RFC1918 172.16/12 at its upper bound', url: 'https://172.31.255.254/hook' },
-  { label: 'RFC1918 192.168/16', url: 'https://192.168.1.10/hook' },
-  { label: 'the cloud metadata endpoint', url: 'https://169.254.169.254/latest/meta-data/' },
-  { label: 'IPv6 unique-local', url: 'https://[fd00::1]/hook' },
-  { label: 'IPv6 link-local', url: 'https://[fe80::1]/hook' },
-] as const;
+  { label: "RFC1918 10/8", url: "https://10.0.0.5/hook" },
+  {
+    label: "RFC1918 172.16/12 at its lower bound",
+    url: "https://172.16.0.1/hook",
+  },
+  {
+    label: "RFC1918 172.16/12 at its upper bound",
+    url: "https://172.31.255.254/hook",
+  },
+  { label: "RFC1918 192.168/16", url: "https://192.168.1.10/hook" },
+  {
+    label: "the cloud metadata endpoint",
+    url: "https://169.254.169.254/latest/meta-data/",
+  },
+  { label: "IPv6 unique-local", url: "https://[fd00::1]/hook" },
+  { label: "IPv6 link-local", url: "https://[fe80::1]/hook" },
+] as const
 
 /**
  * Just outside every boundary, and public. **These are what make the rejections
@@ -144,21 +189,33 @@ export const REJECTED_PRIVATE_ADDRESSES: readonly UrlCase[] = [
  * rejected list alone. Only a control that must stay accepted tells them apart.
  */
 export const PUBLIC_BOUNDARY_CONTROLS: readonly UrlCase[] = [
-  { label: 'one below 10/8', url: 'https://9.255.255.255/hook' },
-  { label: 'one above 10/8', url: 'https://11.0.0.5/hook' },
-  { label: 'one below 172.16/12', url: 'https://172.15.0.1/hook' },
-  { label: 'one above 172.16/12', url: 'https://172.32.0.1/hook' },
-  { label: 'one below 192.168/16', url: 'https://192.167.1.1/hook' },
-  { label: 'one above 192.168/16', url: 'https://192.169.1.1/hook' },
-  { label: 'one below 169.254/16', url: 'https://169.253.0.1/hook' },
-  { label: 'one above 169.254/16', url: 'https://169.255.0.1/hook' },
-  { label: 'a public IPv6 literal', url: 'https://[2606:4700:4700::1111]/hook' },
-  { label: 'just below the unique-local block', url: 'https://[fb00::1]/hook' },
-  { label: 'just below the link-local block', url: 'https://[fe00::1]/hook' },
-  { label: 'NAT64 wrapping a public address', url: 'https://[64:ff9b::808:808]/hook' },
-  { label: '6to4 wrapping a public address', url: 'https://[2002:b00:5::]/hook' },
-  { label: 'IPv4-mapped wrapping a public address', url: 'https://[::ffff:b00:5]/hook' },
-] as const;
+  { label: "one below 10/8", url: "https://9.255.255.255/hook" },
+  { label: "one above 10/8", url: "https://11.0.0.5/hook" },
+  { label: "one below 172.16/12", url: "https://172.15.0.1/hook" },
+  { label: "one above 172.16/12", url: "https://172.32.0.1/hook" },
+  { label: "one below 192.168/16", url: "https://192.167.1.1/hook" },
+  { label: "one above 192.168/16", url: "https://192.169.1.1/hook" },
+  { label: "one below 169.254/16", url: "https://169.253.0.1/hook" },
+  { label: "one above 169.254/16", url: "https://169.255.0.1/hook" },
+  {
+    label: "a public IPv6 literal",
+    url: "https://[2606:4700:4700::1111]/hook",
+  },
+  { label: "just below the unique-local block", url: "https://[fb00::1]/hook" },
+  { label: "just below the link-local block", url: "https://[fe00::1]/hook" },
+  {
+    label: "NAT64 wrapping a public address",
+    url: "https://[64:ff9b::808:808]/hook",
+  },
+  {
+    label: "6to4 wrapping a public address",
+    url: "https://[2002:b00:5::]/hook",
+  },
+  {
+    label: "IPv4-mapped wrapping a public address",
+    url: "https://[::ffff:b00:5]/hook",
+  },
+] as const
 
 /**
  * An IPv4 address wearing an IPv6 spelling.
@@ -182,14 +239,35 @@ export const PUBLIC_BOUNDARY_CONTROLS: readonly UrlCase[] = [
  * "rejects every transition format" are indistinguishable.
  */
 export const REJECTED_TRANSITION_FORMATS: readonly UrlCase[] = [
-  { label: 'IPv4-mapped, the metadata endpoint', url: 'https://[::ffff:a9fe:a9fe]/hook' },
-  { label: 'IPv4-mapped loopback', url: 'https://[::ffff:7f00:1]/hook' },
-  { label: 'IPv4-mapped RFC1918 10.0.0.5', url: 'https://[::ffff:a00:5]/hook' },
-  { label: 'IPv4-mapped RFC1918 192.168.0.1', url: 'https://[::ffff:c0a8:1]/hook' },
-  { label: 'IPv4-mapped, fully expanded', url: 'https://[0:0:0:0:0:ffff:a00:5]/hook' },
-  { label: '6to4 wrapping RFC1918 10.0.0.5', url: 'https://[2002:a00:5::]/hook' },
-  { label: '6to4 wrapping loopback', url: 'https://[2002:7f00:1::]/hook' },
-  { label: '6to4 wrapping the metadata endpoint', url: 'https://[2002:a9fe:a9fe::]/hook' },
-  { label: 'NAT64 wrapping RFC1918 10.0.0.5', url: 'https://[64:ff9b::a00:5]/hook' },
-  { label: 'NAT64 wrapping the metadata endpoint', url: 'https://[64:ff9b::a9fe:a9fe]/hook' },
-] as const;
+  {
+    label: "IPv4-mapped, the metadata endpoint",
+    url: "https://[::ffff:a9fe:a9fe]/hook",
+  },
+  { label: "IPv4-mapped loopback", url: "https://[::ffff:7f00:1]/hook" },
+  { label: "IPv4-mapped RFC1918 10.0.0.5", url: "https://[::ffff:a00:5]/hook" },
+  {
+    label: "IPv4-mapped RFC1918 192.168.0.1",
+    url: "https://[::ffff:c0a8:1]/hook",
+  },
+  {
+    label: "IPv4-mapped, fully expanded",
+    url: "https://[0:0:0:0:0:ffff:a00:5]/hook",
+  },
+  {
+    label: "6to4 wrapping RFC1918 10.0.0.5",
+    url: "https://[2002:a00:5::]/hook",
+  },
+  { label: "6to4 wrapping loopback", url: "https://[2002:7f00:1::]/hook" },
+  {
+    label: "6to4 wrapping the metadata endpoint",
+    url: "https://[2002:a9fe:a9fe::]/hook",
+  },
+  {
+    label: "NAT64 wrapping RFC1918 10.0.0.5",
+    url: "https://[64:ff9b::a00:5]/hook",
+  },
+  {
+    label: "NAT64 wrapping the metadata endpoint",
+    url: "https://[64:ff9b::a9fe:a9fe]/hook",
+  },
+] as const

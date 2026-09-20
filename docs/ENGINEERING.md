@@ -73,6 +73,7 @@ Keep deployed agents above DEBUG logging. Pipecat logs backend system instructio
 ```bash
 corepack enable
 pnpm install --frozen-lockfile
+pnpm format:check
 pnpm lint
 pnpm typecheck
 pnpm test
@@ -86,6 +87,7 @@ What each one actually does at this commit — stated plainly, because a command
 
 | Command                                             | What it runs                                                                                                                      | Real coverage |
 | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| `pnpm format:check`                                 | Prettier over repository TypeScript, JavaScript, JSON, CSS, and YAML sources; generated artifacts and lockfiles are ignored       | yes           |
 | `pnpm lint`                                         | `bash -n` over the classifier script, ESLint over the root files, then ESLint over `apps/workspace` — all with `--max-warnings=0` | yes           |
 | `pnpm typecheck`                                    | `tsc --noEmit` over the root `tests/**`, then over `apps/workspace`                                                               | yes           |
 | `pnpm test`                                         | `vitest run` for the 41 classifier tests, then the `apps/workspace` suite                                                         | yes           |

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
 /**
  * Forgot-password tells everyone the same thing.
@@ -30,35 +30,33 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 /** Distinctive, so its absence from the rendered text means something. */
-const NETWORK_FAILURE = 'CANARY-mail-provider-unreachable';
+const NETWORK_FAILURE = "CANARY-mail-provider-unreachable"
 
-const requestPasswordReset = vi.fn();
+const requestPasswordReset = vi.fn()
 
-vi.mock('@/lib/auth-client', () => ({
+vi.mock("@/lib/auth-client", () => ({
   authClient: {
     requestPasswordReset: (...args: unknown[]) =>
       requestPasswordReset(...args) as unknown,
   },
-}));
+}))
 
 // Must be evaluated before anything pulls in React: it installs the DOM, and
 // `react-dom` decides at import time which event machinery it can use. The
 // helper's own header explains what breaks otherwise.
-const { control, createElement, mount, submit, type } = await import(
-  './helpers/assistant-form/render.ts'
-);
-const { ForgotPasswordForm } = await import(
-  '@/app/forgot-password/forgot-password-form'
-);
+const { control, createElement, mount, submit, type } =
+  await import("./helpers/assistant-form/render.ts")
+const { ForgotPasswordForm } =
+  await import("@/app/forgot-password/forgot-password-form")
 
-const ADDRESS = 'person@example.com';
-const UNKNOWN_ADDRESS = 'nobody-here@example.com';
+const ADDRESS = "person@example.com"
+const UNKNOWN_ADDRESS = "nobody-here@example.com"
 
 /** Better Auth's shape for a call that completed but reported a problem. */
 const ERROR_BODY = {
   data: null,
-  error: { status: 404, statusText: 'NOT_FOUND', message: 'User not found' },
-};
+  error: { status: 404, statusText: "NOT_FOUND", message: "User not found" },
+}
 
 /**
  * Mounts the form, submits `email`, and returns what the page then reads as.
@@ -68,51 +66,51 @@ const ERROR_BODY = {
  * inside the status line.
  */
 async function submitAddress(email: string): Promise<string> {
-  const mounted = await mount(createElement(ForgotPasswordForm));
+  const mounted = await mount(createElement(ForgotPasswordForm))
 
-  await type(control(mounted, 'email'), email);
-  await submit(mounted);
+  await type(control(mounted, "email"), email)
+  await submit(mounted)
 
-  const rendered = mounted.container.textContent ?? '';
+  const rendered = mounted.container.textContent ?? ""
 
-  mounted.unmount();
+  mounted.unmount()
 
-  return rendered;
+  return rendered
 }
 
 beforeEach(() => {
-  requestPasswordReset.mockReset();
-});
+  requestPasswordReset.mockReset()
+})
 
-describe('the forgot-password form', () => {
-  it('reaches the client with the submitted address', async () => {
-    requestPasswordReset.mockResolvedValue({ data: {}, error: null });
+describe("the forgot-password form", () => {
+  it("reaches the client with the submitted address", async () => {
+    requestPasswordReset.mockResolvedValue({ data: {}, error: null })
 
-    await submitAddress(ADDRESS);
+    await submitAddress(ADDRESS)
 
     expect(
       requestPasswordReset,
-      'the form never called the client, so every assertion in this file ' +
-        'would be comparing unsubmitted forms',
-    ).toHaveBeenCalledTimes(1);
+      "the form never called the client, so every assertion in this file " +
+        "would be comparing unsubmitted forms"
+    ).toHaveBeenCalledTimes(1)
 
     expect(requestPasswordReset).toHaveBeenCalledWith(
-      expect.objectContaining({ email: ADDRESS }),
-    );
-  });
+      expect.objectContaining({ email: ADDRESS })
+    )
+  })
 
-  it('does not submit an address the schema rejects', async () => {
-    requestPasswordReset.mockResolvedValue({ data: {}, error: null });
+  it("does not submit an address the schema rejects", async () => {
+    requestPasswordReset.mockResolvedValue({ data: {}, error: null })
 
-    const rendered = await submitAddress('not-an-address');
+    const rendered = await submitAddress("not-an-address")
 
     expect(
       requestPasswordReset,
-      'an invalid address reached the network',
-    ).not.toHaveBeenCalled();
+      "an invalid address reached the network"
+    ).not.toHaveBeenCalled()
 
-    expect(rendered).toMatch(/valid email/i);
-  });
+    expect(rendered).toMatch(/valid email/i)
+  })
 
   /**
    * The schema trims, and **the trimmed value is what reaches the network**.
@@ -126,20 +124,23 @@ describe('the forgot-password form', () => {
    * about an address with a space in it.
    */
   it.each([
-    ['a trailing space', `${ADDRESS} `],
-    ['surrounding spaces', `  ${ADDRESS}  `],
-    ['a tab and a newline', `\t${ADDRESS}\n`],
-  ])('submits the trimmed address when it was pasted with %s', async (_label, typed) => {
-    requestPasswordReset.mockResolvedValue({ data: {}, error: null });
+    ["a trailing space", `${ADDRESS} `],
+    ["surrounding spaces", `  ${ADDRESS}  `],
+    ["a tab and a newline", `\t${ADDRESS}\n`],
+  ])(
+    "submits the trimmed address when it was pasted with %s",
+    async (_label, typed) => {
+      requestPasswordReset.mockResolvedValue({ data: {}, error: null })
 
-    await submitAddress(typed);
+      await submitAddress(typed)
 
-    expect(requestPasswordReset).toHaveBeenCalledTimes(1);
-    expect(
-      requestPasswordReset,
-      'the padding reached the network, so the schema trimmed but the form did not',
-    ).toHaveBeenCalledWith(expect.objectContaining({ email: ADDRESS }));
-  });
+      expect(requestPasswordReset).toHaveBeenCalledTimes(1)
+      expect(
+        requestPasswordReset,
+        "the padding reached the network, so the schema trimmed but the form did not"
+      ).toHaveBeenCalledWith(expect.objectContaining({ email: ADDRESS }))
+    }
+  )
 
   /**
    * The property itself.
@@ -149,54 +150,54 @@ describe('the forgot-password form', () => {
    * looser match is deliberate: a difference in punctuation or a trailing
    * clause is exactly the kind of drift that would separate the two cases.
    */
-  it('renders byte-identical copy whatever the client does', async () => {
+  it("renders byte-identical copy whatever the client does", async () => {
     const outcomes: [string, () => void, string][] = [
       [
-        'a resolved call for a known address',
+        "a resolved call for a known address",
         () => requestPasswordReset.mockResolvedValue({ data: {}, error: null }),
         ADDRESS,
       ],
       [
-        'a resolved call reporting that the account does not exist',
+        "a resolved call reporting that the account does not exist",
         () => requestPasswordReset.mockResolvedValue(ERROR_BODY),
         UNKNOWN_ADDRESS,
       ],
       [
-        'a rejected call, because the provider is down',
+        "a rejected call, because the provider is down",
         () =>
           requestPasswordReset.mockRejectedValue(new Error(NETWORK_FAILURE)),
         ADDRESS,
       ],
       [
-        'a rejected call for an address that does not exist',
+        "a rejected call for an address that does not exist",
         () =>
           requestPasswordReset.mockRejectedValue(new Error(NETWORK_FAILURE)),
         UNKNOWN_ADDRESS,
       ],
-    ];
+    ]
 
-    const rendered: Record<string, string> = {};
+    const rendered: Record<string, string> = {}
 
     for (const [label, arrange, email] of outcomes) {
-      requestPasswordReset.mockReset();
-      arrange();
+      requestPasswordReset.mockReset()
+      arrange()
 
-      rendered[label] = await submitAddress(email);
+      rendered[label] = await submitAddress(email)
 
       expect(
         requestPasswordReset,
-        `${label}: the client was never called, so this case proved nothing`,
-      ).toHaveBeenCalledTimes(1);
+        `${label}: the client was never called, so this case proved nothing`
+      ).toHaveBeenCalledTimes(1)
     }
 
-    const [first, ...rest] = Object.entries(rendered);
+    const [first, ...rest] = Object.entries(rendered)
 
-    expect(first).toBeDefined();
+    expect(first).toBeDefined()
 
     for (const [label, text] of rest) {
-      expect(text, `${label} rendered different copy`).toBe(first?.[1]);
+      expect(text, `${label} rendered different copy`).toBe(first?.[1])
     }
-  });
+  })
 
   /**
    * What the identical copy actually says.
@@ -205,19 +206,19 @@ describe('the forgot-password form', () => {
    * is pinned too: it must confirm the request without asserting an account
    * exists, and it must never mention what went wrong.
    */
-  it('confirms the request without claiming the account exists', async () => {
-    requestPasswordReset.mockResolvedValue({ data: {}, error: null });
+  it("confirms the request without claiming the account exists", async () => {
+    requestPasswordReset.mockResolvedValue({ data: {}, error: null })
 
-    const rendered = await submitAddress(ADDRESS);
+    const rendered = await submitAddress(ADDRESS)
 
-    expect(rendered).toMatch(/if an account exists/i);
+    expect(rendered).toMatch(/if an account exists/i)
     expect(
       rendered,
-      'the copy promises delivery, which is a claim it cannot make',
+      "the copy promises delivery, which is a claim it cannot make"
       // "check your inbox" asserts something that is false for a mistyped
       // address; "if an account exists" does not.
-    ).not.toMatch(/check your inbox/i);
-  });
+    ).not.toMatch(/check your inbox/i)
+  })
 
   /**
    * The failure is not leaked, and the page is not blank either.
@@ -226,19 +227,19 @@ describe('the forgot-password form', () => {
    * rendered nothing at all would satisfy it. The positive half is asserted
    * alongside: the reassurance survived.
    */
-  it('leaks nothing about a provider failure', async () => {
-    requestPasswordReset.mockRejectedValue(new Error(NETWORK_FAILURE));
+  it("leaks nothing about a provider failure", async () => {
+    requestPasswordReset.mockRejectedValue(new Error(NETWORK_FAILURE))
 
-    const rendered = await submitAddress(ADDRESS);
+    const rendered = await submitAddress(ADDRESS)
 
-    expect(requestPasswordReset).toHaveBeenCalledTimes(1);
-    expect(rendered, 'the failure reached the page').not.toContain(
-      NETWORK_FAILURE,
-    );
-    expect(rendered, 'the page rendered nothing at all').toMatch(
-      /if an account exists/i,
-    );
-  });
+    expect(requestPasswordReset).toHaveBeenCalledTimes(1)
+    expect(rendered, "the failure reached the page").not.toContain(
+      NETWORK_FAILURE
+    )
+    expect(rendered, "the page rendered nothing at all").toMatch(
+      /if an account exists/i
+    )
+  })
 
   /**
    * The address itself is not echoed back.
@@ -247,11 +248,11 @@ describe('the forgot-password form', () => {
    * kind of leak — it confirms nothing about existence, but it reflects
    * attacker-supplied text straight back into the document.
    */
-  it('does not echo the submitted address', async () => {
-    requestPasswordReset.mockResolvedValue({ data: {}, error: null });
+  it("does not echo the submitted address", async () => {
+    requestPasswordReset.mockResolvedValue({ data: {}, error: null })
 
-    const rendered = await submitAddress(UNKNOWN_ADDRESS);
+    const rendered = await submitAddress(UNKNOWN_ADDRESS)
 
-    expect(rendered).not.toContain(UNKNOWN_ADDRESS);
-  });
-});
+    expect(rendered).not.toContain(UNKNOWN_ADDRESS)
+  })
+})

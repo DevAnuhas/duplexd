@@ -1,4 +1,4 @@
-import { JSDOM } from 'jsdom';
+import { JSDOM } from "jsdom"
 
 /**
  * Installs a DOM, as a side effect, before anything imports React.
@@ -39,10 +39,10 @@ import { JSDOM } from 'jsdom';
  * `@vitest-environment jsdom` would need a one-line change in
  * `test/helpers/environment.ts` to derive its paths without `import.meta.url`.
  */
-const dom = new JSDOM('<!doctype html><html><body></body></html>', {
-  url: 'http://localhost/',
+const dom = new JSDOM("<!doctype html><html><body></body></html>", {
+  url: "http://localhost/",
   pretendToBeVisual: true,
-});
+})
 
 /**
  * Globals that Node also defines but that must come from jsdom, because a DOM
@@ -55,28 +55,28 @@ const dom = new JSDOM('<!doctype html><html><body></body></html>', {
  * scheduler rely on — are left alone.
  */
 const MUST_COME_FROM_JSDOM = [
-  'Event',
-  'EventTarget',
-  'CustomEvent',
-  'FormData',
-  'DOMException',
-  'navigator',
-] as const;
+  "Event",
+  "EventTarget",
+  "CustomEvent",
+  "FormData",
+  "DOMException",
+  "navigator",
+] as const
 
 for (const property of Object.getOwnPropertyNames(dom.window)) {
   const overwrite = (MUST_COME_FROM_JSDOM as readonly string[]).includes(
-    property,
-  );
+    property
+  )
 
   if (!overwrite && property in globalThis) {
-    continue;
+    continue
   }
 
   Object.defineProperty(globalThis, property, {
     configurable: true,
     writable: true,
     value: dom.window[property as keyof typeof dom.window],
-  });
+  })
 }
 
 /**
@@ -90,17 +90,17 @@ for (const property of Object.getOwnPropertyNames(dom.window)) {
  * — the questions are which controls exist and what they submit — so an
  * observer that stays silent removes the crash without inventing an answer.
  */
-if (!('ResizeObserver' in globalThis)) {
+if (!("ResizeObserver" in globalThis)) {
   globalThis.ResizeObserver = class {
     observe(): void {}
     unobserve(): void {}
     disconnect(): void {}
-  } as unknown as typeof ResizeObserver;
+  } as unknown as typeof ResizeObserver
 }
 
 declare global {
   // React's `act` refuses to run unless the environment opts in.
-  var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
+  var IS_REACT_ACT_ENVIRONMENT: boolean | undefined
 }
 
-globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true

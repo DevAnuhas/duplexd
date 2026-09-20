@@ -1,6 +1,6 @@
-import { getSessionCookie } from 'better-auth/cookies';
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
+import { getSessionCookie } from "better-auth/cookies"
+import { NextResponse } from "next/server"
+import type { NextRequest } from "next/server"
 
 /**
  * Redirects signed-out visitors to `/sign-in` before a workspace page renders.
@@ -57,14 +57,14 @@ import type { NextRequest } from 'next/server';
  */
 export function proxy(request: NextRequest): NextResponse {
   if (getSessionCookie(request) !== null) {
-    return NextResponse.next();
+    return NextResponse.next()
   }
 
-  const signIn = new URL('/sign-in', request.url);
+  const signIn = new URL("/sign-in", request.url)
 
   // 307 rather than 308: the redirect is a property of this request's missing
   // cookie, not of the URL, and it must never be cached as permanent.
-  return NextResponse.redirect(signIn, 307);
+  return NextResponse.redirect(signIn, 307)
 }
 
 /**
@@ -98,14 +98,14 @@ export function proxy(request: NextRequest): NextResponse {
  */
 export const config = {
   matcher: [
-    '/',
-    '/assistants',
-    '/assistants/:path*',
-    '/calls',
-    '/calls/:path*',
-    '/keys',
-    '/keys/:path*',
-    '/settings',
-    '/settings/:path*',
+    "/",
+    "/assistants",
+    "/assistants/:path*",
+    "/calls",
+    "/calls/:path*",
+    "/keys",
+    "/keys/:path*",
+    "/settings",
+    "/settings/:path*",
   ],
-};
+}

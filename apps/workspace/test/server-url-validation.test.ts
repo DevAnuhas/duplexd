@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { SERVER_URL_PATTERN, validateServerUrl } from '@/lib/validate';
+import { SERVER_URL_PATTERN, validateServerUrl } from "@/lib/validate"
 
 import {
   ACCEPTED_PORTS,
@@ -12,7 +12,7 @@ import {
   REJECTED_PORTS,
   REJECTED_SERVER_URLS,
   SERVER_URL_MATRIX,
-} from './helpers/server-urls.ts';
+} from "./helpers/server-urls.ts"
 
 /**
  * Where a customer's webhook may point.
@@ -29,42 +29,42 @@ import {
  * the half that proves the validator is actually reached before a write.
  */
 
-describe('the server URL matrix', () => {
+describe("the server URL matrix", () => {
   /**
    * The contract requires at least seventeen cases. Asserted rather than
    * trusted: a matrix that quietly loses its awkward cases still prints green.
    */
-  it('covers at least the seventeen cases the contract requires', () => {
-    expect(SERVER_URL_MATRIX.length).toBeGreaterThanOrEqual(17);
-    expect(ACCEPTED_SERVER_URLS.length).toBeGreaterThan(0);
-    expect(REJECTED_SERVER_URLS.length).toBeGreaterThan(0);
-  });
+  it("covers at least the seventeen cases the contract requires", () => {
+    expect(SERVER_URL_MATRIX.length).toBeGreaterThanOrEqual(17)
+    expect(ACCEPTED_SERVER_URLS.length).toBeGreaterThan(0)
+    expect(REJECTED_SERVER_URLS.length).toBeGreaterThan(0)
+  })
 
-  it('has no duplicate cases', () => {
-    const urls = SERVER_URL_MATRIX.map((entry) => entry.url);
+  it("has no duplicate cases", () => {
+    const urls = SERVER_URL_MATRIX.map((entry) => entry.url)
 
-    expect(new Set(urls).size).toBe(urls.length);
-  });
-});
+    expect(new Set(urls).size).toBe(urls.length)
+  })
+})
 
-describe('validateServerUrl accepts', () => {
+describe("validateServerUrl accepts", () => {
   it.each(ACCEPTED_SERVER_URLS.map((entry) => [entry.label, entry.url]))(
-    '%s — %s',
+    "%s — %s",
     (_label, url) => {
-      expect(validateServerUrl(url)).toBeNull();
-    },
-  );
-});
+      expect(validateServerUrl(url)).toBeNull()
+    }
+  )
+})
 
-describe('validateServerUrl rejects', () => {
+describe("validateServerUrl rejects", () => {
   it.each(REJECTED_SERVER_URLS.map((entry) => [entry.label, entry.url]))(
-    '%s — %s',
+    "%s — %s",
     (_label, url) => {
-      const issue = validateServerUrl(url);
+      const issue = validateServerUrl(url)
 
-      expect(issue, `${url} was accepted`).not.toBeNull();
-      expect(issue?.field).toBe('serverUrl');
-      expect(issue?.message).not.toBe('');
+      expect(issue, `${url} was accepted`).not.toBeNull()
+      expect(issue?.field).toBe("serverUrl")
+      expect(issue?.message).not.toBe("")
 
       // **And rejected by the pattern specifically.**
       //
@@ -81,11 +81,11 @@ describe('validateServerUrl rejects', () => {
       // self-contained rather than leaning on a sibling test to notice.
       expect(
         SERVER_URL_PATTERN.test(url),
-        `${url} is no longer rejected by the pattern — only by the parser`,
-      ).toBe(false);
-    },
-  );
-});
+        `${url} is no longer rejected by the pattern — only by the parser`
+      ).toBe(false)
+    }
+  )
+})
 
 /**
  * An assistant does not have to call a webhook at all, so "no URL" is not an
@@ -93,16 +93,16 @@ describe('validateServerUrl rejects', () => {
  * the matrix is about which URLs are allowed, this is about the field being
  * optional.
  */
-describe('an absent server URL', () => {
+describe("an absent server URL", () => {
   it.each([
-    ['undefined', undefined],
-    ['null', null],
-    ['the empty string', ''],
-    ['only whitespace', '   '],
-  ])('is not an error when it is %s', (_label, value) => {
-    expect(validateServerUrl(value)).toBeNull();
-  });
-});
+    ["undefined", undefined],
+    ["null", null],
+    ["the empty string", ""],
+    ["only whitespace", "   "],
+  ])("is not an error when it is %s", (_label, value) => {
+    expect(validateServerUrl(value)).toBeNull()
+  })
+})
 
 /**
  * The pattern is exported and asserted directly as well as through the
@@ -110,41 +110,42 @@ describe('an absent server URL', () => {
  * in use. A rewrite that happened to agree on this matrix would still be a
  * change the PR body has to declare.
  */
-describe('the exported pattern', () => {
-  it('is the one the validator uses, on every case in the matrix', () => {
+describe("the exported pattern", () => {
+  it("is the one the validator uses, on every case in the matrix", () => {
     // Guarded here rather than relying on the count test above. A loop whose
     // collection is empty passes every assertion inside it, so a matrix that
     // shrank to nothing would leave this test green while checking no URL at
     // all — and a cross-test guarantee is not a guarantee, because either test
     // can be deleted without the other noticing.
-    expect(SERVER_URL_MATRIX.length).toBeGreaterThanOrEqual(17);
+    expect(SERVER_URL_MATRIX.length).toBeGreaterThanOrEqual(17)
 
     for (const { url, accepted } of SERVER_URL_MATRIX) {
       expect(SERVER_URL_PATTERN.test(url), `pattern disagrees on ${url}`).toBe(
-        accepted,
-      );
-      expect(validateServerUrl(url) === null, `validator disagrees on ${url}`).toBe(
-        accepted,
-      );
+        accepted
+      )
+      expect(
+        validateServerUrl(url) === null,
+        `validator disagrees on ${url}`
+      ).toBe(accepted)
     }
-  });
+  })
 
   /**
    * A global regex carries `lastIndex` between calls, so the second `test` of
    * the same string returns false. It would make the validator accept a URL it
    * had just rejected, intermittently, depending on call order.
    */
-  it('is not global or sticky, so repeated calls agree', () => {
-    expect(SERVER_URL_PATTERN.global).toBe(false);
-    expect(SERVER_URL_PATTERN.sticky).toBe(false);
+  it("is not global or sticky, so repeated calls agree", () => {
+    expect(SERVER_URL_PATTERN.global).toBe(false)
+    expect(SERVER_URL_PATTERN.sticky).toBe(false)
 
-    const url = ACCEPTED_SERVER_URLS[0]?.url ?? '';
+    const url = ACCEPTED_SERVER_URLS[0]?.url ?? ""
 
-    expect(validateServerUrl(url)).toBeNull();
-    expect(validateServerUrl(url)).toBeNull();
-    expect(validateServerUrl(url)).toBeNull();
-  });
-});
+    expect(validateServerUrl(url)).toBeNull()
+    expect(validateServerUrl(url)).toBeNull()
+    expect(validateServerUrl(url)).toBeNull()
+  })
+})
 
 /**
  * Port bounds, which the pattern does not govern.
@@ -155,23 +156,23 @@ describe('the exported pattern', () => {
  * accepting a webhook the runtime cannot construct — statically knowable, and
  * discovered with a caller on the line.
  */
-describe('port bounds', () => {
+describe("port bounds", () => {
   it.each(REJECTED_PORTS.map((entry) => [entry.label, entry.url]))(
-    'rejects %s — %s',
+    "rejects %s — %s",
     (_label, url) => {
-      const issue = validateServerUrl(url);
+      const issue = validateServerUrl(url)
 
-      expect(issue, `${url} was accepted`).not.toBeNull();
-      expect(issue?.field).toBe('serverUrl');
-    },
-  );
+      expect(issue, `${url} was accepted`).not.toBeNull()
+      expect(issue?.field).toBe("serverUrl")
+    }
+  )
 
   it.each(ACCEPTED_PORTS.map((entry) => [entry.label, entry.url]))(
-    'accepts %s — %s',
+    "accepts %s — %s",
     (_label, url) => {
-      expect(validateServerUrl(url)).toBeNull();
-    },
-  );
+      expect(validateServerUrl(url)).toBeNull()
+    }
+  )
 
   /**
    * **The test that proves the second gate is what does this work.**
@@ -184,35 +185,37 @@ describe('port bounds', () => {
    * the pattern's provenance from the reviewed original is worth more than
    * another clause in it.
    */
-  it('rejects them at the parser, not at the pattern', () => {
-    const outOfRange = REJECTED_PORTS.filter((entry) => !entry.url.includes(':0/'));
+  it("rejects them at the parser, not at the pattern", () => {
+    const outOfRange = REJECTED_PORTS.filter(
+      (entry) => !entry.url.includes(":0/")
+    )
 
-    expect(outOfRange.length).toBeGreaterThan(0);
+    expect(outOfRange.length).toBeGreaterThan(0)
 
     for (const { url } of outOfRange) {
       expect(
         SERVER_URL_PATTERN.test(url),
         `${url} is now rejected by the pattern — the regex was widened, and its ` +
-          'byte-for-byte provenance from the reviewed original is gone',
-      ).toBe(true);
+          "byte-for-byte provenance from the reviewed original is gone"
+      ).toBe(true)
 
       expect(
         validateServerUrl(url),
-        `${url} reached the parser check and was not rejected`,
-      ).not.toBeNull();
+        `${url} reached the parser check and was not rejected`
+      ).not.toBeNull()
     }
-  });
+  })
 
   /**
    * Port 0 is the one that parses. It is rejected by an explicit rule rather
    * than by the parser throwing, so it is pinned separately — a fix that only
    * caught parse failures would let it through.
    */
-  it('rejects port zero even though it parses cleanly', () => {
-    expect(() => new URL('https://example.invalid:0/hook')).not.toThrow();
-    expect(validateServerUrl('https://example.invalid:0/hook')).not.toBeNull();
-  });
-});
+  it("rejects port zero even though it parses cleanly", () => {
+    expect(() => new URL("https://example.invalid:0/hook")).not.toThrow()
+    expect(validateServerUrl("https://example.invalid:0/hook")).not.toBeNull()
+  })
+})
 
 /**
  * Which rule turned a URL away.
@@ -225,38 +228,38 @@ describe('port bounds', () => {
  * distinguishable, so the tests below name the rule.
  */
 function rejectionRule(url: string): string {
-  const issue = validateServerUrl(url);
+  const issue = validateServerUrl(url)
 
   if (issue === null) {
-    return 'accepted';
+    return "accepted"
   }
   if (/must use https/.test(issue.message)) {
-    return 'scheme';
+    return "scheme"
   }
   if (/every interface/.test(issue.message)) {
-    return 'unspecified';
+    return "unspecified"
   }
   if (/platform's own/.test(issue.message)) {
-    return 'range';
+    return "range"
   }
   if (/Port 0/.test(issue.message)) {
-    return 'port-zero';
+    return "port-zero"
   }
   if (/not a valid URL/.test(issue.message)) {
-    return 'parse';
+    return "parse"
   }
 
-  return 'other';
+  return "other"
 }
 
 /** The flag is read from the environment on every call, so it can be toggled. */
 function allowLoopback(allowed: boolean): void {
-  vi.stubEnv('ALLOW_LOOPBACK_SERVER_URL', allowed ? 'true' : '');
+  vi.stubEnv("ALLOW_LOOPBACK_SERVER_URL", allowed ? "true" : "")
 }
 
 afterEach(() => {
-  vi.unstubAllEnvs();
-});
+  vi.unstubAllEnvs()
+})
 
 /**
  * Loopback behind `ALLOW_LOOPBACK_SERVER_URL`.
@@ -265,15 +268,18 @@ afterEach(() => {
  * a webhook pointing at `localhost` is called from the platform's network and
  * reaches the platform, not the customer.
  */
-describe('the loopback development flag', () => {
+describe("the loopback development flag", () => {
   it.each(FLAG_GATED_LOOPBACK.map((entry) => [entry.label, entry.url]))(
-    'accepts %s with the flag on — %s',
+    "accepts %s with the flag on — %s",
     (_label, url) => {
-      allowLoopback(true);
+      allowLoopback(true)
 
-      expect(validateServerUrl(url), `${url} was refused with the flag on`).toBeNull();
-    },
-  );
+      expect(
+        validateServerUrl(url),
+        `${url} was refused with the flag on`
+      ).toBeNull()
+    }
+  )
 
   /**
    * Named by rule, not merely "rejected". With the flag off these are refused
@@ -282,41 +288,44 @@ describe('the loopback development flag', () => {
    * the `http:` ones and nobody would learn the flag had stopped working.
    */
   it.each(FLAG_GATED_LOOPBACK.map((entry) => [entry.label, entry.url]))(
-    'refuses %s with the flag off, by the range rule — %s',
+    "refuses %s with the flag off, by the range rule — %s",
     (_label, url) => {
-      allowLoopback(false);
-
-      expect(rejectionRule(url), `${url} was not refused as a private address`).toBe(
-        'range',
-      );
-    },
-  );
-
-  /** The flag is an exemption for loopback, not a general loosening. */
-  it('does not accept non-loopback http even with the flag on', () => {
-    allowLoopback(true);
-
-    expect(rejectionRule('http://example.invalid/hook')).toBe('scheme');
-  });
-
-  it('does not accept other private ranges even with the flag on', () => {
-    allowLoopback(true);
-
-    expect(rejectionRule('https://10.0.0.5/hook')).toBe('range');
-    expect(rejectionRule('https://169.254.169.254/latest/meta-data/')).toBe('range');
-  });
-
-  it('treats any value other than "true" as off', () => {
-    for (const value of ['', 'false', '1', 'yes', 'TRUE']) {
-      vi.stubEnv('ALLOW_LOOPBACK_SERVER_URL', value);
+      allowLoopback(false)
 
       expect(
-        rejectionRule('http://localhost:3000/hook'),
-        `"${value}" was treated as enabling loopback`,
-      ).toBe('range');
+        rejectionRule(url),
+        `${url} was not refused as a private address`
+      ).toBe("range")
     }
-  });
-});
+  )
+
+  /** The flag is an exemption for loopback, not a general loosening. */
+  it("does not accept non-loopback http even with the flag on", () => {
+    allowLoopback(true)
+
+    expect(rejectionRule("http://example.invalid/hook")).toBe("scheme")
+  })
+
+  it("does not accept other private ranges even with the flag on", () => {
+    allowLoopback(true)
+
+    expect(rejectionRule("https://10.0.0.5/hook")).toBe("range")
+    expect(rejectionRule("https://169.254.169.254/latest/meta-data/")).toBe(
+      "range"
+    )
+  })
+
+  it('treats any value other than "true" as off', () => {
+    for (const value of ["", "false", "1", "yes", "TRUE"]) {
+      vi.stubEnv("ALLOW_LOOPBACK_SERVER_URL", value)
+
+      expect(
+        rejectionRule("http://localhost:3000/hook"),
+        `"${value}" was treated as enabling loopback`
+      ).toBe("range")
+    }
+  })
+})
 
 /**
  * The headline of this rule, and it is not the dev exception.
@@ -325,24 +334,24 @@ describe('the loopback development flag', () => {
  * this — the cloud instance metadata endpoint on every major provider, reached
  * from the platform's own network with the platform's own credentials.
  */
-describe('addresses inside the platform’s network', () => {
+describe("addresses inside the platform’s network", () => {
   it.each(REJECTED_PRIVATE_ADDRESSES.map((entry) => [entry.label, entry.url]))(
-    'refuses %s by the range rule — %s',
+    "refuses %s by the range rule — %s",
     (_label, url) => {
-      allowLoopback(false);
+      allowLoopback(false)
 
-      expect(rejectionRule(url), `${url} was accepted`).toBe('range');
-    },
-  );
+      expect(rejectionRule(url), `${url} was accepted`).toBe("range")
+    }
+  )
 
   it.each(REJECTED_PRIVATE_ADDRESSES.map((entry) => [entry.label, entry.url]))(
-    'still refuses %s with the flag on — %s',
+    "still refuses %s with the flag on — %s",
     (_label, url) => {
-      allowLoopback(true);
+      allowLoopback(true)
 
-      expect(rejectionRule(url), `the flag exempted ${url}`).toBe('range');
-    },
-  );
+      expect(rejectionRule(url), `the flag exempted ${url}`).toBe("range")
+    }
+  )
 
   /**
    * The controls that make the rejections mean something. Deleting the range
@@ -350,16 +359,16 @@ describe('addresses inside the platform’s network', () => {
    * rejected list alone; only these tell them apart.
    */
   it.each(PUBLIC_BOUNDARY_CONTROLS.map((entry) => [entry.label, entry.url]))(
-    'still accepts %s — %s',
+    "still accepts %s — %s",
     (_label, url) => {
-      allowLoopback(false);
+      allowLoopback(false)
 
       expect(
         validateServerUrl(url),
-        `${url} is public and was refused — the range check is too wide`,
-      ).toBeNull();
-    },
-  );
+        `${url} is public and was refused — the range check is too wide`
+      ).toBeNull()
+    }
+  )
 
   /**
    * Alternate spellings of the same address. `new URL` normalises decimal,
@@ -369,22 +378,22 @@ describe('addresses inside the platform’s network', () => {
    * easy and invisible regression.
    */
   it.each([
-    ['decimal', 'https://2130706433/hook'],
-    ['hexadecimal', 'https://0x7f000001/hook'],
-    ['octal', 'https://0177.0.0.1/hook'],
-    ['short form', 'https://127.1/hook'],
-  ])('refuses 127.0.0.1 written in %s — %s', (_label, url) => {
-    allowLoopback(false);
+    ["decimal", "https://2130706433/hook"],
+    ["hexadecimal", "https://0x7f000001/hook"],
+    ["octal", "https://0177.0.0.1/hook"],
+    ["short form", "https://127.1/hook"],
+  ])("refuses 127.0.0.1 written in %s — %s", (_label, url) => {
+    allowLoopback(false)
 
-    expect(rejectionRule(url), `${url} bypassed the range check`).toBe('range');
-  });
+    expect(rejectionRule(url), `${url} bypassed the range check`).toBe("range")
+  })
 
-  it('refuses 10.0.0.5 written in decimal', () => {
-    allowLoopback(false);
+  it("refuses 10.0.0.5 written in decimal", () => {
+    allowLoopback(false)
 
-    expect(rejectionRule('https://167772165/hook')).toBe('range');
-  });
-});
+    expect(rejectionRule("https://167772165/hook")).toBe("range")
+  })
+})
 
 /**
  * An IPv4 address wearing an IPv6 spelling reaches the same machine.
@@ -404,18 +413,18 @@ describe('addresses inside the platform’s network', () => {
  * real targets, which is the false-rejection-at-save this module exists to
  * prevent.
  */
-describe('IPv4 addresses in IPv6 clothing', () => {
+describe("IPv4 addresses in IPv6 clothing", () => {
   it.each(REJECTED_TRANSITION_FORMATS.map((entry) => [entry.label, entry.url]))(
-    'refuses %s by the range rule — %s',
+    "refuses %s by the range rule — %s",
     (_label, url) => {
-      allowLoopback(false);
+      allowLoopback(false)
 
       expect(
         rejectionRule(url),
-        `${url} reaches the same machine as its dotted spelling and was accepted`,
-      ).toBe('range');
-    },
-  );
+        `${url} reaches the same machine as its dotted spelling and was accepted`
+      ).toBe("range")
+    }
+  )
 
   /**
    * With the flag on, the exemption follows the **unwrapped address**, not the
@@ -425,13 +434,13 @@ describe('IPv4 addresses in IPv6 clothing', () => {
    */
   it.each(
     REJECTED_TRANSITION_FORMATS.filter(
-      (entry) => !entry.label.includes('loopback'),
-    ).map((entry) => [entry.label, entry.url]),
-  )('still refuses %s with the loopback flag on — %s', (_label, url) => {
-    allowLoopback(true);
+      (entry) => !entry.label.includes("loopback")
+    ).map((entry) => [entry.label, entry.url])
+  )("still refuses %s with the loopback flag on — %s", (_label, url) => {
+    allowLoopback(true)
 
-    expect(rejectionRule(url), `the flag exempted ${url}`).toBe('range');
-  });
+    expect(rejectionRule(url), `the flag exempted ${url}`).toBe("range")
+  })
 
   /**
    * And the flag's exemption is about the address, not the notation. A
@@ -441,17 +450,26 @@ describe('IPv4 addresses in IPv6 clothing', () => {
    * accepted while `https://127.0.0.1` was refused.
    */
   it.each([
-    ['IPv4-mapped loopback', 'https://[::ffff:7f00:1]/hook'],
-    ['6to4 wrapping loopback', 'https://[2002:7f00:1::]/hook'],
-  ])('exempts %s with the flag on, like any other loopback spelling — %s', (_label, url) => {
-    allowLoopback(true);
+    ["IPv4-mapped loopback", "https://[::ffff:7f00:1]/hook"],
+    ["6to4 wrapping loopback", "https://[2002:7f00:1::]/hook"],
+  ])(
+    "exempts %s with the flag on, like any other loopback spelling — %s",
+    (_label, url) => {
+      allowLoopback(true)
 
-    expect(validateServerUrl(url), `${url} unwraps to loopback and was refused`).toBeNull();
+      expect(
+        validateServerUrl(url),
+        `${url} unwraps to loopback and was refused`
+      ).toBeNull()
 
-    allowLoopback(false);
+      allowLoopback(false)
 
-    expect(rejectionRule(url), `${url} was not refused with the flag off`).toBe('range');
-  });
+      expect(
+        rejectionRule(url),
+        `${url} was not refused with the flag off`
+      ).toBe("range")
+    }
+  )
 
   /**
    * The controls, and they are the whole argument. Against the rejected list
@@ -460,28 +478,30 @@ describe('IPv4 addresses in IPv6 clothing', () => {
    * legitimate IPv6-only egress to the IPv4 internet.
    */
   it.each([
-    ['NAT64 wrapping 8.8.8.8', 'https://[64:ff9b::808:808]/hook'],
-    ['6to4 wrapping 11.0.0.5', 'https://[2002:b00:5::]/hook'],
-    ['IPv4-mapped 11.0.0.5', 'https://[::ffff:b00:5]/hook'],
-  ])('accepts %s, which reaches a public address — %s', (_label, url) => {
-    allowLoopback(false);
+    ["NAT64 wrapping 8.8.8.8", "https://[64:ff9b::808:808]/hook"],
+    ["6to4 wrapping 11.0.0.5", "https://[2002:b00:5::]/hook"],
+    ["IPv4-mapped 11.0.0.5", "https://[::ffff:b00:5]/hook"],
+  ])("accepts %s, which reaches a public address — %s", (_label, url) => {
+    allowLoopback(false)
 
     expect(
       validateServerUrl(url),
       `${url} reaches a public address and was refused — the prefix is being ` +
-        'rejected wholesale rather than unwrapped',
-    ).toBeNull();
-  });
+        "rejected wholesale rather than unwrapped"
+    ).toBeNull()
+  })
 
   /**
    * The dotted spelling is refused too, but by the pattern rather than the
    * range rule. Pinned so the asymmetry is recorded rather than rediscovered:
    * it is the reason this went unnoticed.
    */
-  it('refuses the dotted spelling at the pattern, not the range rule', () => {
-    allowLoopback(false);
+  it("refuses the dotted spelling at the pattern, not the range rule", () => {
+    allowLoopback(false)
 
-    expect(SERVER_URL_PATTERN.test('https://[::ffff:10.0.0.5]/hook')).toBe(false);
-    expect(rejectionRule('https://[::ffff:10.0.0.5]/hook')).toBe('scheme');
-  });
-});
+    expect(SERVER_URL_PATTERN.test("https://[::ffff:10.0.0.5]/hook")).toBe(
+      false
+    )
+    expect(rejectionRule("https://[::ffff:10.0.0.5]/hook")).toBe("scheme")
+  })
+})

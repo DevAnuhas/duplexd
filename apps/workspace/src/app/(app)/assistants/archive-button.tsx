@@ -1,11 +1,11 @@
-'use client';
+"use client"
 
-import { Archive } from '@phosphor-icons/react';
-import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
-import { toast } from 'sonner';
+import { Archive } from "@phosphor-icons/react"
+import { useRouter } from "next/navigation"
+import { useState, useTransition } from "react"
+import { toast } from "sonner"
 
-import { archiveAssistantAction } from '@/app/actions';
+import { archiveAssistantAction } from "@/app/actions"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -16,45 +16,45 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
-import { Button } from '@/components/ui/button';
+} from "@/components/ui/alert-dialog"
+import { Button } from "@/components/ui/button"
 
 export function ArchiveButton({
   assistantId,
   assistantName,
 }: {
-  assistantId: string;
-  assistantName: string;
+  assistantId: string
+  assistantName: string
 }) {
-  const router = useRouter();
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [, startTransition] = useTransition();
+  const router = useRouter()
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [, startTransition] = useTransition()
 
   function onArchive() {
-    setBusy(true);
+    setBusy(true)
     // The action itself belongs inside the transition so its revalidated
     // server tree is committed, not only the subsequent router.refresh().
     startTransition(async () => {
       try {
-        const result = await archiveAssistantAction(assistantId);
+        const result = await archiveAssistantAction(assistantId)
         if (!result.ok) {
           toast.error(
-            'Could not confirm the archive. Try again or refresh to check its status.',
-          );
-          return;
+            "Could not confirm the archive. Try again or refresh to check its status."
+          )
+          return
         }
-        setOpen(false);
-        toast.success('Assistant archived');
-        router.refresh();
+        setOpen(false)
+        toast.success("Assistant archived")
+        router.refresh()
       } catch {
         toast.error(
-          'Could not confirm the archive. Try again or refresh to check its status.',
-        );
+          "Could not confirm the archive. Try again or refresh to check its status."
+        )
       } finally {
-        setBusy(false);
+        setBusy(false)
       }
-    });
+    })
   }
 
   return (
@@ -62,7 +62,7 @@ export function ArchiveButton({
       open={open}
       onOpenChange={(next) => {
         if (!busy) {
-          setOpen(next);
+          setOpen(next)
         }
       }}
     >
@@ -92,14 +92,14 @@ export function ArchiveButton({
             disabled={busy}
             className="min-h-11"
             onClick={(event) => {
-              event.preventDefault();
-              onArchive();
+              event.preventDefault()
+              onArchive()
             }}
           >
-            {busy ? 'Archiving…' : 'Archive assistant'}
+            {busy ? "Archiving…" : "Archive assistant"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-  );
+  )
 }

@@ -1,11 +1,17 @@
-'use client';
+"use client"
 
-import { useRouter } from 'next/navigation';
-import { useTheme } from 'next-themes';
-import { CaretUpDown as ChevronsUpDown, Laptop, Moon, SignOut as LogOut, Sun } from '@phosphor-icons/react';
-import { useState } from 'react';
+import { useRouter } from "next/navigation"
+import { useTheme } from "next-themes"
+import {
+  CaretUpDown as ChevronsUpDown,
+  Laptop,
+  Moon,
+  SignOut as LogOut,
+  Sun,
+} from "@phosphor-icons/react"
+import { useState } from "react"
 
-import { authClient } from '@/lib/auth-client';
+import { authClient } from "@/lib/auth-client"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,13 +21,13 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+} from "@/components/ui/dropdown-menu"
 import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
-} from '@/components/ui/sidebar';
+} from "@/components/ui/sidebar"
 
 /**
  * The signed-in user, and the two things they can actually do.
@@ -41,13 +47,13 @@ export function NavUser({
   email,
   name,
 }: {
-  email: string;
-  name: string | null;
+  email: string
+  name: string | null
 }) {
-  const { isMobile } = useSidebar();
-  const router = useRouter();
-  const { theme, setTheme } = useTheme();
-  const [signingOut, setSigningOut] = useState(false);
+  const { isMobile } = useSidebar()
+  const router = useRouter()
+  const { theme, setTheme } = useTheme()
+  const [signingOut, setSigningOut] = useState(false)
 
   /**
    * `router.refresh()` after the redirect, not instead of it.
@@ -57,19 +63,19 @@ export function NavUser({
    * something else invalidates the tree. Refreshing discards that render.
    */
   async function signOut() {
-    setSigningOut(true);
+    setSigningOut(true)
 
     try {
-      await authClient.signOut();
-      router.push('/sign-in');
-      router.refresh();
+      await authClient.signOut()
+      router.push("/sign-in")
+      router.refresh()
     } finally {
-      setSigningOut(false);
+      setSigningOut(false)
     }
   }
 
-  const display = name !== null && name.trim() !== '' ? name : email;
-  const initial = display.slice(0, 1).toUpperCase();
+  const display = name !== null && name.trim() !== "" ? name : email
+  const initial = display.slice(0, 1).toUpperCase()
 
   return (
     <SidebarMenu>
@@ -81,13 +87,13 @@ export function NavUser({
               tooltip={display}
               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
             >
-              <div className="bg-sidebar-accent text-sidebar-accent-foreground flex aspect-square size-8 items-center justify-center rounded-lg text-xs font-medium">
+              <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-accent text-xs font-medium text-sidebar-accent-foreground">
                 {initial}
               </div>
               <div className="grid min-w-0 flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-medium">{display}</span>
                 {display !== email && (
-                  <span className="text-muted-foreground truncate text-xs">
+                  <span className="truncate text-xs text-muted-foreground">
                     {email}
                   </span>
                 )}
@@ -98,17 +104,17 @@ export function NavUser({
 
           <DropdownMenuContent
             className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg"
-            side={isMobile ? 'bottom' : 'right'}
+            side={isMobile ? "bottom" : "right"}
             align="end"
             sideOffset={4}
           >
-            <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
+            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
               {email}
             </DropdownMenuLabel>
 
             <DropdownMenuSeparator />
 
-            <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
+            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
               Theme
             </DropdownMenuLabel>
             {/*
@@ -118,7 +124,10 @@ export function NavUser({
               unselected — and `system` is the real default, so the fallback
               tells the truth rather than guessing.
             */}
-            <DropdownMenuRadioGroup value={theme ?? 'system'} onValueChange={setTheme}>
+            <DropdownMenuRadioGroup
+              value={theme ?? "system"}
+              onValueChange={setTheme}
+            >
               <DropdownMenuRadioItem value="light">
                 <Sun className="size-4" />
                 Light
@@ -140,16 +149,16 @@ export function NavUser({
               onSelect={(event) => {
                 // The menu would close and unmount mid-request otherwise, and
                 // the disabled state would never be seen.
-                event.preventDefault();
-                void signOut();
+                event.preventDefault()
+                void signOut()
               }}
             >
               <LogOut className="size-4" />
-              {signingOut ? 'Signing out…' : 'Sign out'}
+              {signingOut ? "Signing out…" : "Sign out"}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>
     </SidebarMenu>
-  );
+  )
 }

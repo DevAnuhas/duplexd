@@ -1,9 +1,9 @@
 // Must stay first: it installs the DOM, and `react-dom` decides at import time
 // which event machinery it can use. See the file itself for what breaks.
-import './dom-environment.ts';
+import "./dom-environment.ts"
 
-import { act, createElement, type ReactElement } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
+import { act, createElement, type ReactElement } from "react"
+import { createRoot, type Root } from "react-dom/client"
 
 /**
  * Mounting for the assistant editor's tests.
@@ -23,44 +23,44 @@ import { createRoot, type Root } from 'react-dom/client';
  */
 
 export type Mounted = {
-  container: HTMLElement;
-  form: HTMLFormElement;
-  unmount: () => void;
-};
+  container: HTMLElement
+  form: HTMLFormElement
+  unmount: () => void
+}
 
 /** Mounts an element into a detached container and returns DOM handles. */
 export async function mount(element: ReactElement): Promise<Mounted> {
-  const container = document.createElement('div');
-  document.body.append(container);
+  const container = document.createElement("div")
+  document.body.append(container)
 
-  let root: Root;
+  let root: Root
 
   await act(async () => {
-    root = createRoot(container);
-    root.render(element);
-  });
+    root = createRoot(container)
+    root.render(element)
+  })
 
-  const form = container.querySelector('form');
+  const form = container.querySelector("form")
 
   if (form === null) {
-    throw new Error('The rendered tree has no form.');
+    throw new Error("The rendered tree has no form.")
   }
 
   return {
     container,
     form,
     unmount: () => {
-      act(() => root.unmount());
-      container.remove();
+      act(() => root.unmount())
+      container.remove()
     },
-  };
+  }
 }
 
 /** Runs `work` and flushes every update and transition it schedules. */
 export async function flush(work: () => void | Promise<void>): Promise<void> {
   await act(async () => {
-    await work();
-  });
+    await work()
+  })
 }
 
 /**
@@ -72,28 +72,28 @@ export async function flush(work: () => void | Promise<void>): Promise<void> {
  */
 export function control(
   mounted: Mounted,
-  name: string,
+  name: string
 ): HTMLInputElement | HTMLTextAreaElement {
-  const element = mounted.form.querySelector(`[name="${name}"]`);
+  const element = mounted.form.querySelector(`[name="${name}"]`)
 
   if (element === null) {
-    throw new Error(`No form control is named "${name}".`);
+    throw new Error(`No form control is named "${name}".`)
   }
 
-  return element as HTMLInputElement | HTMLTextAreaElement;
+  return element as HTMLInputElement | HTMLTextAreaElement
 }
 
 /** Every value the form would submit right now, as plain entries. */
 export function submittedValues(mounted: Mounted): Record<string, string> {
-  const entries: Record<string, string> = {};
+  const entries: Record<string, string> = {}
 
   for (const [key, value] of new FormData(mounted.form).entries()) {
-    if (typeof value === 'string') {
-      entries[key] = value;
+    if (typeof value === "string") {
+      entries[key] = value
     }
   }
 
-  return entries;
+  return entries
 }
 
 /**
@@ -118,40 +118,40 @@ export function submittedValues(mounted: Mounted): Record<string, string> {
  */
 export async function type(
   element: HTMLInputElement | HTMLTextAreaElement,
-  text: string,
+  text: string
 ): Promise<void> {
-  const previous = element.value;
+  const previous = element.value
 
   await flush(() => {
-    element.value = text;
+    element.value = text
 
     const tracker = (
       element as unknown as {
-        _valueTracker?: { setValue: (value: string) => void };
+        _valueTracker?: { setValue: (value: string) => void }
       }
-    )._valueTracker;
+    )._valueTracker
 
     if (tracker === undefined) {
       throw new Error(
-        'React installed no value tracker on this control, so it cannot be ' +
-          'typed into reliably. Check that the element was rendered by React.',
-      );
+        "React installed no value tracker on this control, so it cannot be " +
+          "typed into reliably. Check that the element was rendered by React."
+      )
     }
 
-    tracker.setValue(previous);
+    tracker.setValue(previous)
 
-    element.dispatchEvent(new Event('input', { bubbles: true }));
-    element.dispatchEvent(new Event('change', { bubbles: true }));
-  });
+    element.dispatchEvent(new Event("input", { bubbles: true }))
+    element.dispatchEvent(new Event("change", { bubbles: true }))
+  })
 }
 
 /** Submits the form the way its submit button does. */
 export async function submit(mounted: Mounted): Promise<void> {
   await flush(() => {
     mounted.form.dispatchEvent(
-      new Event('submit', { bubbles: true, cancelable: true }),
-    );
-  });
+      new Event("submit", { bubbles: true, cancelable: true })
+    )
+  })
 }
 
 /**
@@ -164,17 +164,17 @@ export async function submit(mounted: Mounted): Promise<void> {
  */
 export async function blur(element: Element): Promise<void> {
   await flush(() => {
-    element.dispatchEvent(new Event('focusout', { bubbles: true }));
-  });
+    element.dispatchEvent(new Event("focusout", { bubbles: true }))
+  })
 }
 
 /** Clicks an element, flushing whatever React schedules in response. */
 export async function click(element: Element): Promise<void> {
   await flush(() => {
     element.dispatchEvent(
-      new MouseEvent('click', { bubbles: true, cancelable: true }),
-    );
-  });
+      new MouseEvent("click", { bubbles: true, cancelable: true })
+    )
+  })
 }
 
-export { createElement };
+export { createElement }

@@ -57,7 +57,7 @@
  * stack is repaired by splicing the redacted message over the original
  * message's span, which the stack begins with by construction.
  */
-const PARAMS_SECTION = /\nparams:[\s\S]*$/;
+const PARAMS_SECTION = /\nparams:[\s\S]*$/
 
 /**
  * Own properties that survive redaction, because none of them can carry a
@@ -94,28 +94,28 @@ const KEPT_PROPERTIES = new Set([
   // preserve. That is the fourth time in this file that replacing something
   // with a broader primitive silently dropped a guarantee nobody had written
   // down — here, that `Object.keys` skips non-enumerables.
-  'message',
-  'stack',
+  "message",
+  "stack",
   // The parameterised SQL. Placeholders, never values.
-  'query',
+  "query",
   // Recursed into separately rather than blanked.
-  'cause',
+  "cause",
   // Without this, every DrizzleError logs as `[redacted]: Rollback`.
-  'name',
+  "name",
   // pg's structural diagnostics. `23505` is how a caller distinguishes a
   // unique violation from a connection failure.
-  'code',
-  'severity',
-  'constraint',
-  'table',
-  'schema',
-  'column',
-  'dataType',
-  'routine',
-  'file',
-  'line',
-  'position',
-]);
+  "code",
+  "severity",
+  "constraint",
+  "table",
+  "schema",
+  "column",
+  "dataType",
+  "routine",
+  "file",
+  "line",
+  "position",
+])
 
 /**
  * Blanks every own property of `holder` that is not on the keep list.
@@ -137,11 +137,11 @@ const KEPT_PROPERTIES = new Set([
 function blankOwnValues(holder: object): void {
   for (const key of Reflect.ownKeys(holder)) {
     if (KEPT_PROPERTIES.has(key as string)) {
-      continue;
+      continue
     }
 
     try {
-      (holder as Record<string | symbol, unknown>)[key] = '[redacted]';
+      ;(holder as Record<string | symbol, unknown>)[key] = "[redacted]"
     } catch {
       // Not writable. The message and stack are handled above on their own
       // terms, so this pass failing does not leave them dirty.
@@ -158,10 +158,10 @@ function blankOwnValues(holder: object): void {
  */
 export function redactQueryParams(
   error: unknown,
-  seen: WeakSet<object> = new WeakSet(),
+  seen: WeakSet<object> = new WeakSet()
 ): unknown {
   if (!(error instanceof Error)) {
-    return error;
+    return error
   }
 
   // A `cause` chain that loops back on itself recursed until the stack ran
@@ -170,17 +170,17 @@ export function redactQueryParams(
   // different way. Nothing constructs such a cycle today; it costs one line
   // not to depend on that.
   if (seen.has(error)) {
-    return error;
+    return error
   }
 
-  seen.add(error);
+  seen.add(error)
 
-  const original = error.message;
+  const original = error.message
 
   // Read `.stack` before mutating the message. V8 formats it once, lazily, and
   // caches the result — so reading it here pins a string built from the
   // original message, which is exactly the span we need to find below.
-  const stack = typeof error.stack === 'string' ? error.stack : null;
+  const stack = typeof error.stack === "string" ? error.stack : null
 
   // A frozen error cannot be assigned to, and this assignment used to sit
   // outside any `try`. `Object.freeze(err)` anywhere upstream turned the
@@ -191,7 +191,7 @@ export function redactQueryParams(
   // exploding while trying to is worse.
   if (PARAMS_SECTION.test(original)) {
     try {
-      error.message = original.replace(PARAMS_SECTION, '\nparams: [redacted]');
+      error.message = original.replace(PARAMS_SECTION, "\nparams: [redacted]")
     } catch {
       // Frozen. The own-property pass below still runs, and the caller still
       // gets its original error rather than a TypeError about this one.
@@ -212,7 +212,7 @@ export function redactQueryParams(
   // formatted before this ran, so it was built from the already-redacted
   // message and needs nothing.
   if (stack !== null && error.message !== original) {
-    const start = stack.indexOf(original);
+    const start = stack.indexOf(original)
 
     try {
       error.stack =
@@ -220,7 +220,7 @@ export function redactQueryParams(
           ? stack
           : stack.slice(0, start) +
             error.message +
-            stack.slice(start + original.length);
+            stack.slice(start + original.length)
     } catch {
       // Frozen, as above.
     }
@@ -242,7 +242,7 @@ export function redactQueryParams(
   // the same reasoning item 22c gives for stripping all parameters rather than
   // secret-shaped ones.
   //
-  blankOwnValues(error);
+  blankOwnValues(error)
 
   // `cause` is allowlisted above rather than blanked, so it has to be swept
   // here or it survives verbatim. A `cause` that is an `Error` recurses. A
@@ -253,13 +253,13 @@ export function redactQueryParams(
   // wrong both times.
   if (error.cause !== undefined && error.cause !== null) {
     if (error.cause instanceof Error) {
-      redactQueryParams(error.cause, seen);
-    } else if (typeof error.cause === 'object') {
-      blankOwnValues(error.cause as object);
+      redactQueryParams(error.cause, seen)
+    } else if (typeof error.cause === "object") {
+      blankOwnValues(error.cause as object)
     }
   }
 
-  return error;
+  return error
 }
 
 /**
@@ -298,39 +298,39 @@ export function redactQueryParams(
  * on the value alone would hand a `then` wrapper to a non-`then` property that
  * happened to share a function.
  */
-type Wrapped = { source: unknown; wrapper: unknown };
+type Wrapped = { source: unknown; wrapper: unknown }
 
-const wrapperCache = new WeakMap<object, Map<string | symbol, Wrapped>>();
+const wrapperCache = new WeakMap<object, Map<string | symbol, Wrapped>>()
 
 function memoise(
   object: object,
   property: string | symbol,
   source: unknown,
-  build: () => unknown,
+  build: () => unknown
 ): unknown {
-  let byProperty = wrapperCache.get(object);
+  let byProperty = wrapperCache.get(object)
 
   if (byProperty === undefined) {
-    byProperty = new Map();
-    wrapperCache.set(object, byProperty);
+    byProperty = new Map()
+    wrapperCache.set(object, byProperty)
   }
 
-  const cached = byProperty.get(property);
+  const cached = byProperty.get(property)
 
   if (cached !== undefined && cached.source === source) {
-    return cached.wrapper;
+    return cached.wrapper
   }
 
-  const wrapper = build();
-  byProperty.set(property, { source, wrapper });
+  const wrapper = build()
+  byProperty.set(property, { source, wrapper })
 
-  return wrapper;
+  return wrapper
 }
 
 function redacting<T extends object>(target: T): T {
   return new Proxy(target, {
     get(object, property, receiver) {
-      const value = Reflect.get(object, property, receiver) as unknown;
+      const value = Reflect.get(object, property, receiver) as unknown
 
       // A proxy may not report a different value for a non-configurable,
       // non-writable own data property — doing so is a `TypeError` thrown by
@@ -340,10 +340,14 @@ function redacting<T extends object>(target: T): T {
       // it later. Such a property is returned as-is, which means it is not
       // wrapped — acceptable, because a frozen object cannot be a query
       // builder whose rejection we would need to catch.
-      const own = Reflect.getOwnPropertyDescriptor(object, property);
+      const own = Reflect.getOwnPropertyDescriptor(object, property)
 
-      if (own !== undefined && own.writable === false && own.configurable === false) {
-        return value;
+      if (
+        own !== undefined &&
+        own.writable === false &&
+        own.configurable === false
+      ) {
+        return value
       }
 
       // `then`, `catch` and `finally` all need intercepting. Drizzle's
@@ -352,88 +356,102 @@ function redacting<T extends object>(target: T): T {
       // or `.finally()` instead of `await` would route around the redaction
       // entirely.
       if (
-        (property === 'then' || property === 'catch' || property === 'finally') &&
-        typeof value === 'function'
+        (property === "then" ||
+          property === "catch" ||
+          property === "finally") &&
+        typeof value === "function"
       ) {
-        return memoise(object, property, value, () => function settled(...handlers: unknown[]) {
-          const redact = (handler: unknown) => (error: unknown) => {
-            const redacted = redactQueryParams(error);
+        return memoise(
+          object,
+          property,
+          value,
+          () =>
+            function settled(...handlers: unknown[]) {
+              const redact = (handler: unknown) => (error: unknown) => {
+                const redacted = redactQueryParams(error)
 
-            if (typeof handler === 'function') {
-              return (handler as (e: unknown) => unknown)(redacted);
+                if (typeof handler === "function") {
+                  return (handler as (e: unknown) => unknown)(redacted)
+                }
+
+                throw redacted
+              }
+
+              if (property === "then") {
+                return (value as (...a: unknown[]) => unknown).call(
+                  object,
+                  handlers[0],
+                  redact(handlers[1])
+                )
+              }
+
+              if (property === "catch") {
+                return (object as { then: (...a: unknown[]) => unknown }).then(
+                  undefined,
+                  redact(handlers[0])
+                )
+              }
+
+              // `finally` does not receive the error, so the redaction has to be
+              // attached alongside the callback rather than through it.
+              //
+              // **This property has now been traded away three times, so it is
+              // stated as a rule: this must be indistinguishable from native
+              // `finally` in ordering and in settlement.** "The callback ran" is
+              // not the bar — that was the second version, and it was still wrong
+              // twice over. Measured against a native control:
+              //
+              //   NATIVE async cb     cleanup-start -> cleanup-end -> settled
+              //   NAIVE  async cb     cleanup-start -> settled
+              //   NATIVE rejecting cb settles with "from-cleanup"
+              //   NAIVE  rejecting cb unhandledRejection -> process terminates
+              //
+              // So the callback's result is **awaited**, because
+              // `await db.x().finally(async () => releaseLock())` otherwise
+              // resumes with the lock still held — cleanup that nominally ran and
+              // was not finished. And a callback returning a rejected promise is
+              // adopted rather than orphaned: unhandled, it kills the process
+              // under Node's default `--unhandled-rejections=throw`, which is
+              // worse than any wrong settlement.
+              //
+              // Native `finally` discards a callback's fulfilment value and keeps
+              // the original settlement; only a throw or rejection from the
+              // callback replaces it. `Promise.resolve(...).then(() => result)`
+              // is exactly that behaviour.
+              const onFinally = handlers[0] as (() => unknown) | undefined
+
+              return (object as { then: (...a: unknown[]) => unknown }).then(
+                (result: unknown) =>
+                  Promise.resolve(onFinally?.()).then(() => result),
+                (error: unknown) => {
+                  const redacted = redactQueryParams(error)
+
+                  return Promise.resolve(onFinally?.()).then(() => {
+                    throw redacted
+                  })
+                }
+              )
             }
-
-            throw redacted;
-          };
-
-          if (property === 'then') {
-            return (value as (...a: unknown[]) => unknown).call(
-              object,
-              handlers[0],
-              redact(handlers[1]),
-            );
-          }
-
-          if (property === 'catch') {
-            return (object as { then: (...a: unknown[]) => unknown }).then(
-              undefined,
-              redact(handlers[0]),
-            );
-          }
-
-          // `finally` does not receive the error, so the redaction has to be
-          // attached alongside the callback rather than through it.
-          //
-          // **This property has now been traded away three times, so it is
-          // stated as a rule: this must be indistinguishable from native
-          // `finally` in ordering and in settlement.** "The callback ran" is
-          // not the bar — that was the second version, and it was still wrong
-          // twice over. Measured against a native control:
-          //
-          //   NATIVE async cb     cleanup-start -> cleanup-end -> settled
-          //   NAIVE  async cb     cleanup-start -> settled
-          //   NATIVE rejecting cb settles with "from-cleanup"
-          //   NAIVE  rejecting cb unhandledRejection -> process terminates
-          //
-          // So the callback's result is **awaited**, because
-          // `await db.x().finally(async () => releaseLock())` otherwise
-          // resumes with the lock still held — cleanup that nominally ran and
-          // was not finished. And a callback returning a rejected promise is
-          // adopted rather than orphaned: unhandled, it kills the process
-          // under Node's default `--unhandled-rejections=throw`, which is
-          // worse than any wrong settlement.
-          //
-          // Native `finally` discards a callback's fulfilment value and keeps
-          // the original settlement; only a throw or rejection from the
-          // callback replaces it. `Promise.resolve(...).then(() => result)`
-          // is exactly that behaviour.
-          const onFinally = handlers[0] as (() => unknown) | undefined;
-
-          return (object as { then: (...a: unknown[]) => unknown }).then(
-            (result: unknown) =>
-              Promise.resolve(onFinally?.()).then(() => result),
-            (error: unknown) => {
-              const redacted = redactQueryParams(error);
-
-              return Promise.resolve(onFinally?.()).then(() => {
-                throw redacted;
-              });
-            },
-          );
-        });
+        )
       }
 
-      if (typeof value === 'function') {
-        return memoise(object, property, value, () => function forwarded(...args: unknown[]) {
-          const result = (value as (...a: unknown[]) => unknown).apply(
-            object,
-            args,
-          );
+      if (typeof value === "function") {
+        return memoise(
+          object,
+          property,
+          value,
+          () =>
+            function forwarded(...args: unknown[]) {
+              const result = (value as (...a: unknown[]) => unknown).apply(
+                object,
+                args
+              )
 
-          return typeof result === 'object' && result !== null
-            ? redacting(result)
-            : result;
-        });
+              return typeof result === "object" && result !== null
+                ? redacting(result)
+                : result
+            }
+        )
       }
 
       // A plain object property is wrapped too. `db.query` — Drizzle's
@@ -441,13 +459,13 @@ function redacting<T extends object>(target: T): T {
       // is an own property rather than a method, so it fell straight through
       // and every query made through it was unprotected. Nothing uses it
       // today, which is precisely why it would have been missed.
-      if (typeof value === 'object' && value !== null) {
-        return memoise(object, property, value, () => redacting(value));
+      if (typeof value === "object" && value !== null) {
+        return memoise(object, property, value, () => redacting(value))
       }
 
-      return value;
+      return value
     },
-  }) as T;
+  }) as T
 }
 
-export { redacting as withRedactedQueryErrors };
+export { redacting as withRedactedQueryErrors }

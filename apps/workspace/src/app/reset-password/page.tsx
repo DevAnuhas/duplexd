@@ -1,5 +1,5 @@
-import { notFound } from 'next/navigation';
-import { Suspense } from 'react';
+import { notFound } from "next/navigation"
+import { Suspense } from "react"
 
 import {
   Card,
@@ -7,11 +7,11 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
-import { emailDeliveryConfigured } from '@/db/env';
+} from "@/components/ui/card"
+import { Skeleton } from "@/components/ui/skeleton"
+import { emailDeliveryConfigured } from "@/db/env"
 
-import { ResetPasswordForm } from './reset-password-form';
+import { ResetPasswordForm } from "./reset-password-form"
 
 /**
  * Choose a new password.
@@ -28,7 +28,7 @@ import { ResetPasswordForm } from './reset-password-form';
  */
 export default function ResetPasswordPage() {
   if (!emailDeliveryConfigured()) {
-    notFound();
+    notFound()
   }
 
   return (
@@ -61,5 +61,5 @@ export default function ResetPasswordPage() {
         </Card>
       </div>
     </main>
-  );
+  )
 }

@@ -1,10 +1,10 @@
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath } from "node:url"
 
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import pg from 'pg';
+import { drizzle } from "drizzle-orm/node-postgres"
+import { migrate } from "drizzle-orm/node-postgres/migrator"
+import pg from "pg"
 
-import { requireDatabaseUrl } from '@/db/env';
+import { requireDatabaseUrl } from "@/db/env"
 
 /**
  * Database plumbing shared by the database-backed tests.
@@ -19,25 +19,27 @@ import { requireDatabaseUrl } from '@/db/env';
  */
 
 /** Committed migrations, resolved absolutely so the runner's cwd is irrelevant. */
-const migrationsFolder = fileURLToPath(new URL('../../drizzle', import.meta.url));
+const migrationsFolder = fileURLToPath(
+  new URL("../../drizzle", import.meta.url)
+)
 
 /** Every table the data model requires, after migrations have applied. */
 export const EXPECTED_TABLES = [
-  'accounts',
-  'api_keys',
-  'assistants',
-  'auth_accounts',
-  'call_events',
-  'call_rate_limits',
-  'calls',
-  'sessions',
-  'users',
-  'verifications',
-] as const;
+  "accounts",
+  "api_keys",
+  "assistants",
+  "auth_accounts",
+  "call_events",
+  "call_rate_limits",
+  "calls",
+  "sessions",
+  "users",
+  "verifications",
+] as const
 
 /** Opens a pool against the configured database. The caller ends it. */
 export function openTestPool(): pg.Pool {
-  return new pg.Pool({ connectionString: requireDatabaseUrl() });
+  return new pg.Pool({ connectionString: requireDatabaseUrl() })
 }
 
 /**
@@ -47,14 +49,14 @@ export function openTestPool(): pg.Pool {
  * looks like a hung suite rather than a leak and wastes an afternoon.
  */
 export async function withTestPool<T>(
-  body: (pool: pg.Pool) => Promise<T>,
+  body: (pool: pg.Pool) => Promise<T>
 ): Promise<T> {
-  const pool = openTestPool();
+  const pool = openTestPool()
 
   try {
-    return await body(pool);
+    return await body(pool)
   } finally {
-    await pool.end();
+    await pool.end()
   }
 }
 
@@ -74,19 +76,19 @@ export async function withTestPool<T>(
  */
 export async function resetAndMigrate(): Promise<void> {
   await withTestPool(async (pool) => {
-    await pool.query('DROP SCHEMA IF EXISTS drizzle CASCADE');
-    await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
-    await pool.query('CREATE SCHEMA public');
+    await pool.query("DROP SCHEMA IF EXISTS drizzle CASCADE")
+    await pool.query("DROP SCHEMA IF EXISTS public CASCADE")
+    await pool.query("CREATE SCHEMA public")
 
-    await migrate(drizzle(pool), { migrationsFolder });
-  });
+    await migrate(drizzle(pool), { migrationsFolder })
+  })
 }
 
 /** Applies the committed migrations without dropping anything first. */
 export async function applyMigrations(): Promise<void> {
   await withTestPool(async (pool) => {
-    await migrate(drizzle(pool), { migrationsFolder });
-  });
+    await migrate(drizzle(pool), { migrationsFolder })
+  })
 }
 
 /**
@@ -101,9 +103,9 @@ export async function isSchemaPresent(): Promise<boolean> {
     const { rows } = await pool.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables
        WHERE table_schema = 'public' AND table_name = ANY($1::text[])`,
-      [[...EXPECTED_TABLES]],
-    );
+      [[...EXPECTED_TABLES]]
+    )
 
-    return rows.length === EXPECTED_TABLES.length;
-  });
+    return rows.length === EXPECTED_TABLES.length
+  })
 }

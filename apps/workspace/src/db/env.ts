@@ -23,17 +23,17 @@
  * connection string and nothing here special-cases what answers it.
  */
 export function requireDatabaseUrl(): string {
-  const url = process.env.DATABASE_URL;
+  const url = process.env.DATABASE_URL
 
-  if (url === undefined || url.trim() === '') {
+  if (url === undefined || url.trim() === "") {
     throw new Error(
-      'DATABASE_URL is unset or empty. Set it to a PostgreSQL connection ' +
-        'string. It is never defaulted: an empty value would connect to a ' +
-        'local database instead of failing.',
-    );
+      "DATABASE_URL is unset or empty. Set it to a PostgreSQL connection " +
+        "string. It is never defaulted: an empty value would connect to a " +
+        "local database instead of failing."
+    )
   }
 
-  return url;
+  return url
 }
 
 /**
@@ -44,34 +44,34 @@ export function requireDatabaseUrl(): string {
  * encryption, with the added problem that it looks encrypted.
  */
 export function requireEncryptionKey(): Buffer {
-  const hex = process.env.ASSISTANT_SECRET_KEY;
+  const hex = process.env.ASSISTANT_SECRET_KEY
 
-  if (hex === undefined || hex.trim() === '') {
+  if (hex === undefined || hex.trim() === "") {
     throw new Error(
-      'ASSISTANT_SECRET_KEY is unset or empty. It must be 32 bytes of random ' +
-        'data, hex-encoded (64 characters).',
-    );
+      "ASSISTANT_SECRET_KEY is unset or empty. It must be 32 bytes of random " +
+        "data, hex-encoded (64 characters)."
+    )
   }
 
   if (!/^[0-9a-fA-F]{64}$/.test(hex.trim())) {
     throw new Error(
-      'ASSISTANT_SECRET_KEY must be exactly 64 hex characters (32 bytes). ' +
-        `Received ${hex.trim().length} characters.`,
-    );
+      "ASSISTANT_SECRET_KEY must be exactly 64 hex characters (32 bytes). " +
+        `Received ${hex.trim().length} characters.`
+    )
   }
 
-  return Buffer.from(hex.trim(), 'hex');
+  return Buffer.from(hex.trim(), "hex")
 }
 
 /** The Better Auth signing secret, or an error naming it. */
 export function requireAuthSecret(): string {
-  const secret = process.env.BETTER_AUTH_SECRET;
+  const secret = process.env.BETTER_AUTH_SECRET
 
-  if (secret === undefined || secret.trim() === '') {
-    throw new Error('BETTER_AUTH_SECRET is unset or empty.');
+  if (secret === undefined || secret.trim() === "") {
+    throw new Error("BETTER_AUTH_SECRET is unset or empty.")
   }
 
-  return secret;
+  return secret
 }
 
 /**
@@ -80,16 +80,16 @@ export function requireAuthSecret(): string {
  * Better Auth's `DynamicBaseURLConfig`.
  */
 export type DynamicAuthBaseUrl = {
-  allowedHosts: string[];
-  protocol: 'https';
-  fallback: string;
-};
+  allowedHosts: string[]
+  protocol: "https"
+  fallback: string
+}
 
 /** `BETTER_AUTH_URL` when it is set to something, otherwise `undefined`. */
 function explicitAuthUrl(): string | undefined {
-  const url = process.env.BETTER_AUTH_URL?.trim();
+  const url = process.env.BETTER_AUTH_URL?.trim()
 
-  return url ? url : undefined;
+  return url ? url : undefined
 }
 
 /**
@@ -101,26 +101,26 @@ function explicitAuthUrl(): string | undefined {
  * drifted would be the one nobody was looking at.
  */
 function previewHosts(): string[] {
-  if (process.env.VERCEL_ENV !== 'preview') {
-    return [];
+  if (process.env.VERCEL_ENV !== "preview") {
+    return []
   }
 
   const hosts = [process.env.VERCEL_BRANCH_URL, process.env.VERCEL_URL]
     .map((host) => host?.trim())
-    .filter((host): host is string => Boolean(host));
+    .filter((host): host is string => Boolean(host))
 
-  return [...new Set(hosts)];
+  return [...new Set(hosts)]
 }
 
 /** The one error both accessors raise, so the message cannot drift. */
 function missingAuthUrl(): Error {
   return new Error(
-    'BETTER_AUTH_URL is unset or empty. Set it to the origin the app is ' +
-      'served from, for example http://localhost:3000. It is not derived ' +
-      'from the request, because behind a proxy the request does not decide ' +
-      'what this deployment is. Vercel preview deployments may instead leave ' +
-      'it unset and let VERCEL_BRANCH_URL and VERCEL_URL supply the origins.',
-  );
+    "BETTER_AUTH_URL is unset or empty. Set it to the origin the app is " +
+      "served from, for example http://localhost:3000. It is not derived " +
+      "from the request, because behind a proxy the request does not decide " +
+      "what this deployment is. Vercel preview deployments may instead leave " +
+      "it unset and let VERCEL_BRANCH_URL and VERCEL_URL supply the origins."
+  )
 }
 
 /**
@@ -163,19 +163,19 @@ function missingAuthUrl(): Error {
  * someone cannot stay signed in.
  */
 export function requireAuthUrl(): string {
-  const explicit = explicitAuthUrl();
+  const explicit = explicitAuthUrl()
 
   if (explicit !== undefined) {
-    return explicit;
+    return explicit
   }
 
-  const [preferred] = previewHosts();
+  const [preferred] = previewHosts()
 
   if (preferred !== undefined) {
-    return `https://${preferred}`;
+    return `https://${preferred}`
   }
 
-  throw missingAuthUrl();
+  throw missingAuthUrl()
 }
 
 /**
@@ -203,46 +203,46 @@ export function requireAuthUrl(): string {
  * base URL would put a request header into the auth decision for no benefit.
  */
 export function resolveAuthBaseUrl(): string | DynamicAuthBaseUrl {
-  const explicit = explicitAuthUrl();
+  const explicit = explicitAuthUrl()
 
   if (explicit !== undefined) {
-    return explicit;
+    return explicit
   }
 
-  const hosts = previewHosts();
-  const [preferred] = hosts;
+  const hosts = previewHosts()
+  const [preferred] = hosts
 
   if (preferred !== undefined) {
     return {
       allowedHosts: hosts,
-      protocol: 'https',
+      protocol: "https",
       fallback: `https://${preferred}`,
-    };
+    }
   }
 
-  throw missingAuthUrl();
+  throw missingAuthUrl()
 }
 
 /** Pipecat Cloud API key used only by the server-side start request. */
 export function requirePipecatApiKey(): string {
-  const key = process.env.PIPECAT_API_KEY;
+  const key = process.env.PIPECAT_API_KEY
 
-  if (key === undefined || key.trim() === '') {
-    throw new Error('PIPECAT_API_KEY is unset or empty.');
+  if (key === undefined || key.trim() === "") {
+    throw new Error("PIPECAT_API_KEY is unset or empty.")
   }
 
-  return key.trim();
+  return key.trim()
 }
 
 /** High-entropy bearer credential protecting the external sweep endpoint. */
 export function readCallSweepToken(): string | null {
-  const token = process.env.CALL_SWEEP_TOKEN;
+  const token = process.env.CALL_SWEEP_TOKEN
 
-  if (token === undefined || token.trim() === '') {
-    return null;
+  if (token === undefined || token.trim() === "") {
+    return null
   }
 
-  return token.trim();
+  return token.trim()
 }
 
 /**
@@ -262,16 +262,16 @@ export function readCallSweepToken(): string | null {
  * required variables: a deployment without email must still boot.
  */
 export function readResendApiKey(): string | null {
-  const key = process.env.RESEND_API_KEY;
+  const key = process.env.RESEND_API_KEY
 
-  return key === undefined || key.trim() === '' ? null : key.trim();
+  return key === undefined || key.trim() === "" ? null : key.trim()
 }
 
 /** The address reset mail is sent from, e.g. `duplexd <auth@example.com>`. */
 export function readEmailFrom(): string | null {
-  const from = process.env.EMAIL_FROM;
+  const from = process.env.EMAIL_FROM
 
-  return from === undefined || from.trim() === '' ? null : from.trim();
+  return from === undefined || from.trim() === "" ? null : from.trim()
 }
 
 /**
@@ -281,5 +281,5 @@ export function readEmailFrom(): string | null {
  * values themselves, which are a credential and an address.
  */
 export function emailDeliveryConfigured(): boolean {
-  return readResendApiKey() !== null && readEmailFrom() !== null;
+  return readResendApiKey() !== null && readEmailFrom() !== null
 }

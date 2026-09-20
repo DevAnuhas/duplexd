@@ -1,15 +1,15 @@
-import type { ReactNode } from 'react';
+import type { ReactNode } from "react"
 
-import { AppSidebar } from '@/components/app-sidebar';
-import { BreadcrumbTrail } from '@/components/breadcrumb-trail';
-import { Separator } from '@/components/ui/separator';
+import { AppSidebar } from "@/components/app-sidebar"
+import { BreadcrumbTrail } from "@/components/breadcrumb-trail"
+import { Separator } from "@/components/ui/separator"
 import {
   SidebarInset,
   SidebarProvider,
   SidebarTrigger,
-} from '@/components/ui/sidebar';
+} from "@/components/ui/sidebar"
 
-import { requireShell } from './shell-data';
+import { requireShell } from "./shell-data"
 
 /**
  * The signed-in shell.
@@ -46,10 +46,10 @@ import { requireShell } from './shell-data';
  * this, `next build` would try to prerender it and would need a reachable
  * database at build time.
  */
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic"
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
-  const shell = await requireShell();
+  const shell = await requireShell()
 
   return (
     /*
@@ -71,7 +71,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         counts={shell.counts}
       />
       <SidebarInset className="flex min-h-0 flex-1 flex-col">
-        <header className="bg-background sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b px-4">
+        <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b bg-background px-4">
           {/* size-11 rather than the 28px default: 44px minimum target. */}
           <SidebarTrigger className="-ml-1 size-11" />
           <Separator orientation="vertical" className="mr-2 h-4" />
@@ -93,5 +93,5 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         </div>
       </SidebarInset>
     </SidebarProvider>
-  );
+  )
 }

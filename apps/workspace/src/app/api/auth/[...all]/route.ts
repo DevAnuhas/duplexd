@@ -1,6 +1,6 @@
-import { toNextJsHandler } from 'better-auth/next-js';
+import { toNextJsHandler } from "better-auth/next-js"
 
-import { getAuth } from '@/lib/auth';
+import { getAuth } from "@/lib/auth"
 
 /**
  * `next build` must never evaluate the auth instance, which would pull in
@@ -12,5 +12,5 @@ import { getAuth } from '@/lib/auth';
  */
 
 export const { GET, POST } = toNextJsHandler((request: Request) =>
-  getAuth().handler(request),
-);
+  getAuth().handler(request)
+)

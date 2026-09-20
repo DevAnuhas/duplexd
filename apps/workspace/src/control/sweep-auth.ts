@@ -1,11 +1,11 @@
-import { secretsMatch } from '@/lib/crypto';
-import { hashCredential } from '@/lib/credentials';
+import { secretsMatch } from "@/lib/crypto"
+import { hashCredential } from "@/lib/credentials"
 
 export type SweepAuthFailure =
-  'sweep_not_configured' | 'missing_header' | 'malformed' | 'mismatch';
+  "sweep_not_configured" | "missing_header" | "malformed" | "mismatch"
 
 export type SweepAuthDecision =
-  { ok: true } | { ok: false; reason: SweepAuthFailure };
+  { ok: true } | { ok: false; reason: SweepAuthFailure }
 
 /**
  * Authenticates the sweep request without exposing why it failed over HTTP.
@@ -15,24 +15,24 @@ export type SweepAuthDecision =
  */
 export function authenticateSweep(
   authorization: string | null,
-  expectedToken: string | null,
+  expectedToken: string | null
 ): SweepAuthDecision {
   if (expectedToken === null) {
-    return { ok: false, reason: 'sweep_not_configured' };
+    return { ok: false, reason: "sweep_not_configured" }
   }
 
   if (authorization === null) {
-    return { ok: false, reason: 'missing_header' };
+    return { ok: false, reason: "missing_header" }
   }
 
-  const match = /^Bearer ([^\s]+)$/.exec(authorization);
+  const match = /^Bearer ([^\s]+)$/.exec(authorization)
   if (match === null) {
-    return { ok: false, reason: 'malformed' };
+    return { ok: false, reason: "malformed" }
   }
 
-  const candidateDigest = hashCredential(match[1]!);
-  const expectedDigest = hashCredential(expectedToken);
+  const candidateDigest = hashCredential(match[1]!)
+  const expectedDigest = hashCredential(expectedToken)
   return secretsMatch(candidateDigest, expectedDigest)
     ? { ok: true }
-    : { ok: false, reason: 'mismatch' };
+    : { ok: false, reason: "mismatch" }
 }

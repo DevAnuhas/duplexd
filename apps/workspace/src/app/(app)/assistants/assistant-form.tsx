@@ -1,35 +1,35 @@
-'use client';
+"use client"
 
-import { zodResolver } from '@hookform/resolvers/zod';
-import { CaretDown, Copy, SpinnerGap } from '@phosphor-icons/react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
+import { zodResolver } from "@hookform/resolvers/zod"
+import { CaretDown, Copy, SpinnerGap } from "@phosphor-icons/react"
+import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { useState, useTransition } from "react"
 import {
   Controller,
   useForm,
   useWatch,
   type Control,
   type FieldErrors,
-} from 'react-hook-form';
-import { toast } from 'sonner';
+} from "react-hook-form"
+import { toast } from "sonner"
 
-import type { ActionResult } from '@/app/actions';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import type { ActionResult } from "@/app/actions"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
+} from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from '@/components/ui/collapsible';
+} from "@/components/ui/collapsible"
 import {
   Field,
   FieldDescription,
@@ -38,9 +38,9 @@ import {
   FieldLabel,
   FieldLegend,
   FieldSet,
-} from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
-import { Separator } from '@/components/ui/separator';
+} from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
+import { Separator } from "@/components/ui/separator"
 import {
   Table,
   TableBody,
@@ -48,41 +48,41 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table';
-import { Textarea } from '@/components/ui/textarea';
+} from "@/components/ui/table"
+import { Textarea } from "@/components/ui/textarea"
 import {
   assistantSchema,
   type AssistantFormInput,
-} from '@/lib/assistant-schema';
-import { summarizeTools } from '@/lib/tools-summary';
-import type { ValidationIssue } from '@/lib/validate';
+} from "@/lib/assistant-schema"
+import { summarizeTools } from "@/lib/tools-summary"
+import type { ValidationIssue } from "@/lib/validate"
 
 export type AssistantFormValues = {
-  id?: string;
-  name?: string | null;
-  voice?: string | null;
-  accentStyle?: string | null;
-  instructions?: string | null;
-  backendInstructions?: string | null;
-  backendModel?: string | null;
-  waitingBehavior?: string | null;
-  serverUrl?: string | null;
-  tools?: unknown;
-  hasServerSecret?: boolean;
-};
+  id?: string
+  name?: string | null
+  voice?: string | null
+  accentStyle?: string | null
+  instructions?: string | null
+  backendInstructions?: string | null
+  backendModel?: string | null
+  waitingBehavior?: string | null
+  serverUrl?: string | null
+  tools?: unknown
+  hasServerSecret?: boolean
+}
 
 const sections = [
-  ['identity', 'Identity'],
-  ['conversation', 'Conversation'],
-  ['waiting', 'While waiting'],
-  ['backend', 'Backend & connection'],
-  ['tool-settings', 'Tools'],
-] as const;
+  ["identity", "Identity"],
+  ["conversation", "Conversation"],
+  ["waiting", "While waiting"],
+  ["backend", "Backend & connection"],
+  ["tool-settings", "Tools"],
+] as const
 
 type TextFieldName = Exclude<
   keyof AssistantFormInput,
-  'clearServerSecret' | 'tools'
->;
+  "clearServerSecret" | "tools"
+>
 
 /** One Controller/Field composition for the editor's ordinary text controls. */
 function AssistantTextField({
@@ -91,16 +91,16 @@ function AssistantTextField({
   label,
   description,
   rows,
-  type = 'text',
+  type = "text",
   placeholder,
 }: {
-  control: Control<AssistantFormInput>;
-  name: TextFieldName;
-  label: string;
-  description?: string;
-  rows?: number;
-  type?: 'text' | 'password';
-  placeholder: string;
+  control: Control<AssistantFormInput>
+  name: TextFieldName
+  label: string
+  description?: string
+  rows?: number
+  type?: "text" | "password"
+  placeholder: string
 }) {
   return (
     <Controller
@@ -120,16 +120,16 @@ function AssistantTextField({
               id={field.name}
               type={type}
               placeholder={placeholder}
-              autoComplete={type === 'password' ? 'new-password' : undefined}
+              autoComplete={type === "password" ? "new-password" : undefined}
               className="min-h-11"
               aria-invalid={fieldState.invalid}
               aria-describedby={
                 [
-                  description ? `${field.name}-help` : '',
-                  fieldState.invalid ? `${field.name}-error` : '',
+                  description ? `${field.name}-help` : "",
+                  fieldState.invalid ? `${field.name}-error` : "",
                 ]
                   .filter(Boolean)
-                  .join(' ') || undefined
+                  .join(" ") || undefined
               }
             />
           ) : (
@@ -140,17 +140,17 @@ function AssistantTextField({
               placeholder={placeholder}
               className={
                 rows >= 6
-                  ? 'min-h-40 leading-relaxed'
-                  : 'min-h-24 leading-relaxed'
+                  ? "min-h-40 leading-relaxed"
+                  : "min-h-24 leading-relaxed"
               }
               aria-invalid={fieldState.invalid}
               aria-describedby={
                 [
-                  description ? `${field.name}-help` : '',
-                  fieldState.invalid ? `${field.name}-error` : '',
+                  description ? `${field.name}-help` : "",
+                  fieldState.invalid ? `${field.name}-error` : "",
                 ]
                   .filter(Boolean)
-                  .join(' ') || undefined
+                  .join(" ") || undefined
               }
             />
           )}
@@ -158,7 +158,7 @@ function AssistantTextField({
         </Field>
       )}
     />
-  );
+  )
 }
 
 /**
@@ -171,49 +171,49 @@ export function AssistantForm({
   action,
   submitLabel,
 }: {
-  values: AssistantFormValues;
-  action: (formData: FormData) => Promise<ActionResult>;
-  submitLabel: string;
+  values: AssistantFormValues
+  action: (formData: FormData) => Promise<ActionResult>
+  submitLabel: string
 }) {
-  const router = useRouter();
-  const [, startTransition] = useTransition();
-  const [hasSecret, setHasSecret] = useState(values.hasServerSecret === true);
-  const [toolsOpen, setToolsOpen] = useState(false);
+  const router = useRouter()
+  const [, startTransition] = useTransition()
+  const [hasSecret, setHasSecret] = useState(values.hasServerSecret === true)
+  const [toolsOpen, setToolsOpen] = useState(false)
   const form = useForm<AssistantFormInput>({
     resolver: zodResolver(assistantSchema),
     defaultValues: {
-      name: values.name ?? '',
-      instructions: values.instructions ?? '',
-      voice: values.voice ?? '',
-      accentStyle: values.accentStyle ?? '',
-      waitingBehavior: values.waitingBehavior ?? '',
-      backendModel: values.backendModel ?? '',
-      backendInstructions: values.backendInstructions ?? '',
-      serverUrl: values.serverUrl ?? '',
-      serverSecret: '',
+      name: values.name ?? "",
+      instructions: values.instructions ?? "",
+      voice: values.voice ?? "",
+      accentStyle: values.accentStyle ?? "",
+      waitingBehavior: values.waitingBehavior ?? "",
+      backendModel: values.backendModel ?? "",
+      backendInstructions: values.backendInstructions ?? "",
+      serverUrl: values.serverUrl ?? "",
+      serverSecret: "",
       clearServerSecret: false,
       tools: JSON.stringify(values.tools ?? [], null, 2),
     },
     shouldFocusError: false,
-  });
+  })
   const title =
-    useWatch({ control: form.control, name: 'name' }) || 'New assistant';
+    useWatch({ control: form.control, name: "name" }) || "New assistant"
   const [toolsSummary, setToolsSummary] = useState(() =>
-    summarizeTools(form.getValues('tools')),
-  );
-  const { isDirty, isSubmitting } = form.formState;
+    summarizeTools(form.getValues("tools"))
+  )
+  const { isDirty, isSubmitting } = form.formState
 
   function focusError(name: keyof AssistantFormInput) {
-    if (name === 'tools') setToolsOpen(true);
-    requestAnimationFrame(() => form.setFocus(name));
+    if (name === "tools") setToolsOpen(true)
+    requestAnimationFrame(() => form.setFocus(name))
   }
 
   function invalid(errors: FieldErrors<AssistantFormInput>) {
     const first = Object.keys(errors).find(
-      (name) => name in assistantSchema.shape,
-    );
-    if (first !== undefined) focusError(first as keyof AssistantFormInput);
-    toast.error('This assistant was not saved. Check the highlighted fields.');
+      (name) => name in assistantSchema.shape
+    )
+    if (first !== undefined) focusError(first as keyof AssistantFormInput)
+    toast.error("This assistant was not saved. Check the highlighted fields.")
   }
 
   function reject(issues: ValidationIssue[]) {
@@ -221,71 +221,71 @@ export function AssistantForm({
       const message = issues
         .filter((issue) => issue.field === name)
         .map((issue) => issue.message)
-        .join(' ');
+        .join(" ")
       if (name in assistantSchema.shape) {
         form.setError(name as keyof AssistantFormInput, {
-          type: 'server',
+          type: "server",
           message,
-        });
+        })
       } else {
-        form.setError('root.server', { message });
+        form.setError("root.server", { message })
       }
     }
-    const first = issues.find((issue) => issue.field in assistantSchema.shape);
-    if (first) focusError(first.field as keyof AssistantFormInput);
-    toast.error('This assistant was not saved.', {
-      description: issues.map((issue) => issue.message).join(' '),
-    });
+    const first = issues.find((issue) => issue.field in assistantSchema.shape)
+    if (first) focusError(first.field as keyof AssistantFormInput)
+    toast.error("This assistant was not saved.", {
+      description: issues.map((issue) => issue.message).join(" "),
+    })
   }
 
   async function submit(input: AssistantFormInput) {
-    const data = new FormData();
+    const data = new FormData()
     for (const [name, value] of Object.entries(input)) {
-      if (name === 'clearServerSecret') {
-        if (value === true) data.set(name, 'on');
-      } else if (typeof value === 'string') {
-        data.set(name, value);
+      if (name === "clearServerSecret") {
+        if (value === true) data.set(name, "on")
+      } else if (typeof value === "string") {
+        data.set(name, value)
       }
     }
-    setToolsSummary(summarizeTools(input.tools));
-    form.clearErrors();
+    setToolsSummary(summarizeTools(input.tools))
+    form.clearErrors()
     // Keep the server mutation in React's transition context while returning a
     // promise to RHF so isSubmitting covers the whole request.
     await new Promise<void>((resolve) => {
       startTransition(async () => {
         try {
-          const result = await action(data);
+          const result = await action(data)
           if (!result.ok) {
-            reject(result.issues);
-            return;
+            reject(result.issues)
+            return
           }
-          if (input.serverSecret.trim() !== '') setHasSecret(true);
-          else if (input.clearServerSecret) setHasSecret(false);
-          form.reset({ ...input, serverSecret: '', clearServerSecret: false });
-          toast.success('Saved');
+          if (input.serverSecret.trim() !== "") setHasSecret(true)
+          else if (input.clearServerSecret) setHasSecret(false)
+          form.reset({ ...input, serverSecret: "", clearServerSecret: false })
+          toast.success("Saved")
           if (values.id === undefined && result.assistantId !== undefined) {
-            router.replace(`/assistants/${result.assistantId}`);
+            router.replace(`/assistants/${result.assistantId}`)
           }
-          router.refresh();
+          router.refresh()
         } catch {
           const message =
-            'Could not confirm the save. Your edits are still here. Try again or refresh to check the saved version.';
-          form.setError('root.server', { message });
-          toast.error(message);
+            "Could not confirm the save. Your edits are still here. Try again or refresh to check the saved version."
+          form.setError("root.server", { message })
+          toast.error(message)
         } finally {
-          resolve();
+          resolve()
         }
-      });
-    });
+      })
+    })
   }
 
   async function copyId() {
-    if (values.id === undefined) return;
+    if (values.id === undefined) return
     try {
-      await navigator.clipboard.writeText(values.id);
-      toast.success('Assistant ID copied');
+      await navigator.clipboard.writeText(values.id)
+      toast.success("Assistant ID copied")
     } catch {
-      toast.error('Could not copy. Select the ID to copy it.');
+      toast.error("Could not copy. Select the ID to copy it.")
     }
   }
 
@@ -303,7 +303,7 @@ export function AssistantForm({
           >
             Assistants
           </Link>
-          <h1 className="break-words text-3xl font-semibold tracking-tight">
+          <h1 className="text-3xl font-semibold tracking-tight break-words">
             {title}
           </h1>
           {values.id !== undefined ? (
@@ -328,7 +328,7 @@ export function AssistantForm({
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <span role="status" className="text-sm text-muted-foreground">
-            {isSubmitting ? 'Saving…' : isDirty ? 'Unsaved changes' : ''}
+            {isSubmitting ? "Saving…" : isDirty ? "Unsaved changes" : ""}
           </span>
           <Button type="submit" disabled={isSubmitting} className="min-h-11">
             {isSubmitting && (
@@ -339,7 +339,7 @@ export function AssistantForm({
                 aria-hidden="true"
               />
             )}
-            {isSubmitting ? 'Saving…' : submitLabel}
+            {isSubmitting ? "Saving…" : submitLabel}
           </Button>
         </div>
       </header>
@@ -469,20 +469,20 @@ export function AssistantForm({
               <Separator />
               <FieldSet className="gap-4">
                 <FieldLegend className="mb-0 flex w-full flex-wrap items-center justify-between gap-2">
-                  Webhook secret{' '}
+                  Webhook secret{" "}
                   <Badge variant="outline">
-                    {hasSecret ? 'Configured' : 'Not configured'}
+                    {hasSecret ? "Configured" : "Not configured"}
                   </Badge>
                 </FieldLegend>
                 <FieldDescription data-testid="secret-state">
                   {hasSecret
                     ? "A secret is set. It can't be shown — enter a new one to replace it."
-                    : 'No secret is set.'}
+                    : "No secret is set."}
                 </FieldDescription>
                 <AssistantTextField
                   control={form.control}
                   name="serverSecret"
-                  label={hasSecret ? 'Replace secret' : 'New secret'}
+                  label={hasSecret ? "Replace secret" : "New secret"}
                   type="password"
                   placeholder="Enter a new webhook signing secret"
                   description="Your backend uses this shared secret to verify tool requests. Leave blank to keep the current secret."
@@ -562,7 +562,7 @@ export function AssistantForm({
                   <TableBody>
                     {toolsSummary.rows.map((tool, index) => (
                       <TableRow key={index}>
-                        <TableCell className="max-w-48 break-words whitespace-normal font-medium">
+                        <TableCell className="max-w-48 font-medium break-words whitespace-normal">
                           {tool.name}
                         </TableCell>
                         <TableCell className="max-w-lg whitespace-normal text-muted-foreground">
@@ -588,7 +588,7 @@ export function AssistantForm({
                   variant="outline"
                   className="group min-h-11"
                 >
-                  Edit as JSON{' '}
+                  Edit as JSON{" "}
                   <CaretDown
                     weight="regular"
                     data-icon="inline-end"
@@ -614,7 +614,9 @@ export function AssistantForm({
                         description, and parameters schema. Keep [] if no tools
                         are needed. Example tool:
                         <span className="mt-1 block break-words">
-                          {'{"name":"check_status","description":"Check a request status","parameters":{"type":"object","properties":{"reference":{"type":"string"}}}}'}
+                          {
+                            '{"name":"check_status","description":"Check a request status","parameters":{"type":"object","properties":{"reference":{"type":"string"}}}}'
+                          }
                         </span>
                         Place tool objects inside the array; JSON cannot contain
                         comments.
@@ -627,15 +629,15 @@ export function AssistantForm({
                         className="min-h-64 leading-relaxed"
                         spellCheck={false}
                         onBlur={() => {
-                          field.onBlur();
-                          setToolsSummary(summarizeTools(field.value));
-                          void form.trigger('tools');
+                          field.onBlur()
+                          setToolsSummary(summarizeTools(field.value))
+                          void form.trigger("tools")
                         }}
                         aria-invalid={fieldState.invalid}
                         aria-describedby={
                           fieldState.invalid
-                            ? 'tools-help tools-error'
-                            : 'tools-help'
+                            ? "tools-help tools-error"
+                            : "tools-help"
                         }
                       />
                       <FieldError
@@ -651,5 +653,5 @@ export function AssistantForm({
         </Card>
       </FieldSet>
     </form>
-  );
+  )
 }

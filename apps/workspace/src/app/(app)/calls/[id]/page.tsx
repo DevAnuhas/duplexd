@@ -1,161 +1,161 @@
-import Link from 'next/link';
-import { notFound } from 'next/navigation';
-import { ArrowLeft, CaretDown, Warning } from '@phosphor-icons/react/ssr';
+import Link from "next/link"
+import { notFound } from "next/navigation"
+import { ArrowLeft, CaretDown, Warning } from "@phosphor-icons/react/ssr"
 
-import { CallStateBadge } from '../call-state-badge';
-import { CopyButton } from '@/components/copy-button';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { CallStateBadge } from "../call-state-badge"
+import { CopyButton } from "@/components/copy-button"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from '@/components/ui/collapsible';
+} from "@/components/ui/collapsible"
 import {
   getWorkspaceCallForAccount,
   type WorkspaceCallEvent,
-} from '@/data/calls';
-import { requireShell } from '../../shell-data';
+} from "@/data/calls"
+import { requireShell } from "../../shell-data"
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic"
 
-const dateTime = new Intl.DateTimeFormat('en', {
-  year: 'numeric',
-  month: 'short',
-  day: 'numeric',
-  hour: 'numeric',
-  minute: '2-digit',
-  second: '2-digit',
-  timeZone: 'UTC',
-  timeZoneName: 'short',
-});
+const dateTime = new Intl.DateTimeFormat("en", {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  second: "2-digit",
+  timeZone: "UTC",
+  timeZoneName: "short",
+})
 
 function timestamp(value: string | null): string {
-  return value === null ? 'Not reported' : dateTime.format(new Date(value));
+  return value === null ? "Not reported" : dateTime.format(new Date(value))
 }
 
 function duration(value: number | null): string {
-  return value === null ? 'Not reported' : `${value.toFixed(3)} sec`;
+  return value === null ? "Not reported" : `${value.toFixed(3)} sec`
 }
 
 type TranscriptEvent = WorkspaceCallEvent & {
-  type: 'transcript_user' | 'transcript_assistant';
-  payload: { text: string };
-};
+  type: "transcript_user" | "transcript_assistant"
+  payload: { text: string }
+}
 
 type ToolStartedEvent = WorkspaceCallEvent & {
-  type: 'tool_started';
-  payload: { tool: string; invocationId: string };
-};
+  type: "tool_started"
+  payload: { tool: string; invocationId: string }
+}
 
 type ToolFinishedEvent = WorkspaceCallEvent & {
-  type: 'tool_finished';
+  type: "tool_finished"
   payload: {
-    tool: string;
-    invocationId: string;
-    outcome: 'success' | 'failure';
-    durationMs: number;
-    status?: number;
-    errorCategory?: string;
-  };
-};
+    tool: string
+    invocationId: string
+    outcome: "success" | "failure"
+    durationMs: number
+    status?: number
+    errorCategory?: string
+  }
+}
 
 function isTranscript(event: WorkspaceCallEvent): event is TranscriptEvent {
   return (
-    (event.type === 'transcript_user' ||
-      event.type === 'transcript_assistant') &&
+    (event.type === "transcript_user" ||
+      event.type === "transcript_assistant") &&
     event.payload !== undefined &&
-    'text' in event.payload
-  );
+    "text" in event.payload
+  )
 }
 
 function isToolStarted(event: WorkspaceCallEvent): event is ToolStartedEvent {
   return (
-    event.type === 'tool_started' &&
+    event.type === "tool_started" &&
     event.payload !== undefined &&
-    'invocationId' in event.payload &&
-    !('outcome' in event.payload)
-  );
+    "invocationId" in event.payload &&
+    !("outcome" in event.payload)
+  )
 }
 
 function isToolFinished(event: WorkspaceCallEvent): event is ToolFinishedEvent {
   return (
-    event.type === 'tool_finished' &&
+    event.type === "tool_finished" &&
     event.payload !== undefined &&
-    'outcome' in event.payload
-  );
+    "outcome" in event.payload
+  )
 }
 
 type TimelineItem =
-  | { kind: 'transcript'; event: TranscriptEvent }
+  | { kind: "transcript"; event: TranscriptEvent }
   | {
-      kind: 'tool';
-      event: ToolStartedEvent;
-      finish?: ToolFinishedEvent;
-    };
+      kind: "tool"
+      event: ToolStartedEvent
+      finish?: ToolFinishedEvent
+    }
 
 function arrangeEvents(events: WorkspaceCallEvent[]): {
-  timeline: TimelineItem[];
-  technical: WorkspaceCallEvent[];
+  timeline: TimelineItem[]
+  technical: WorkspaceCallEvent[]
 } {
-  const timeline: TimelineItem[] = [];
-  const technical: WorkspaceCallEvent[] = [];
-  const tools = new Map<string, Extract<TimelineItem, { kind: 'tool' }>>();
+  const timeline: TimelineItem[] = []
+  const technical: WorkspaceCallEvent[] = []
+  const tools = new Map<string, Extract<TimelineItem, { kind: "tool" }>>()
 
   for (const event of events) {
     if (isTranscript(event)) {
-      timeline.push({ kind: 'transcript', event });
-      continue;
+      timeline.push({ kind: "transcript", event })
+      continue
     }
     if (isToolStarted(event)) {
       if (tools.has(event.payload.invocationId)) {
-        technical.push(event);
-        continue;
+        technical.push(event)
+        continue
       }
-      const item: Extract<TimelineItem, { kind: 'tool' }> = {
-        kind: 'tool',
+      const item: Extract<TimelineItem, { kind: "tool" }> = {
+        kind: "tool",
         event,
-      };
-      tools.set(event.payload.invocationId, item);
-      timeline.push(item);
-      continue;
+      }
+      tools.set(event.payload.invocationId, item)
+      timeline.push(item)
+      continue
     }
     if (isToolFinished(event)) {
-      const start = tools.get(event.payload.invocationId);
+      const start = tools.get(event.payload.invocationId)
       if (start !== undefined && start.finish === undefined) {
-        start.finish = event;
+        start.finish = event
       } else {
-        technical.push(event);
+        technical.push(event)
       }
-      continue;
+      continue
     }
-    technical.push(event);
+    technical.push(event)
   }
 
-  return { timeline, technical };
+  return { timeline, technical }
 }
 
 function technicalLabel(type: string): string {
-  return type.replaceAll('_', ' ');
+  return type.replaceAll("_", " ")
 }
 
 export default async function CallDetailPage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: Promise<{ id: string }>
 }) {
-  const { account } = await requireShell();
+  const { account } = await requireShell()
 
-  const { id } = await params;
-  const result = await getWorkspaceCallForAccount(account.id, id);
+  const { id } = await params
+  const result = await getWorkspaceCallForAccount(account.id, id)
 
   if (result === null) {
-    notFound();
+    notFound()
   }
 
-  const { timeline, technical } = arrangeEvents(result.events);
-  const endingLabel = result.call.state === 'incomplete' ? 'Detected' : 'Ended';
+  const { timeline, technical } = arrangeEvents(result.events)
+  const endingLabel = result.call.state === "incomplete" ? "Detected" : "Ended"
 
   return (
     <main className="space-y-8">
@@ -179,7 +179,7 @@ export default async function CallDetailPage({
         />
       </div>
 
-      {result.call.state === 'incomplete' && (
+      {result.call.state === "incomplete" && (
         <Alert className="border-orange-500/30 bg-orange-500/5">
           <Warning aria-hidden="true" className="size-4" />
           <AlertTitle>Call incomplete</AlertTitle>
@@ -200,7 +200,7 @@ export default async function CallDetailPage({
         <div className="border-b p-4 lg:border-r">
           <dt className="text-xs text-muted-foreground">Assistant</dt>
           <dd className="mt-1 font-medium">
-            {result.call.assistantName ?? 'Unavailable'}
+            {result.call.assistantName ?? "Unavailable"}
           </dd>
         </div>
         <div className="border-b p-4 sm:border-r lg:border-r-0">
@@ -209,23 +209,21 @@ export default async function CallDetailPage({
             {timestamp(result.call.startedAt)}
           </dd>
         </div>
-        <div className="border-b p-4 lg:border-b-0 lg:border-r">
+        <div className="border-b p-4 lg:border-r lg:border-b-0">
           <dt className="text-xs text-muted-foreground">Duration</dt>
           <dd className="mt-1 font-medium">
             {duration(result.call.durationSecs)}
           </dd>
         </div>
-        <div className="border-b p-4 sm:border-b-0 sm:border-r">
+        <div className="border-b p-4 sm:border-r sm:border-b-0">
           <dt className="text-xs text-muted-foreground">End reason</dt>
           <dd className="mt-1 font-medium capitalize">
-            {result.call.endedReason?.replaceAll('_', ' ') ?? 'Not reported'}
+            {result.call.endedReason?.replaceAll("_", " ") ?? "Not reported"}
           </dd>
         </div>
         <div className="p-4">
           <dt className="text-xs text-muted-foreground">{endingLabel}</dt>
-          <dd className="mt-1 font-medium">
-            {timestamp(result.call.endedAt)}
-          </dd>
+          <dd className="mt-1 font-medium">{timestamp(result.call.endedAt)}</dd>
         </div>
       </dl>
 
@@ -248,41 +246,41 @@ export default async function CallDetailPage({
         {timeline.length > 0 && (
           <ol className="relative space-y-4 border-l pl-6">
             {timeline.map((item) => {
-              if (item.kind === 'transcript') {
-                const caller = item.event.type === 'transcript_user';
+              if (item.kind === "transcript") {
+                const caller = item.event.type === "transcript_user"
                 return (
                   <li key={item.event.seq} className="relative">
                     <span className="absolute top-5 -left-[1.85rem] size-2 rounded-full bg-border" />
                     <div
                       className={
                         caller
-                          ? 'mr-8 rounded-lg border bg-muted/35 p-4 sm:mr-20'
-                          : 'ml-8 rounded-lg border bg-card p-4 sm:ml-20'
+                          ? "mr-8 rounded-lg border bg-muted/35 p-4 sm:mr-20"
+                          : "ml-8 rounded-lg border bg-card p-4 sm:ml-20"
                       }
                     >
                       <div className="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                         <p className="text-sm font-medium">
-                          {caller ? 'Caller' : 'Assistant'}
+                          {caller ? "Caller" : "Assistant"}
                         </p>
                         <time className="shrink-0 text-xs text-muted-foreground">
                           {timestamp(item.event.at)}
                         </time>
                       </div>
-                      <p className="mt-2 min-w-0 whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">
+                      <p className="mt-2 min-w-0 text-sm leading-relaxed [overflow-wrap:anywhere] whitespace-pre-wrap">
                         {item.event.payload.text}
                       </p>
                     </div>
                   </li>
-                );
+                )
               }
 
-              const finish = item.finish?.payload;
+              const finish = item.finish?.payload
               const status =
                 finish === undefined
-                  ? 'No result recorded.'
-                  : finish.outcome === 'success'
+                  ? "No result recorded."
+                  : finish.outcome === "success"
                     ? `completed · ${Math.round(finish.durationMs)} ms`
-                    : `failed · ${finish.errorCategory ?? 'Failed'} · ${Math.round(finish.durationMs)} ms`;
+                    : `failed · ${finish.errorCategory ?? "Failed"} · ${Math.round(finish.durationMs)} ms`
 
               return (
                 <li key={item.event.seq} className="relative">
@@ -292,8 +290,10 @@ export default async function CallDetailPage({
                       <p className="min-w-0 text-sm [overflow-wrap:anywhere]">
                         <span className="font-medium">
                           {item.event.payload.tool}
-                        </span>{' '}
-                        <span className="text-muted-foreground">— {status}</span>
+                        </span>{" "}
+                        <span className="text-muted-foreground">
+                          — {status}
+                        </span>
                       </p>
                       <time className="shrink-0 text-xs text-muted-foreground">
                         {timestamp(item.event.at)}
@@ -301,7 +301,7 @@ export default async function CallDetailPage({
                     </CardContent>
                   </Card>
                 </li>
-              );
+              )
             })}
           </ol>
         )}
@@ -344,5 +344,5 @@ export default async function CallDetailPage({
         )}
       </section>
     </main>
-  );
+  )
 }
