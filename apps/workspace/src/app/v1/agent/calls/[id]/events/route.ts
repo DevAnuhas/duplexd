@@ -40,10 +40,7 @@ function parseEvents(
     }
     seen.add(seq);
 
-    if (
-      typeof event.at !== 'string' ||
-      !RFC3339_TIMESTAMP.test(event.at)
-    ) {
+    if (typeof event.at !== 'string' || !RFC3339_TIMESTAMP.test(event.at)) {
       return { ok: false, detail: 'Event at must be an RFC 3339 timestamp.' };
     }
     const at = new Date(event.at);
@@ -98,6 +95,9 @@ export async function POST(
   const result = await ingestAgentEvents(id, credential.token, parsed.events);
 
   if (result.kind === 'ok') {
+    if (parsed.events.length > 0) {
+      console.info(`[calls] events call=${id} count=${parsed.events.length}`);
+    }
     return json({ accepted: parsed.events.length });
   }
   if (

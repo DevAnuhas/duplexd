@@ -85,17 +85,17 @@ All commands require no environment variables, no database, and no Docker.
 
 What each one actually does at this commit — stated plainly, because a command that reports green while running nothing is worse than one that fails:
 
-| Command | What it runs | Real coverage |
-| --- | --- | --- |
-| `pnpm lint` | `bash -n` over the classifier script, ESLint over the root files, then ESLint over `apps/workspace` — all with `--max-warnings=0` | yes |
-| `pnpm typecheck` | `tsc --noEmit` over the root `tests/**`, then over `apps/workspace` | yes |
-| `pnpm test` | `vitest run` for the 41 classifier tests, then the `apps/workspace` suite | yes |
-| `pnpm build` | The production Next.js build of `apps/workspace`. **Runs with no database** — see below. | yes |
-| `pnpm lint:links` | `markdown-link-check` over every Markdown file | yes |
-| `uv run --directory agent ruff check .` | Ruff over runtime and tests | yes |
-| `uv run --directory agent mypy duplexd_agent tests` | Strict Python typecheck | yes |
-| `uv run --directory agent pytest -q` | Agent unit and integration suite | yes |
-| `docker build agent/` | Deployable agent image build, without push | yes |
+| Command                                             | What it runs                                                                                                                      | Real coverage |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| `pnpm lint`                                         | `bash -n` over the classifier script, ESLint over the root files, then ESLint over `apps/workspace` — all with `--max-warnings=0` | yes           |
+| `pnpm typecheck`                                    | `tsc --noEmit` over the root `tests/**`, then over `apps/workspace`                                                               | yes           |
+| `pnpm test`                                         | `vitest run` for the 41 classifier tests, then the `apps/workspace` suite                                                         | yes           |
+| `pnpm build`                                        | The production Next.js build of `apps/workspace`. **Runs with no database** — see below.                                          | yes           |
+| `pnpm lint:links`                                   | `markdown-link-check` over every Markdown file                                                                                    | yes           |
+| `uv run --directory agent ruff check .`             | Ruff over runtime and tests                                                                                                       | yes           |
+| `uv run --directory agent mypy duplexd_agent tests` | Strict Python typecheck                                                                                                           | yes           |
+| `uv run --directory agent pytest -q`                | Agent unit and integration suite                                                                                                  | yes           |
+| `docker build agent/`                               | Deployable agent image build, without push                                                                                        | yes           |
 
 ### Why Turbo is gone
 
@@ -114,7 +114,7 @@ P02 added the first package since, and widened each root script rather than rein
 `DATABASE_URL` is never defaulted. An unset or empty value aborts with an error naming the variable, because libpq-based clients treat an empty connection string as "use the defaults" and connect to whatever PostgreSQL is listening locally — which is how the wrong database gets migrated.
 
 ```bash
-cp .env.example .env.local     # then fill in the four variables
+cp .env.example .env.local     # then fill in the five required variables
 pnpm db:generate               # after changing src/db/schema.ts
 pnpm db:migrate                # apply committed migrations; idempotent
 pnpm dev                       # the workspace app
@@ -153,7 +153,7 @@ a log:
 - `.stack`, because V8 formats it once and caches it, so anything that read it
   before redaction would have kept the original. It is repaired by splicing the
   redacted message over the original's span rather than by matching a pattern —
-  a boundary guessed from content is guessed from *customer free text*, and an
+  a boundary guessed from content is guessed from _customer free text_, and an
   `instructions` field containing a wrapped sentence is indistinguishable from a
   stack frame.
 - **Own enumerable properties.** `DrizzleQueryError` does not only build its
@@ -190,12 +190,13 @@ The `checks` job runs a PostgreSQL 18 service container and sets `DATABASE_URL` 
 
 `.env.example` lists every variable the app reads and nothing else. Copy it to `.env.local`, which is gitignored.
 
-**Four of them are required, and the server exits if any is missing, naming the one it wants, before it binds the port.** That check lives in `src/instrumentation.ts`, which Next runs when the server boots and not during `next build`, so the image still builds with nothing set. Validating at first use instead would be too late in the way that matters: `ASSISTANT_SECRET_KEY` is only read when an assistant's webhook secret is encrypted, so a deploy missing it would boot green, serve every page, and fail on the first customer who saves a secret. It exits rather than merely throwing: Next catches a throw from that hook, and the process would stay alive holding the port and answering 500s — which anything watching the port reads as a healthy machine serving nothing. Nothing is ever defaulted — a defaulted database URL connects somewhere unintended, and a defaulted encryption key is the same as no encryption.
+**Five of them are required, and the server exits if any is missing, naming the one it wants, before it binds the port.** That check lives in `src/instrumentation.ts`, which Next runs when the server boots and not during `next build`, so the image still builds with nothing set. Validating at first use instead would be too late in the way that matters: `ASSISTANT_SECRET_KEY` is only read when an assistant's webhook secret is encrypted, so a deploy missing it would boot green, serve every page, and fail on the first customer who saves a secret. It exits rather than merely throwing: Next catches a throw from that hook, and the process would stay alive holding the port and answering 500s — which anything watching the port reads as a healthy machine serving nothing. Nothing is ever defaulted — a defaulted database URL connects somewhere unintended, and a defaulted encryption key is the same as no encryption.
 
 - `DATABASE_URL` — PostgreSQL connection string
 - `BETTER_AUTH_SECRET` — session signing secret
 - `BETTER_AUTH_URL` — the public origin the app is served from
 - `ASSISTANT_SECRET_KEY` — 32 bytes hex, encrypts assistants' webhook secrets at rest
+- `PIPECAT_API_KEY` — server-side credential for starting the deployed Pipecat agent
 
 One more is **optional**, and it is the one an operator can set wrongly:
 

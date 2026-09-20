@@ -18,19 +18,19 @@ Tool webhooks are called from the agent, not from the developer's machine, so a 
 
 **Database: Neon.** Postgres with Drizzle migrations. A branch per preview if useful. See the local section above for what development uses.
 
-**Secrets:** Fly secrets for `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, and `ASSISTANT_SECRET_KEY` — the last of which protects customers' webhook secrets at rest. Pipecat Cloud secrets for the provider key. Never in an image, never in the repository.
+**Secrets:** Fly secrets for `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `ASSISTANT_SECRET_KEY`, and `PIPECAT_API_KEY` — the encryption key protects customers' webhook secrets at rest, while the Pipecat key starts the deployed agent. Pipecat Cloud separately holds the model/provider key used by the running agent. Never in an image, never in the repository.
 
-All four are required and none is defaulted. The server exits at boot naming any that is missing, before it binds the port, so a deploy missing one fails visibly rather than serving 500s from a machine that looks healthy. `BETTER_AUTH_URL` belongs on that list and was previously omitted from it: it is the public origin, never derived from the request, because behind a proxy the `Host` header would decide what the deployment thinks it is.
+All five are required and none is defaulted. The server exits at boot naming any that is missing, before it binds the port, so a deploy missing one fails visibly rather than serving 500s from a machine that looks healthy. `BETTER_AUTH_URL` is the public origin, never derived from the request, because behind a proxy the `Host` header would decide what the deployment thinks it is.
 
 **Migrations run as a Fly release command**, before any new machine serves traffic, so a deploy cannot serve a schema that has not been applied. The image deliberately does not migrate on boot: every container in a deploy would race the others.
 
 ## Environments
 
-| Environment | Source | Purpose |
-| --- | --- | --- |
-| Preview | Each pull request | Ephemeral, synthetic tool webhooks, no real telephony |
-| Staging | `main` | Shared verification with real provider access and test numbers |
-| Production | Tagged release | Human approval required |
+| Environment | Source            | Purpose                                                        |
+| ----------- | ----------------- | -------------------------------------------------------------- |
+| Preview     | Each pull request | Ephemeral, synthetic tool webhooks, no real telephony          |
+| Staging     | `main`            | Shared verification with real provider access and test numbers |
+| Production  | Tagged release    | Human approval required                                        |
 
 Preview environments never hold production keys or real phone numbers.
 
@@ -52,6 +52,19 @@ Twilio numbers, SIP trunks, and the provider's SIP enablement are paid or extern
 
 The platform's own `call_id` is the join key across call records, agent logs, Pipecat Cloud sessions, and any telephony provider's call id. Log it on every call event. Never log audio, transcripts in full, API keys, or a customer's webhook secret.
 
-**The database layer enforces the last part of that rule rather than trusting it.** A failing query carries its bound parameters into the error it throws, so `src/db/redact.ts` wraps the client and strips every bound value from the error's message, its stack, and its own properties before anything can log it — keeping the parameterised SQL and pg's diagnostics, which carry no values. It strips *all* parameters rather than secret-shaped ones, because from P05 the payloads written to `call_events` are transcripts, and a failing insert there would otherwise put a caller's own words into the log aggregator. If you add a database client rather than using `getDb()`, you leave that protection behind.
+**The database layer enforces the last part of that rule rather than trusting it.** A failing query carries its bound parameters into the error it throws, so `src/db/redact.ts` wraps the client and strips every bound value from the error's message, its stack, and its own properties before anything can log it — keeping the parameterised SQL and pg's diagnostics, which carry no values. It strips _all_ parameters rather than secret-shaped ones, because from P05 the payloads written to `call_events` are transcripts, and a failing insert there would otherwise put a caller's own words into the log aggregator. If you add a database client rather than using `getDb()`, you leave that protection behind.
 
 An API key cannot be recovered. The row holds a prefix and a hash, so support cannot read a customer's key back to them — a lost key is replaced by minting a new one and revoking the old. Revocation is a soft delete: the row survives so calls already made with it stay attributable.
+
+## Call liveness and recovery
+
+The workspace arms a 30-second interval timer at server start. It does **not** sweep during boot; the first possible sweep is one full interval later. This matters because the agent runs on separate infrastructure: restarting the workspace says nothing about whether a caller is still talking.
+
+Every accepted event batch, including an empty heartbeat batch, advances `last_heartbeat_at`. On a timer tick:
+
+- an `active` call whose heartbeat is more than two minutes old becomes `incomplete` with `ended_reason = agent_lost`; its last reported duration is retained;
+- a `starting` call more than two minutes old becomes `failed` with `ended_reason = agent_never_started`.
+
+The starting threshold is provisional. The real cold-start measurement requires a Pipecat Cloud deployment with `min_agents = 0`; without those credentials it is blocked, not estimated. Revisit the threshold after that measurement rather than treating two minutes as provider evidence.
+
+The sweeper appends its terminal observation in the platform-owned sequence range beginning at `1_000_000_000`. Agent events must stay below that boundary, so an in-flight agent batch cannot collide with a platform event. A later agent event is still stored because it is a real observation. A later `/complete` corrects `incomplete` to `ended` with the agent's reason and duration: only the agent can authoritatively say a call finished.

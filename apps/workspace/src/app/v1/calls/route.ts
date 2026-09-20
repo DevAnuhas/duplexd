@@ -72,6 +72,9 @@ export async function POST(request: Request): Promise<Response> {
     });
 
     await markCallStarted(created.callId, upstream);
+    console.info(
+      `[calls] started call=${created.callId} assistant=${assistantId}`,
+    );
 
     return json({
       callId: created.callId,
