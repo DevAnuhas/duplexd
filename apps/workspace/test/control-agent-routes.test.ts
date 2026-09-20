@@ -404,7 +404,14 @@ describeDatabase('agent event route validation and idempotency', () => {
         type: string;
         payload: unknown;
       }>(
-        `SELECT seq, at::text, type, payload FROM call_events
+        `SELECT seq,
+                to_char(
+                  at AT TIME ZONE 'UTC',
+                  'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+                ) AS at,
+                type,
+                payload
+         FROM call_events
          WHERE call_id = $1 ORDER BY seq`,
         [call.callId],
       );
@@ -415,7 +422,9 @@ describeDatabase('agent event route validation and idempotency', () => {
     expect(stored.map((row) => row.payload)).toStrictEqual(
       events.map((event) => event.payload),
     );
-    expect(stored.every((row) => row.at.includes('.123456+00'))).toBe(true);
+    expect(stored.map((row) => row.at)).toStrictEqual(
+      events.map((event) => event.at.replace('+00:00', 'Z')),
+    );
   });
 
   it('rejects duplicate sequences atomically and accepts a clean control batch', async () => {

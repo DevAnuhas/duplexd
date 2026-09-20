@@ -85,7 +85,13 @@ async function storedEvents(callId: string): Promise<
       payload: unknown;
       at: string;
     }>(
-      `SELECT seq, type, payload, at::text
+      `SELECT seq,
+              type,
+              payload,
+              to_char(
+                at AT TIME ZONE 'UTC',
+                'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+              ) AS at
        FROM call_events WHERE call_id = $1 ORDER BY seq`,
       [callId],
     );
@@ -142,7 +148,7 @@ describeDatabase('event idempotency and overlap', () => {
 
     const rows = await storedEvents(callId);
     expect(rows.map((row) => row.seq)).toStrictEqual([1, 2, 3, 4, 5]);
-    expect(rows[2]?.at).toContain('.123456+00');
+    expect(rows[2]?.at).toBe('2026-09-20T10:00:03.123456Z');
     expect(rows.find((row) => row.seq === 3)).toStrictEqual(firstRowThree);
 
     expect(await ingestAgentEvents(callId, rawToken, first)).toStrictEqual({ kind: 'ok' });

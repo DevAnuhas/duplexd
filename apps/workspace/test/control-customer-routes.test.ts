@@ -36,6 +36,9 @@ const { createAssistant: createAssistantRecord, listAssistantsForAccount } =
 const { mintApiKey } = await import('@/data/api-keys');
 const { closeDb } = await import('@/db/client');
 const { PipecatStartError } = await import('@/control/pipecat');
+const { CALL_RATE_LIMIT, CALL_RATE_WINDOW_MS } = await import(
+  '@/control/constants'
+);
 const { signUpNewAccount } = await import('./helpers/auth.ts');
 const {
   COMPLETE_ASSISTANT_FIELDS,
@@ -404,12 +407,31 @@ describeDatabase('customer call creation persistence and upstream outcomes', () 
     const limitedKey = await createKey(account);
     const controlKey = await createKey(account);
 
-    for (let request = 0; request < 10; request += 1) {
-      expect(
-        (await createCall(createRequest({ assistantId }, limitedKey.raw))).status,
-      ).toBe(200);
-    }
-    expect(provider.start).toHaveBeenCalledTimes(10);
+    expect(
+      (await createCall(createRequest({ assistantId }, limitedKey.raw))).status,
+    ).toBe(200);
+    expect(provider.start).toHaveBeenCalledTimes(1);
+
+    // Put this key at the limit in both the current and immediately following
+    // windows. A Neon-backed run can cross a minute boundary between requests;
+    // preconditioning both windows keeps this test about the handler's rule,
+    // not about where wall-clock time happened to fall during the loop.
+    const currentWindow = Math.floor(Date.now() / CALL_RATE_WINDOW_MS)
+      * CALL_RATE_WINDOW_MS;
+    await withTestPool(async (pool) => {
+      await pool.query(
+        `INSERT INTO call_rate_limits (api_key_id, window_started_at, count)
+         VALUES ($1, $2, $4), ($1, $3, $4)
+         ON CONFLICT (api_key_id, window_started_at)
+         DO UPDATE SET count = EXCLUDED.count`,
+        [
+          limitedKey.id,
+          new Date(currentWindow),
+          new Date(currentWindow + CALL_RATE_WINDOW_MS),
+          CALL_RATE_LIMIT,
+        ],
+      );
+    });
     const beforeRejected = await countCalls(account.accountId);
 
     const limited = await expectProblem(
@@ -419,13 +441,13 @@ describeDatabase('customer call creation persistence and upstream outcomes', () 
     );
     expect(limited.detail).toContain('rate limit');
     expect(limited.detail).not.toContain(limitedKey.raw);
-    expect(provider.start).toHaveBeenCalledTimes(10);
+    expect(provider.start).toHaveBeenCalledTimes(1);
     expect(await countCalls(account.accountId)).toBe(beforeRejected);
 
     expect(
       (await createCall(createRequest({ assistantId }, controlKey.raw))).status,
     ).toBe(200);
-    expect(provider.start).toHaveBeenCalledTimes(11);
+    expect(provider.start).toHaveBeenCalledTimes(2);
   });
 
   it('sweeps all planted canaries from logs, errors, headers, and public responses', async () => {
