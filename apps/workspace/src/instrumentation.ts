@@ -3,6 +3,7 @@ import {
   requireAuthUrl,
   requireDatabaseUrl,
   requireEncryptionKey,
+  requirePipecatApiKey,
 } from '@/db/env';
 
 /**
@@ -25,12 +26,18 @@ import {
  * while serving nothing. A process that cannot do its job should stop holding
  * the socket, so this exits and lets the platform report a failed release.
  */
-export function register(): void {
+export async function register(): Promise<void> {
   try {
     requireDatabaseUrl();
     requireAuthSecret();
     requireAuthUrl();
     requireEncryptionKey();
+    requirePipecatApiKey();
+
+    if (process.env.NEXT_RUNTIME === 'nodejs') {
+      const { startCallSweeper } = await import('@/control/sweeper-scheduler');
+      startCallSweeper();
+    }
   } catch (error) {
     console.error(
       `[startup] ${error instanceof Error ? error.message : String(error)}`,

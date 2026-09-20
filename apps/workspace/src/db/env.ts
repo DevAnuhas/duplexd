@@ -102,3 +102,14 @@ export function requireAuthUrl(): string {
 
   return url.trim();
 }
+
+/** Pipecat Cloud public key used only by the server-side start request. */
+export function requirePipecatApiKey(): string {
+  const key = process.env.PIPECAT_API_KEY;
+
+  if (key === undefined || key.trim() === '') {
+    throw new Error('PIPECAT_API_KEY is unset or empty.');
+  }
+
+  return key.trim();
+}

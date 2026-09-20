@@ -78,6 +78,21 @@ export type Assistant = Pick<
   Exclude<keyof typeof publicColumns, 'hasServerSecret'>
 > & { hasServerSecret: boolean };
 
+/** Private source used only to freeze a call's runtime snapshot. */
+export type AssistantRuntimeSource = Pick<
+  typeof assistants.$inferSelect,
+  | 'id'
+  | 'voice'
+  | 'accentStyle'
+  | 'instructions'
+  | 'backendInstructions'
+  | 'backendModel'
+  | 'waitingBehavior'
+  | 'serverUrl'
+  | 'serverSecrets'
+  | 'tools'
+>;
+
 /**
  * Creates an assistant owned by `accountId`.
  *
@@ -144,6 +159,43 @@ export async function getAssistantForAccount(
 ): Promise<Assistant | null> {
   const rows = await getDb()
     .select(publicColumns)
+    .from(assistants)
+    .where(
+      and(
+        eq(assistants.id, assistantId),
+        eq(assistants.accountId, accountId),
+        isNull(assistants.archivedAt),
+      ),
+    )
+    .limit(1);
+
+  return rows[0] ?? null;
+}
+
+/**
+ * Reads the credential-bearing source for a new call.
+ *
+ * This projection is deliberately private to the server-side call creation
+ * path. Public assistant reads never include `serverSecrets`; the call path
+ * needs the ciphertext so it can freeze the exact secret that call will use.
+ */
+export async function getAssistantRuntimeSourceForAccount(
+  accountId: string,
+  assistantId: string,
+): Promise<AssistantRuntimeSource | null> {
+  const rows = await getDb()
+    .select({
+      id: assistants.id,
+      voice: assistants.voice,
+      accentStyle: assistants.accentStyle,
+      instructions: assistants.instructions,
+      backendInstructions: assistants.backendInstructions,
+      backendModel: assistants.backendModel,
+      waitingBehavior: assistants.waitingBehavior,
+      serverUrl: assistants.serverUrl,
+      serverSecrets: assistants.serverSecrets,
+      tools: assistants.tools,
+    })
     .from(assistants)
     .where(
       and(

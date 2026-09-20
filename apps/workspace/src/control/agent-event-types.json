@@ -1,0 +1,10 @@
+[
+  "bot_speech_started",
+  "bot_speech_stopped",
+  "tool_started",
+  "tool_finished",
+  "delegation_created",
+  "transcript_user",
+  "transcript_assistant",
+  "interruption"
+]
