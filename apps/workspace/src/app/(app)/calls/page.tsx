@@ -14,7 +14,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { listWorkspaceCallsForAccount } from '@/data/calls';
-import { getCurrentAccount } from '@/lib/account';
+import { requireShell } from '../shell-data';
 import { CallStateBadge } from './call-state-badge';
 
 const dateTime = new Intl.DateTimeFormat('en', {
@@ -53,15 +53,11 @@ async function CallsContent({
 }: {
   searchParams: Promise<{ cursor?: string | string[] }>;
 }) {
-  const account = await getCurrentAccount();
-
-  if (account === null) {
-    redirect('/sign-in');
-  }
+  const { account } = await requireShell();
 
   const value = (await searchParams).cursor;
   const cursor = typeof value === 'string' ? value : null;
-  const result = await listWorkspaceCallsForAccount(account.accountId, {
+  const result = await listWorkspaceCallsForAccount(account.id, {
     cursor,
   });
 

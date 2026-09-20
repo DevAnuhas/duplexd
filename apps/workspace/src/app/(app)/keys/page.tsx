@@ -1,9 +1,8 @@
-import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 
 import { Skeleton } from '@/components/ui/skeleton';
 import { listApiKeysForAccount } from '@/data/api-keys';
-import { getCurrentAccount } from '@/lib/account';
+import { requireShell } from '../shell-data';
 import { KeyManager } from './key-manager';
 
 /**
@@ -12,13 +11,8 @@ import { KeyManager } from './key-manager';
  * into a prerender or page cache; only the client owner ever holds the raw key.
  */
 async function KeysContent() {
-  const account = await getCurrentAccount();
-
-  if (account === null) {
-    redirect('/sign-in');
-  }
-
-  const keys = await listApiKeysForAccount(account.accountId);
+  const { account } = await requireShell();
+  const keys = await listApiKeysForAccount(account.id);
 
   return <KeyManager keys={keys} />;
 }

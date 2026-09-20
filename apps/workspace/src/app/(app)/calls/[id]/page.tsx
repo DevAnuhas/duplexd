@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { notFound, redirect } from 'next/navigation';
+import { notFound } from 'next/navigation';
 import { AlertTriangle, ArrowLeft, ChevronDown } from 'lucide-react';
 import { Suspense } from 'react';
 
@@ -18,8 +18,7 @@ import {
   getWorkspaceCallForAccount,
   type WorkspaceCallEvent,
 } from '@/data/calls';
-import { getCurrentAccount } from '@/lib/account';
-
+import { requireShell } from '../../shell-data';
 
 const dateTime = new Intl.DateTimeFormat('en', {
   year: 'numeric',
@@ -146,14 +145,10 @@ async function CallDetailContent({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const account = await getCurrentAccount();
-
-  if (account === null) {
-    redirect('/sign-in');
-  }
+  const { account } = await requireShell();
 
   const { id } = await params;
-  const result = await getWorkspaceCallForAccount(account.accountId, id);
+  const result = await getWorkspaceCallForAccount(account.id, id);
 
   if (result === null) {
     notFound();
