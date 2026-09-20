@@ -6,7 +6,7 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { getDb } from '@/db/client';
 import { requireAuthSecret, requireAuthUrl } from '@/db/env';
 import * as schema from '@/db/schema';
-import { WORKSPACE_NAME_MAX_LENGTH } from '@/lib/auth-schemas';
+import { workspaceNameOrFallback } from '@/lib/auth-schemas';
 import { sendPasswordResetEmail } from '@/lib/email';
 
 /**
@@ -199,49 +199,47 @@ function createAuth() {
              * is `z.object({...}).and(z.record(z.string(), z.any()))` — an
              * intersection with a catch-all, so extra keys survive validation
              * and arrive intact. Verified by reading
-             * `node_modules/better-auth/dist/api/routes/sign-up.mjs`, not
-             * assumed; the alternative (`user.additionalFields`) would add a
-             * column to `users` to carry a value that belongs to `accounts`.
+             * `node_modules/better-auth/dist/api/routes/sign-up.mjs`.
              *
-             * **Falling back to the email is deliberate**, not a leftover. A
-             * signup that arrives without a workspace name — an older client,
-             * a direct API call — must still produce an account, and an
-             * account named after its owner's address is recoverable: the
-             * rename form on Settings exists precisely for that.
+             * `workspaceNameOrFallback` is shared with the rename action and
+             * the form schema, so all three agree on what "blank" and "too
+             * long" mean for this column. It previously guarded only against
+             * `trim()`, which let a zero-width name through this endpoint that
+             * Settings would refuse — and that then rendered blank in the
+             * sidebar and breadcrumb of every page.
+             *
+             * **Falling back to the email is deliberate.** A signup that
+             * arrives without a usable workspace name — an older client, a
+             * direct API call — must still produce an account, and an account
+             * named after its owner's address is recoverable: the rename form
+             * on Settings exists precisely for that.
              */
-            const submitted = (context as { body?: { workspaceName?: unknown } } | undefined)
-              ?.body?.workspaceName;
-            const trimmed =
-              typeof submitted === 'string' ? submitted.trim() : '';
-
-            /**
-             * **The length bound is enforced here, not only in the form.**
-             *
-             * The form's schema is the only thing a browser passes through,
-             * but this endpoint is reachable directly, and without this a
-             * caller could set a 500-character workspace name that then
-             * renders in the sidebar and breadcrumb of every page — and that
-             * the rename action would refuse to accept back, since it bounds
-             * the same column at the same number. Two writers to one column
-             * disagreeing is the bug; `WORKSPACE_NAME_MAX_LENGTH` is the one
-             * definition all three share.
-             *
-             * Over-length is **truncated rather than rejected**. This runs
-             * inside signup: throwing would fail account creation outright for
-             * what is a display string, and the person would have no account
-             * and no obvious reason why. The stored name stays within the
-             * bound either way, and Settings can correct it.
-             */
-            const workspaceName =
-              trimmed !== ''
-                ? trimmed.slice(0, WORKSPACE_NAME_MAX_LENGTH)
-                : user.email;
+            const workspaceName = workspaceNameOrFallback(
+              (context as { body?: { workspaceName?: unknown } } | undefined)
+                ?.body?.workspaceName,
+              user.email,
+            );
 
             await getDb().insert(schema.accounts).values({
               id: accountId,
               name: workspaceName,
             });
 
+            /*
+              **`accountId` is spread after `...user`, and only that ordering
+              makes this safe.**
+
+              The signup body is a catch-all, so a caller can put `accountId`
+              in it and it arrives here on `user`. Writing ours last overwrites
+              theirs. Any edit that spreads request-derived values *after* this
+              — a merge, a reordering, a "tidy up" that puts `...user` at the
+              end — hands account selection to the caller, and the tenant
+              boundary with it.
+
+              There is no runtime guard behind this: it is safe by position
+              alone, which is the easiest property to lose in a refactor and
+              the reason it is written down here.
+            */
             return { data: { ...user, accountId } };
           },
         },

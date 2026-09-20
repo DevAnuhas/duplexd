@@ -4,7 +4,10 @@ import { revalidatePath } from 'next/cache';
 
 import { renameAccount } from '@/data/accounts';
 import { requireCurrentAccount } from '@/lib/account';
-import { WORKSPACE_NAME_MAX_LENGTH } from '@/lib/auth-schemas';
+import {
+  rendersAsNothing,
+  WORKSPACE_NAME_MAX_LENGTH,
+} from '@/lib/auth-schemas';
 
 /**
  * The account's own write surface.
@@ -34,19 +37,6 @@ export type RenameResult = { ok: true } | { ok: false; message: string };
 /** Shared with the signup hook and the form schema — see `auth-schemas.ts`. */
 const MAX_NAME_LENGTH = WORKSPACE_NAME_MAX_LENGTH;
 
-/**
- * Characters that render as nothing: whitespace, control codes, and the
- * format category — which is where U+200B ZERO WIDTH SPACE, U+2060 WORD
- * JOINER, U+FEFF and the bidirectional overrides live.
- *
- * `String.trim()` is not enough on its own. It strips U+00A0, but U+200B has
- * not been whitespace since Unicode 4.0.1, so `'\u200B'.trim()` returns that
- * character unchanged and the emptiness check passes. Without this, a name
- * made only of zero-width characters satisfies "an organization needs a name"
- * and then renders as a blank sidebar and a blank breadcrumb on every page.
- */
-const INVISIBLE = /[\s\p{Cc}\p{Cf}]/gu;
-
 export async function renameAccountAction(
   formData: FormData,
 ): Promise<RenameResult> {
@@ -55,7 +45,16 @@ export async function renameAccountAction(
   const raw = formData.get('name');
   const name = typeof raw === 'string' ? raw.trim() : '';
 
-  if (name.replace(INVISIBLE, '') === '') {
+  /*
+    `rendersAsNothing` rather than a local regex: the signup hook and the form
+    schema apply the same rule to this column, and when this guard lived only
+    here the signup endpoint accepted zero-width names that this action
+    refused.
+
+    Rejected rather than silently kept: an authenticated edit should be told it
+    did nothing.
+  */
+  if (rendersAsNothing(name)) {
     return { ok: false, message: 'An organization needs a name.' };
   }
 

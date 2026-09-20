@@ -25,20 +25,20 @@ import {
 /**
  * Signing up, in two steps.
  *
+ * Step one is the credentials — email, password, confirm. Step two is the two
+ * questions that are about *this* product. The confirm field is caught in
+ * step one rather than at the final submit; see `SIGN_UP_STEP_ONE_FIELDS`.
+ *
  * **One form, one submit.** Both steps are panes of the same React Hook Form,
  * so step one's values are still in hand when step two submits and there is
  * exactly one `signUp.email` call carrying everything. Two separate forms
  * would mean holding the password in state between them, which is worse in
  * every way that matters.
  *
- * The split is about load, not mechanics: four fields and four helper lines on
- * one screen is a lot to meet a product with. Credentials first — the part
- * every signup has — then the two questions that are actually about *this*
- * product.
- *
- * Step two is only reachable once step one validates, so nobody names a
- * workspace and is then sent back for a typo in an email they entered two
- * screens ago.
+ * The split is about load, not mechanics: five fields and their helper lines
+ * on one screen is a lot to meet a product with. Step two is only reachable
+ * once step one validates, so nobody names a workspace and is then sent back
+ * for a typo in an email they entered two screens ago.
  */
 export function SignUpForm() {
   const router = useRouter();
@@ -53,7 +53,13 @@ export function SignUpForm() {
     formState: { isSubmitting },
   } = useForm<SignUpValues>({
     resolver: zodResolver(signUpSchema),
-    defaultValues: { workspaceName: '', name: '', email: '', password: '' },
+    defaultValues: {
+      workspaceName: '',
+      name: '',
+      email: '',
+      password: '',
+      confirmPassword: '',
+    },
   });
 
   /** Advance only if the credentials are good. */
@@ -149,6 +155,25 @@ export function SignUpForm() {
           render={({ field, fieldState }) => (
             <Field data-invalid={fieldState.invalid || undefined}>
               <FieldLabel htmlFor={field.name}>Password</FieldLabel>
+              <PasswordInput
+                {...field}
+                id={field.name}
+                autoComplete="new-password"
+                aria-invalid={fieldState.invalid || undefined}
+              />
+              {fieldState.error && (
+                <FieldError>{fieldState.error.message}</FieldError>
+              )}
+            </Field>
+          )}
+        />
+
+        <Controller
+          control={control}
+          name="confirmPassword"
+          render={({ field, fieldState }) => (
+            <Field data-invalid={fieldState.invalid || undefined}>
+              <FieldLabel htmlFor={field.name}>Confirm password</FieldLabel>
               <PasswordInput
                 {...field}
                 id={field.name}

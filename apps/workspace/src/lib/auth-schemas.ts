@@ -96,11 +96,58 @@ export const signInSchema = z.object({
  */
 export const WORKSPACE_NAME_MAX_LENGTH = 120;
 
+/**
+ * Characters that render as nothing: whitespace, control codes, and the
+ * format category — where U+200B ZERO WIDTH SPACE, U+2060 WORD JOINER,
+ * U+FEFF and the bidirectional overrides live.
+ *
+ * `String.trim()` is not enough on its own. It strips U+00A0, but U+200B has
+ * not been whitespace since Unicode 4.0.1, so `'\u200B'.trim()` returns that
+ * character unchanged and an emptiness check passes.
+ */
+const INVISIBLE = /[\s\p{Cc}\p{Cf}]/gu;
+
+/**
+ * Whether a display name would render as nothing.
+ *
+ * **One definition, three callers**, and that is the point: this guard existed
+ * at the rename action while the signup hook checked only `trim() !== ''`, so
+ * the same zero-width name that Settings refused could be set through the
+ * unauthenticated signup endpoint — and then rendered blank in the sidebar and
+ * breadcrumb of every page. Three similar guards on one column is how they
+ * drift.
+ */
+export function rendersAsNothing(value: string): boolean {
+  return value.replace(INVISIBLE, '') === '';
+}
+
+/**
+ * The name to store for an account, given whatever a caller supplied.
+ *
+ * Trims, treats an invisible-only name as absent, falls back, and bounds the
+ * result. Used by the signup hook, where there is a sensible fallback; the
+ * rename action rejects instead, because an authenticated edit should be told
+ * it did nothing rather than silently keep the old value.
+ */
+export function workspaceNameOrFallback(
+  supplied: unknown,
+  fallback: string,
+): string {
+  const trimmed = typeof supplied === 'string' ? supplied.trim() : '';
+
+  return rendersAsNothing(trimmed)
+    ? fallback
+    : trimmed.slice(0, WORKSPACE_NAME_MAX_LENGTH);
+}
+
 /** The organization's display name, set at signup and editable in Settings. */
 const workspaceName = z
   .string({ error: 'Name your workspace.' })
   .trim()
   .min(1, { error: 'Name your workspace.' })
+  .refine((value) => !rendersAsNothing(value), {
+    error: 'Name your workspace.',
+  })
   .max(WORKSPACE_NAME_MAX_LENGTH, {
     error: `Keep the workspace name under ${WORKSPACE_NAME_MAX_LENGTH} characters.`,
   });
@@ -115,27 +162,52 @@ const personName = z
 /**
  * Signing up.
  *
- * **There is no confirm-password field**, unlike the reset form. The password
- * input carries a show/hide toggle, which covers the typo it would catch, and
- * dropping it removes a field and a line of helper text from a first screen
- * that is already asking for four things.
+ * **The confirm field stays**, and the reason is recovery rather than
+ * belt-and-braces. Two things compound at signup that do not at sign-in:
  *
- * The trade is real and worth naming: the toggle only helps someone who
- * actually presses it, and a password mistyped identically-but-wrongly here
- * surfaces later as "I can't sign in". The recovery is the reset email, which
- * exists only on deployments with `RESEND_API_KEY` set. Reset **keeps** its
- * confirm field for that reason — there, the person cannot see what they are
- * replacing and has no second chance behind them.
+ *  - `autoSignIn` is on by default in Better Auth and we do not disable it,
+ *    so a mistyped password **succeeds silently** — the person is signed in
+ *    and nothing looks wrong. The typo surfaces at their next sign-in, days
+ *    later, with no memory of what they typed.
+ *  - On a deployment without `RESEND_API_KEY`, `/forgot-password` calls
+ *    `notFound()`. There is then no self-service recovery at all.
+ *
+ * Chained, those turn one typo into an account nobody can get back into. The
+ * show/hide toggle only helps someone who presses it, and nothing obliges
+ * them to. This was removed once to cut a field from the first screen and put
+ * back when that chain was traced; the two-step split is what reduces the
+ * load instead.
  */
-export const signUpSchema = z.object({
-  workspaceName,
-  name: personName,
-  email,
-  password,
-});
+export const signUpSchema = z
+  .object({
+    workspaceName,
+    name: personName,
+    email,
+    password,
+    confirmPassword: z.string().min(1, { error: 'Confirm your password.' }),
+  })
+  /**
+   * Reported **on the confirm field**, not at the form root: that is the field
+   * the customer has to change, and an error floating above both inputs makes
+   * them guess which one is wrong.
+   */
+  .refine((values) => values.password === values.confirmPassword, {
+    error: 'Both passwords must match.',
+    path: ['confirmPassword'],
+  });
 
-/** The fields step one collects, validated before the form advances. */
-export const SIGN_UP_STEP_ONE_FIELDS = ['email', 'password'] as const;
+/**
+ * The fields step one collects, validated before the form advances.
+ *
+ * `confirmPassword` is in the list so the mismatch is caught **here** rather
+ * than at the final submit — being sent back to a password you entered two
+ * screens ago is the failure the split exists to avoid.
+ */
+export const SIGN_UP_STEP_ONE_FIELDS = [
+  'email',
+  'password',
+  'confirmPassword',
+] as const;
 
 export const forgotPasswordSchema = z.object({ email });
 
