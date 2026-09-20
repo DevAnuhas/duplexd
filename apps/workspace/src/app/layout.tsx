@@ -39,8 +39,13 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             Mounted once, at the root, so a toast raised anywhere has somewhere
             to land. Without it `toast()` is a silent no-op — which is exactly
             the failure the copy button's error path exists to avoid.
+
+            Top-center, deliberately: results belong where the eye already is.
+            It also survives client navigation — the reset-password flow
+            raises a toast and then pushes to /sign-in, and this sits above
+            both pages so the transition does not unmount it.
           */}
-          <Toaster />
+          <Toaster position="top-center" />
         </ThemeProvider>
       </body>
     </html>

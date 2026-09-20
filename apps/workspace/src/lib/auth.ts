@@ -6,6 +6,7 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { getDb } from '@/db/client';
 import { requireAuthSecret, requireAuthUrl } from '@/db/env';
 import * as schema from '@/db/schema';
+import { sendPasswordResetEmail } from '@/lib/email';
 
 /**
  * Better Auth, constructed on first use.
@@ -53,6 +54,33 @@ function createAuth() {
     }),
     emailAndPassword: {
       enabled: true,
+      /**
+       * Password reset delivery.
+       *
+       * Better Auth calls this from `POST /request-password-reset` with a
+       * `url` it has already built — its own `/reset-password/:token`
+       * callback, which validates the token and then redirects to the
+       * `redirectTo` the client supplied, carrying `?token=`. So the email
+       * sends Better Auth's `url` verbatim; constructing one here would
+       * bypass the validation that callback performs.
+       *
+       * **Token lifetime is one hour** — `resetPasswordTokenExpiresIn`
+       * defaults to `3600` seconds, confirmed by reading
+       * `node_modules/better-auth/dist/api/routes/password.mjs` rather than
+       * assumed from documentation for another version. The token is
+       * single-use: `resetPassword` consumes it before changing anything, so
+       * two concurrent requests with the same token cannot both succeed.
+       *
+       * **Failures are swallowed on purpose.** This callback runs inside the
+       * request-password-reset endpoint, which returns an identical response
+       * whether or not the address exists. Throwing here would make delivery
+       * failure observable and turn that endpoint back into the account
+       * enumeration oracle it is written to avoid — "error" would mean the
+       * account exists and "success" would mean it does not.
+       */
+      sendResetPassword: async ({ user, url }) => {
+        await sendPasswordResetEmail({ to: user.email, url });
+      },
     },
     /**
      * Rate limiting, with the auth endpoints held tighter than the default.

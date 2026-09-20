@@ -66,7 +66,17 @@
     --card-foreground: oklch(0.145 0 0);
     --popover: oklch(1 0 0);
     --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
+    /*
+      The brand mint, darkened for light mode.
+
+      Dark mode uses oklch(0.85 0.15 165) — mint on near-black. The same
+      lightness on white is 3.3:1 against the page and unreadable under white
+      text, so light mode keeps the hue and chroma and drops the lightness
+      until it passes: L 0.53 measures 4.67:1 against white (L 0.54 is 4.49
+      and fails). Computed from the OKLCh values through sRGB to WCAG
+      relative luminance, not sampled by eye.
+    */
+    --primary: oklch(0.53 0.15 165);
     --primary-foreground: oklch(0.985 0 0);
     --secondary: oklch(0.97 0 0);
     --secondary-foreground: oklch(0.205 0 0);
@@ -86,7 +96,8 @@
     --radius: 0.625rem;
     --sidebar: oklch(0.985 0 0);
     --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
+    /* Matches --primary; the sidebar's org avatar uses it. */
+    --sidebar-primary: oklch(0.53 0.15 165);
     --sidebar-primary-foreground: oklch(0.985 0 0);
     --sidebar-accent: oklch(0.97 0 0);
     --sidebar-accent-foreground: oklch(0.205 0 0);
