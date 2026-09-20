@@ -149,10 +149,10 @@ function createAuth() {
         accountId: {
           type: 'string',
           // `required` here means "the signup request must supply it", which
-          // it cannot: `input: false` stops a client from sending `accountId`
-          // at all, and Better Auth validates required fields against the
-          // request body *before* any database hook runs. The two together are
-          // unsatisfiable and reject every signup with `MISSING_FIELD`.
+          // it cannot: `input: false` rejects a caller-supplied `accountId`
+          // during body validation with `FIELD_NOT_ALLOWED`, before any
+          // database hook runs. The two together would be unsatisfiable and
+          // reject every signup.
           //
           // The invariant is enforced where it belongs instead: `account_id`
           // is NOT NULL with a foreign key, and the `before` hook below fills
@@ -229,12 +229,17 @@ function createAuth() {
             });
 
             /*
-              Better Auth first rejects a caller-supplied `accountId` with
-              FIELD_NOT_ALLOWED. Writing our generated value after `...user`
-              is the second, defense-in-depth layer: even if that library guard
-              changes, request-derived values cannot select another account.
-              Keep `accountId` after the spread so a refactor cannot weaken
-              that tenant boundary.
+              The signup body otherwise preserves catch-all fields — that is
+              how `workspaceName` reaches this hook — but `input: false` above
+              makes `accountId` the exception. Better Auth rejects it during
+              body validation with `FIELD_NOT_ALLOWED`, so it never reaches
+              this hook.
+
+              Writing our generated `accountId` after `...user` is a
+              defense-in-depth backstop that is not exercised while
+              `input: false` remains. Do not loosen that primary guard under
+              the assumption that spread ordering alone protects the tenant
+              boundary; add any new caller-settable field separately.
             */
             /**
              * `users.name` gets the same treatment as the account's.
