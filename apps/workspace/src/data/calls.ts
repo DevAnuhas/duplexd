@@ -19,7 +19,13 @@ import {
   type AssistantRuntimeSource,
 } from '@/data/assistants';
 import { getDb } from '@/db/client';
-import { callEvents, callRateLimits, calls } from '@/db/schema';
+import {
+  apiKeys,
+  assistants,
+  callEvents,
+  callRateLimits,
+  calls,
+} from '@/db/schema';
 import { decryptSecret, secretsMatch } from '@/lib/crypto';
 import { hashCredential, mintAgentToken } from '@/lib/credentials';
 
@@ -86,6 +92,42 @@ export type PublicCallEvent = {
   type: string;
 };
 
+export type WorkspaceCall = PublicCall & {
+  assistantName: string | null;
+  apiKey: { name: string; prefix: string } | null;
+};
+
+type TranscriptPayload = { text: string };
+type ToolStartedPayload = { tool: string; invocationId: string };
+type ToolFinishedPayload = {
+  tool: string;
+  invocationId: string;
+  outcome: 'success' | 'failure';
+  durationMs: number;
+  status?: number;
+  errorCategory?: string;
+};
+
+export type WorkspaceCallEvent = PublicCallEvent & {
+  payload?: TranscriptPayload | ToolStartedPayload | ToolFinishedPayload;
+};
+
+export type WorkspaceCallEventRow = {
+  seq: number;
+  at: Date;
+  type: string;
+  payload: unknown;
+};
+
+const ERROR_CATEGORY_LABELS: Readonly<Record<string, string>> = {
+  webhook_destination_refused: 'Destination refused',
+  webhook_unreachable: 'Unreachable',
+  webhook_internal_error: 'Internal error',
+  webhook_http_error: 'HTTP error',
+  webhook_invalid_response: 'Invalid response',
+  webhook_failed: 'Failed',
+};
+
 const publicCallColumns = {
   id: calls.id,
   assistantId: calls.assistantId,
@@ -112,6 +154,98 @@ function publicCall(row: PublicCallRow, now = new Date()): PublicCall {
     endedAt: projected.endedAt?.toISOString() ?? null,
     lastHeartbeatAt: projected.lastHeartbeatAt?.toISOString() ?? null,
   };
+}
+
+/**
+ * Projects stored agent events for the authenticated workspace UI.
+ *
+ * This is deliberately a pick-known-keys boundary. Event ingestion validates
+ * event types but payloads are agent-controlled JSON, so spreading a stored
+ * payload here could expose future secret or customer-data fields by accident.
+ */
+export function projectWorkspaceCallEvent(
+  event: WorkspaceCallEventRow,
+): WorkspaceCallEvent {
+  const envelope: PublicCallEvent = {
+    seq: event.seq,
+    at: event.at.toISOString(),
+    type: event.type,
+  };
+  const value = event.payload;
+
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return envelope;
+  }
+
+  const payload = value as Record<string, unknown>;
+
+  if (
+    event.type === 'transcript_user' ||
+    event.type === 'transcript_assistant'
+  ) {
+    return typeof payload.text === 'string'
+      ? { ...envelope, payload: { text: payload.text } }
+      : envelope;
+  }
+
+  if (event.type === 'tool_started') {
+    return typeof payload.tool === 'string' &&
+      typeof payload.invocationId === 'string'
+      ? {
+          ...envelope,
+          payload: {
+            tool: payload.tool,
+            invocationId: payload.invocationId,
+          },
+        }
+      : envelope;
+  }
+
+  if (event.type !== 'tool_finished') {
+    return envelope;
+  }
+
+  if (
+    typeof payload.tool !== 'string' ||
+    typeof payload.invocationId !== 'string' ||
+    (payload.outcome !== 'success' && payload.outcome !== 'failure') ||
+    typeof payload.durationMs !== 'number' ||
+    !Number.isFinite(payload.durationMs) ||
+    payload.durationMs < 0 ||
+    (payload.status !== undefined &&
+      (!Number.isInteger(payload.status) ||
+        Number(payload.status) < 100 ||
+        Number(payload.status) > 599)) ||
+    (payload.errorCategory !== undefined &&
+      typeof payload.errorCategory !== 'string')
+  ) {
+    return envelope;
+  }
+
+  const projected: ToolFinishedPayload = {
+    tool: payload.tool,
+    invocationId: payload.invocationId,
+    outcome: payload.outcome,
+    durationMs: payload.durationMs,
+  };
+
+  if (payload.status !== undefined) {
+    projected.status = Number(payload.status);
+  }
+  if (payload.errorCategory !== undefined) {
+    projected.errorCategory =
+      Object.hasOwn(ERROR_CATEGORY_LABELS, payload.errorCategory)
+        ? ERROR_CATEGORY_LABELS[payload.errorCategory]
+        : 'Failed';
+  }
+
+  return { ...envelope, payload: projected };
+}
+
+export function projectWorkspaceCallEvents(
+  events: WorkspaceCallEventRow[],
+): WorkspaceCallEvent[] {
+  return events.map((event) => projectWorkspaceCallEvent(event));
 }
 
 function privateSecretCiphertext(value: unknown): string | null {
@@ -347,6 +481,79 @@ export async function getCallForAccount(
   };
 }
 
+type WorkspaceCallRow = PublicCallRow & {
+  assistantName: string | null;
+  apiKeyName: string | null;
+  apiKeyPrefix: string | null;
+};
+
+const workspaceCallColumns = {
+  ...publicCallColumns,
+  assistantName: assistants.name,
+  apiKeyName: apiKeys.name,
+  apiKeyPrefix: apiKeys.prefix,
+} as const;
+
+function workspaceCall(row: WorkspaceCallRow): WorkspaceCall {
+  return {
+    ...publicCall(row),
+    assistantName: row.assistantName,
+    apiKey:
+      row.apiKeyName === null || row.apiKeyPrefix === null
+        ? null
+        : { name: row.apiKeyName, prefix: row.apiKeyPrefix },
+  };
+}
+
+/** Workspace-only call detail. The public API projection stays payload-free. */
+export async function getWorkspaceCallForAccount(
+  accountId: string,
+  callId: string,
+): Promise<{ call: WorkspaceCall; events: WorkspaceCallEvent[] } | null> {
+  const rows = await getDb()
+    .select(workspaceCallColumns)
+    .from(calls)
+    .leftJoin(
+      assistants,
+      and(
+        eq(assistants.id, calls.assistantId),
+        eq(assistants.accountId, accountId),
+      ),
+    )
+    .leftJoin(
+      apiKeys,
+      and(eq(apiKeys.id, calls.apiKeyId), eq(apiKeys.accountId, accountId)),
+    )
+    .where(and(eq(calls.id, callId), eq(calls.accountId, accountId)))
+    .limit(1);
+
+  const row = rows[0];
+  if (row === undefined) {
+    return null;
+  }
+
+  // Keep this query strictly after the account-scoped call lookup and null
+  // guard. Running both in Promise.all would expose events for a guessed call
+  // id before tenancy is established. The joined account predicate is defense
+  // in depth; do not remove either boundary.
+  const storedEvents = await getDb()
+    .select({
+      seq: callEvents.seq,
+      at: callEvents.at,
+      type: callEvents.type,
+      payload: callEvents.payload,
+    })
+    .from(callEvents)
+    .innerJoin(calls, eq(calls.id, callEvents.callId))
+    .where(and(eq(callEvents.callId, callId), eq(calls.accountId, accountId)))
+    .orderBy(callEvents.seq);
+
+  return {
+    call: workspaceCall(row),
+    events: projectWorkspaceCallEvents(storedEvents),
+  };
+}
+
 type Cursor = { createdAt: Date; id: string };
 
 function decodeCursor(value: string): Cursor | null {
@@ -421,6 +628,63 @@ export async function listCallsForAccount(
   return {
     kind: 'ok',
     calls: page.map((row) => publicCall(row)),
+    nextCursor: hasNext && last !== undefined ? encodeCursor(last) : null,
+  };
+}
+
+export async function listWorkspaceCallsForAccount(
+  accountId: string,
+  options: { cursor?: string | null; limit?: number } = {},
+): Promise<
+  | { kind: 'invalid_cursor' }
+  | { kind: 'ok'; calls: WorkspaceCall[]; nextCursor: string | null }
+> {
+  const limit = Math.min(Math.max(options.limit ?? 20, 1), 100);
+  const cursor =
+    options.cursor === undefined || options.cursor === null
+      ? null
+      : decodeCursor(options.cursor);
+
+  if (options.cursor != null && cursor === null) {
+    return { kind: 'invalid_cursor' };
+  }
+
+  const predicate =
+    cursor === null
+      ? eq(calls.accountId, accountId)
+      : and(
+          eq(calls.accountId, accountId),
+          or(
+            lt(calls.createdAt, cursor.createdAt),
+            and(eq(calls.createdAt, cursor.createdAt), lt(calls.id, cursor.id)),
+          ),
+        );
+
+  const rows = await getDb()
+    .select(workspaceCallColumns)
+    .from(calls)
+    .leftJoin(
+      assistants,
+      and(
+        eq(assistants.id, calls.assistantId),
+        eq(assistants.accountId, accountId),
+      ),
+    )
+    .leftJoin(
+      apiKeys,
+      and(eq(apiKeys.id, calls.apiKeyId), eq(apiKeys.accountId, accountId)),
+    )
+    .where(predicate)
+    .orderBy(desc(calls.createdAt), desc(calls.id))
+    .limit(limit + 1);
+
+  const hasNext = rows.length > limit;
+  const page = rows.slice(0, limit);
+  const last = page.at(-1);
+
+  return {
+    kind: 'ok',
+    calls: page.map((row) => workspaceCall(row)),
     nextCursor: hasNext && last !== undefined ? encodeCursor(last) : null,
   };
 }

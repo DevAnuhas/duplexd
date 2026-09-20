@@ -1,7 +1,6 @@
 import { authenticateCustomer, json, problem } from '@/control/http';
 import { getCallForAccount } from '@/data/calls';
 
-export const dynamic = 'force-dynamic';
 
 export async function GET(
   request: Request,

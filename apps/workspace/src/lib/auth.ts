@@ -6,6 +6,8 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { getDb } from '@/db/client';
 import { requireAuthSecret, resolveAuthBaseUrl } from '@/db/env';
 import * as schema from '@/db/schema';
+import { workspaceNameOrFallback } from '@/lib/auth-schemas';
+import { sendPasswordResetEmail } from '@/lib/email';
 
 /**
  * Better Auth, constructed on first use.
@@ -56,6 +58,33 @@ function createAuth() {
     }),
     emailAndPassword: {
       enabled: true,
+      /**
+       * Password reset delivery.
+       *
+       * Better Auth calls this from `POST /request-password-reset` with a
+       * `url` it has already built — its own `/reset-password/:token`
+       * callback, which validates the token and then redirects to the
+       * `redirectTo` the client supplied, carrying `?token=`. So the email
+       * sends Better Auth's `url` verbatim; constructing one here would
+       * bypass the validation that callback performs.
+       *
+       * **Token lifetime is one hour** — `resetPasswordTokenExpiresIn`
+       * defaults to `3600` seconds, confirmed by reading
+       * `node_modules/better-auth/dist/api/routes/password.mjs` rather than
+       * assumed from documentation for another version. The token is
+       * single-use: `resetPassword` consumes it before changing anything, so
+       * two concurrent requests with the same token cannot both succeed.
+       *
+       * **Failures are swallowed on purpose.** This callback runs inside the
+       * request-password-reset endpoint, which returns an identical response
+       * whether or not the address exists. Throwing here would make delivery
+       * failure observable and turn that endpoint back into the account
+       * enumeration oracle it is written to avoid — "error" would mean the
+       * account exists and "success" would mean it does not.
+       */
+      sendResetPassword: async ({ user, url }) => {
+        await sendPasswordResetEmail({ to: user.email, url });
+      },
     },
     /**
      * Rate limiting, with the auth endpoints held tighter than the default.
@@ -120,10 +149,10 @@ function createAuth() {
         accountId: {
           type: 'string',
           // `required` here means "the signup request must supply it", which
-          // it cannot: `input: false` stops a client from sending `accountId`
-          // at all, and Better Auth validates required fields against the
-          // request body *before* any database hook runs. The two together are
-          // unsatisfiable and reject every signup with `MISSING_FIELD`.
+          // it cannot: `input: false` rejects a caller-supplied `accountId`
+          // during body validation with `FIELD_NOT_ALLOWED`, before any
+          // database hook runs. The two together would be unsatisfiable and
+          // reject every signup.
           //
           // The invariant is enforced where it belongs instead: `account_id`
           // is NOT NULL with a foreign key, and the `before` hook below fills
@@ -161,15 +190,69 @@ function createAuth() {
            * transaction once the adapter supports one, not a comment claiming
            * one already exists.
            */
-          before: async (user) => {
+          before: async (user, context) => {
             const accountId = randomUUID();
+
+            /**
+             * The workspace name the person typed at signup.
+             *
+             * It reaches this hook on the endpoint context rather than on
+             * `user`, because it is not a column on `users` and should not
+             * become one. That works because Better Auth's sign-up body schema
+             * is `z.object({...}).and(z.record(z.string(), z.any()))` — an
+             * intersection with a catch-all, so extra keys survive validation
+             * and arrive intact. Verified by reading
+             * `node_modules/better-auth/dist/api/routes/sign-up.mjs`.
+             *
+             * `workspaceNameOrFallback` is shared with the rename action and
+             * the form schema, so all three agree on what "blank" and "too
+             * long" mean for this column. It previously guarded only against
+             * `trim()`, which let a zero-width name through this endpoint that
+             * Settings would refuse — and that then rendered blank in the
+             * sidebar and breadcrumb of every page.
+             *
+             * **Falling back to the email is deliberate.** A signup that
+             * arrives without a usable workspace name — an older client, a
+             * direct API call — must still produce an account, and an account
+             * named after its owner's address is recoverable: the rename form
+             * on Settings exists precisely for that.
+             */
+            const workspaceName = workspaceNameOrFallback(
+              (context as { body?: { workspaceName?: unknown } } | undefined)
+                ?.body?.workspaceName,
+              user.email,
+            );
 
             await getDb().insert(schema.accounts).values({
               id: accountId,
-              name: user.email,
+              name: workspaceName,
             });
 
-            return { data: { ...user, accountId } };
+            /*
+              The signup body otherwise preserves catch-all fields — that is
+              how `workspaceName` reaches this hook — but `input: false` above
+              makes `accountId` the exception. Better Auth rejects it during
+              body validation with `FIELD_NOT_ALLOWED`, so it never reaches
+              this hook.
+
+              Writing our generated `accountId` after `...user` is a
+              defense-in-depth backstop that is not exercised while
+              `input: false` remains. Do not loosen that primary guard under
+              the assumption that spread ordering alone protects the tenant
+              boundary; add any new caller-settable field separately.
+            */
+            /**
+             * `users.name` gets the same treatment as the account's.
+             *
+             * It arrives on Better Auth's own body, so the form schema is the
+             * only thing bounding it — the same client-side-only shape the
+             * workspace name had. It is what the user menu displays instead of
+             * the address, so a zero-width name renders that menu blank.
+             * Falling back to the email keeps the menu legible.
+             */
+            const displayName = workspaceNameOrFallback(user.name, user.email);
+
+            return { data: { ...user, name: displayName, accountId } };
           },
         },
       },

@@ -1,82 +1,67 @@
-'use client';
-
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useState, type FormEvent } from 'react';
 
-import { authClient } from '@/lib/auth-client';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import { emailDeliveryConfigured } from '@/db/env';
 
+import { SignInForm } from './sign-in-form';
+
+/**
+ * Sign in.
+ *
+ * Synchronous and outside the `(app)` group, so it prerenders whole: nothing
+ * here reads the session, and a login page that waits on a database is the
+ * worst place to spend a round trip.
+ *
+ * `emailDeliveryConfigured()` reads `process.env` at render, which is not a
+ * dynamic API — no request data is involved — so it does not force this page
+ * out of the static shell. Only the boolean crosses to the client; the API
+ * key and the from-address never leave the server.
+ */
 export default function SignInPage() {
-  const router = useRouter();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function onSubmit(event: FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    setError(null);
-
-    const result = await authClient.signIn.email({ email, password });
-
-    setBusy(false);
-
-    if (result.error) {
-      // One message for every failure. Distinguishing "no such email" from
-      // "wrong password" turns this form into an account-enumeration oracle.
-      // The email stays in state so a typo in the password costs one field.
-      setError('Email or password is incorrect.');
-      return;
-    }
-
-    router.push('/');
-    router.refresh();
-  }
-
   return (
-    <main>
-      <h1>Sign in</h1>
-      {/*
-        `method="post"` is deliberate on a form handled in JavaScript. If the
-        client bundle fails or is slow, the browser falls back to a native
-        submit — and a form with no method defaults to GET, putting the
-        password in the URL, the history, the Referer and every proxy log in
-        front of it. With POST the degraded case is a harmless request the
-        server ignores.
-      */}
-      <form method="post" onSubmit={onSubmit}>
-        <label htmlFor="email">Email</label>
-        <input
-          id="email"
-          name="email"
-          type="email"
-          autoComplete="email"
-          required
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-        />
+    <main className="flex min-h-svh items-center justify-center p-6">
+      <div className="w-full max-w-sm space-y-6">
+        <div className="space-y-1 text-center">
+          <h1 className="text-2xl font-semibold tracking-tight">duplexd</h1>
+          <p className="text-muted-foreground text-sm">
+            Manage your voice assistants and the calls they take.
+          </p>
+        </div>
 
-        <label htmlFor="password">Password</label>
-        <input
-          id="password"
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          required
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-        />
+        <Card>
+          <CardHeader>
+            <CardTitle>Sign in</CardTitle>
+            <CardDescription>
+              Use the email and password you signed up with.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {/*
+              There is no "Sign in with SSO" here, unlike the reference:
+              nothing is wired up behind it, and the first screen a tenant
+              sees is the worst possible place to start lying to them.
+            */}
+            <SignInForm passwordResetAvailable={emailDeliveryConfigured()} />
+          </CardContent>
+        </Card>
 
-        {error !== null && <p role="alert">{error}</p>}
-
-        <button type="submit" disabled={busy}>
-          Sign in
-        </button>
-      </form>
-      <p>
-        No account? <Link href="/sign-up">Create one</Link>.
-      </p>
+        <p className="text-muted-foreground text-center text-sm">
+          No account?{' '}
+          <Link
+            href="/sign-up"
+            className="text-foreground underline underline-offset-4"
+          >
+            Create one
+          </Link>
+          .
+        </p>
+      </div>
     </main>
   );
 }

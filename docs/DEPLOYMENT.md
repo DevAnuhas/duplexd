@@ -40,6 +40,21 @@ Writing these steps does not prove the dashboards are configured. The first prev
 | `BETTER_AUTH_URL`           | Production, matching the public origin; leave **unset** on Preview | Auth callback/cookie origin                                               |
 | `ASSISTANT_SECRET_KEY`      | Preview and Production, different values                         | AES-256-GCM key for webhook secrets                                       |
 | `PIPECAT_API_KEY`           | Preview and Production                                           | Starts the Pipecat agent; previews must not receive a customer credential |
+| `RESEND_API_KEY`            | Preview and Production, different values — **optional**          | Sends the password reset email                                            |
+| `EMAIL_FROM`                | Preview and Production — **optional**, e.g. `duplexd <auth@example.com>` | From-address on the password reset email                          |
+
+### Why the email variables are optional
+
+`RESEND_API_KEY` and `EMAIL_FROM` are the only variables here that gate a feature rather than the application. They are deliberately **not** among the five startup prerequisites validated in `src/instrumentation.ts`: a deployment with no email configured must still boot and serve everything else.
+
+They are read together, by `emailDeliveryConfigured()` in `src/db/env.ts`. With both set, password reset works. With either missing:
+
+- the "Forgot your password?" link is not rendered on `/sign-in`, and
+- `/forgot-password` and `/reset-password` return 404.
+
+That is the honest failure: a reset link that cannot send is the worst dead button in the product, because the person pressing it is already locked out. Only the boolean crosses to the client — the key and the from-address stay on the server.
+
+The from-address domain must be verified in Resend, or delivery fails silently from the sender's point of view. The reset token lasts **one hour** and is single-use (Better Auth's `resetPasswordTokenExpiresIn` default, `3600` seconds).
 
 ### Why `BETTER_AUTH_URL` is unset on Preview
 

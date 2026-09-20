@@ -107,6 +107,10 @@ describeDatabase('migrations from an empty database', () => {
       expect(definition).toMatch(/created_at DESC/i);
     });
 
+    it('indexes calls by API key for attribution checks and foreign-key maintenance', () => {
+      expect(definitionOf('calls_api_key_idx')).toMatch(/\(api_key_id\)/i);
+    });
+
     it('indexes calls (state) partially, for active calls only', () => {
       const definition = definitionOf('calls_active_idx');
 

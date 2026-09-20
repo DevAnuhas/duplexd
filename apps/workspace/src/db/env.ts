@@ -244,3 +244,42 @@ export function readCallSweepToken(): string | null {
 
   return token.trim();
 }
+
+/**
+ * Email delivery, for password reset.
+ *
+ * **Both variables are optional, and that is the design.** Password reset is
+ * the one feature here that depends on a third party, so the deployment
+ * decides whether it exists: with both set, the flow is offered; with either
+ * missing, the "Forgot your password?" link is not rendered at all.
+ *
+ * The alternative — always showing the link and failing at send time — puts
+ * the failure in front of someone who is already locked out and can do
+ * nothing about it. An absent link is honest; a link to a page that cannot
+ * send is not.
+ *
+ * Deliberately **not** validated in `instrumentation.ts` alongside the five
+ * required variables: a deployment without email must still boot.
+ */
+export function readResendApiKey(): string | null {
+  const key = process.env.RESEND_API_KEY;
+
+  return key === undefined || key.trim() === '' ? null : key.trim();
+}
+
+/** The address reset mail is sent from, e.g. `duplexd <auth@example.com>`. */
+export function readEmailFrom(): string | null {
+  const from = process.env.EMAIL_FROM;
+
+  return from === undefined || from.trim() === '' ? null : from.trim();
+}
+
+/**
+ * Whether this deployment can actually send an email.
+ *
+ * Read on the server and passed to the client as a boolean — never as the
+ * values themselves, which are a credential and an address.
+ */
+export function emailDeliveryConfigured(): boolean {
+  return readResendApiKey() !== null && readEmailFrom() !== null;
+}

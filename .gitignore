@@ -10,9 +10,5 @@ out/
 coverage/
 *.tsbuildinfo
 
-# Python spikes
-spikes/**/.venv/
-spikes/**/evidence/
-spikes/**/__pycache__/
 .next/
 next-env.d.ts

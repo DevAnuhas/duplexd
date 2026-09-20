@@ -32,7 +32,7 @@ Three parts:
 
 ## Status
 
-Direction is settled and recorded in [ADR 010](docs/decisions/010-pipecat-runtime.md): Pipecat is the voice runtime, pinned as a dependency and never forked, and this project is the platform on top of it. A gate spike proved the loop end to end — a real call, a real webhook, honest results and honest failures — and it is kept at [`spikes/pipecat-gate/`](spikes/pipecat-gate/) as the regression test for a future Pipecat upgrade.
+Direction is settled and recorded in [ADR 010](docs/decisions/010-pipecat-runtime.md): Pipecat is the voice runtime, pinned as a dependency and never forked, and this project is the platform on top of it. A gate spike proved the loop end to end — a real call, a real webhook, honest results and honest failures — and `agent/` is the production runtime that superseded it.
 
 **The platform exists and runs locally.** `apps/workspace` contains the workspace and `/v1` control API, backed by Postgres through Drizzle; `agent/` is the deployable Pipecat runtime. Repository configuration targets Vercel and Neon, but owner dashboard setup and the first real deployment remain unverified. See [the deployment runbook](docs/DEPLOYMENT.md).
 

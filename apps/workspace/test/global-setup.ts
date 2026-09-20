@@ -36,6 +36,7 @@ export const DATABASE_BACKED_FILES = [
   'account-resolver',
   // P03.
   'api-keys',
+  'api-key-delete',
   'assistant-write-path',
   'cross-account-writes',
   'query-param-redaction',
@@ -48,6 +49,9 @@ export const DATABASE_BACKED_FILES = [
   'control-agent-routes',
   'control-read-routes',
   'control-live-server',
+  // Account settings.
+  'account-rename-scoping',
+  'signup-workspace-name',
 ] as const;
 
 export default async function setup(): Promise<void> {

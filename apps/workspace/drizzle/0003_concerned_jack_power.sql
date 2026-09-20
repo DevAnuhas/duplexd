@@ -1,0 +1,1 @@
+CREATE INDEX "calls_api_key_idx" ON "calls" USING btree ("api_key_id");

@@ -1,87 +1,56 @@
-'use client';
-
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useState, type FormEvent } from 'react';
 
-import { authClient } from '@/lib/auth-client';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
 
+import { SignUpForm } from './sign-up-form';
+
+/** Create an account. Static, outside the `(app)` group — see `/sign-in`. */
 export default function SignUpPage() {
-  const router = useRouter();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function onSubmit(event: FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    setError(null);
-
-    const result = await authClient.signUp.email({
-      email,
-      password,
-      name: email,
-    });
-
-    setBusy(false);
-
-    if (result.error) {
-      // The email stays in state on purpose. A form that clears itself on a
-      // validation error makes the user retype everything, which is a
-      // correctness problem wearing a design costume.
-      setError('Could not create that account. Check the details and retry.');
-      return;
-    }
-
-    router.push('/');
-    router.refresh();
-  }
-
   return (
-    <main>
-      <h1>Create an account</h1>
-      {/*
-        `method="post"` is deliberate on a form handled in JavaScript. If the
-        client bundle fails or is slow, the browser falls back to a native
-        submit — and a form with no method defaults to GET, putting the
-        password in the URL, the history, the Referer and every proxy log in
-        front of it. With POST the degraded case is a harmless request the
-        server ignores.
-      */}
-      <form method="post" onSubmit={onSubmit}>
-        <label htmlFor="email">Email</label>
-        <input
-          id="email"
-          name="email"
-          type="email"
-          autoComplete="email"
-          required
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-        />
+    <main className="flex min-h-svh items-center justify-center p-6">
+      <div className="w-full max-w-sm space-y-6">
+        <div className="space-y-1 text-center">
+          <h1 className="text-2xl font-semibold tracking-tight">duplexd</h1>
+          <p className="text-muted-foreground text-sm">
+            Manage your voice assistants and the calls they take.
+          </p>
+        </div>
 
-        <label htmlFor="password">Password</label>
-        <input
-          id="password"
-          name="password"
-          type="password"
-          autoComplete="new-password"
-          required
-          minLength={8}
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-        />
+        <Card>
+          <CardHeader>
+            <CardTitle>Create an account</CardTitle>
+            {/*
+              The old copy here said the workspace can be renamed in Settings
+              — which the workspace field now says, next to the field it is
+              about. Saying it twice on one screen is the redundancy this split
+              exists to remove.
+            */}
+            <CardDescription>
+              Your credentials first, then what to call your workspace.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <SignUpForm />
+          </CardContent>
+        </Card>
 
-        {error !== null && <p role="alert">{error}</p>}
-
-        <button type="submit" disabled={busy}>
-          Create account
-        </button>
-      </form>
-      <p>
-        Already have one? <Link href="/sign-in">Sign in</Link>.
-      </p>
+        <p className="text-muted-foreground text-center text-sm">
+          Already have one?{' '}
+          <Link
+            href="/sign-in"
+            className="text-foreground underline underline-offset-4"
+          >
+            Sign in
+          </Link>
+          .
+        </p>
+      </div>
     </main>
   );
 }

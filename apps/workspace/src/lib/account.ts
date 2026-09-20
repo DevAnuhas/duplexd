@@ -22,8 +22,24 @@ export type CurrentAccount = {
 
 /** Resolves the current account, or `null` when the request is unauthenticated. */
 export async function getCurrentAccount(): Promise<CurrentAccount | null> {
+  /**
+   * **`await headers()` first, on its own line, before `getAuth()` is called.**
+   *
+   * This is ordering, not style. Written as
+   * `getAuth().api.getSession({ headers: await headers() })`, the receiver
+   * `getAuth()` is evaluated before the argument — so during a prerender the
+   * auth instance is constructed, and `BETTER_AUTH_SECRET` is read, before
+   * Next ever reaches the dynamic API that would postpone the render. The
+   * build then fails with an unset secret on a page that was never meant to
+   * be prerendered at all.
+   *
+   * Reading the dynamic API first lets Cache Components postpone at the
+   * boundary, and nothing downstream of it is evaluated during the build.
+   */
+  const requestHeaders = await headers();
+
   const session = await getAuth().api.getSession({
-    headers: await headers(),
+    headers: requestHeaders,
   });
 
   if (session === null) {
