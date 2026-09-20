@@ -42,15 +42,15 @@ Keep issue state truthful. Merged is not deployed. Close through `Closes #N` in 
 
    Keep at most two worktrees with installed dependencies at a time.
 
-2. Implement and verify. If behavior documented by a canonical file changes, update that file in the same PR.
-
-3. Push and open a **draft** PR targeting `main`:
+2. Push the branch so GitHub has a head ref, then open a **draft** PR targeting `main` before implementation:
 
    ```bash
    gh pr create --draft --base main --title "type(scope): summary (#12)"
    ```
 
    Include `Closes #12` in the body. Keep it draft while the head is still changing.
+
+3. Implement and verify. If behavior documented by a canonical file changes, update that file in the same PR.
 
 4. When implementation is complete and locally verified, update from current `main` once, then mark ready exactly once:
 
