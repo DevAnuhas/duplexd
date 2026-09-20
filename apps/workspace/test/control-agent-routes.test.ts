@@ -66,7 +66,7 @@ async function createCompleteAssistant(
   requestHeaders.current = new Headers({ cookie: account.cookie });
   expect(
     await createAssistantAction(assistantFormData({ ...overrides, name })),
-  ).toStrictEqual({ ok: true });
+  ).toStrictEqual({ ok: true, assistantId: expect.any(String) });
   const assistant = (await listAssistantsForAccount(account.accountId)).find(
     (row) => row.name === name,
   );

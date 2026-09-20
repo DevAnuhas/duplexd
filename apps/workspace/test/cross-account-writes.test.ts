@@ -203,6 +203,7 @@ describeDatabase('two accounts, one another’s assistants', () => {
 
       expect(await createAssistantAction(formDataFor({ name }))).toStrictEqual({
         ok: true,
+        assistantId: expect.any(String),
       });
 
       expect(
