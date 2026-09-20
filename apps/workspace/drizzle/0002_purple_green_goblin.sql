@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "calls_agent_token_hash_idx" ON "calls" USING btree ("agent_token_hash");

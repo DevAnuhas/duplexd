@@ -40,6 +40,14 @@ export const DATABASE_BACKED_FILES = [
   'cross-account-writes',
   'query-param-redaction',
   'server-secret-lifecycle',
+  // P05.
+  'control-schema',
+  'control-event-redaction',
+  'control-customer-routes',
+  'control-call-state',
+  'control-agent-routes',
+  'control-read-routes',
+  'control-live-server',
 ] as const;
 
 export default async function setup(): Promise<void> {

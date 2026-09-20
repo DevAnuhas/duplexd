@@ -1,9 +1,10 @@
 # Build and run the workspace app as a Node server.
 #
-# No stage takes DATABASE_URL, BETTER_AUTH_SECRET or ASSISTANT_SECRET_KEY. The
-# app reads them at server start and first use, never at module import, so the
-# image builds with no database reachable from the builder. A build that needed
-# the database would make every future deploy depend on it.
+# No stage takes DATABASE_URL, BETTER_AUTH_SECRET, BETTER_AUTH_URL,
+# ASSISTANT_SECRET_KEY or PIPECAT_API_KEY. The app reads them at server start
+# and first use, never at module import, so the image builds with no database
+# reachable from the builder. A build that needed the database would make every
+# future deploy depend on it.
 
 FROM node:24.21.0-alpine AS base
 RUN corepack enable

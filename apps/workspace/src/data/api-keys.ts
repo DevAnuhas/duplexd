@@ -1,9 +1,10 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull, lt, or } from 'drizzle-orm';
 
 import { getDb } from '@/db/client';
 import { apiKeys } from '@/db/schema';
+import { hashCredential } from '@/lib/credentials';
 import { secretsMatch } from '@/lib/crypto';
 
 /**
@@ -27,8 +28,7 @@ const KEY_PREFIX = 'dk_live_';
 /** How much of the rendered key is stored in the clear to identify it. */
 const PREFIX_LENGTH = KEY_PREFIX.length + 6;
 
-const BASE62 =
-  '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+const BASE62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 
 /**
  * 32 characters drawn uniformly from a 62-character alphabet, via the CSPRNG.
@@ -64,11 +64,6 @@ function generateKey(): string {
   }
 
   return `${KEY_PREFIX}${rendered}`;
-}
-
-/** SHA-256 of the whole key, hex. The only form that is ever persisted. */
-function hashKey(raw: string): string {
-  return createHash('sha256').update(raw, 'utf8').digest('hex');
 }
 
 export type MintedKey = {
@@ -111,7 +106,7 @@ export async function mintApiKey(
       accountId,
       name,
       prefix: raw.slice(0, PREFIX_LENGTH),
-      keyHash: hashKey(raw),
+      keyHash: hashCredential(raw),
       createdBy,
     })
     .returning({
@@ -214,9 +209,28 @@ export async function verifyApiKey(
     return null;
   }
 
-  if (!secretsMatch(row.keyHash, hashKey(raw))) {
+  if (!secretsMatch(row.keyHash, hashCredential(raw))) {
     return null;
   }
 
   return { accountId: row.accountId, keyId: row.id };
+}
+
+/** Best-effort attribution write, debounced to one update per minute. */
+export async function markApiKeyUsed(
+  keyId: string,
+  now = new Date(),
+): Promise<void> {
+  await getDb()
+    .update(apiKeys)
+    .set({ lastUsedAt: now })
+    .where(
+      and(
+        eq(apiKeys.id, keyId),
+        or(
+          isNull(apiKeys.lastUsedAt),
+          lt(apiKeys.lastUsedAt, new Date(now.getTime() - 60_000)),
+        ),
+      ),
+    );
 }

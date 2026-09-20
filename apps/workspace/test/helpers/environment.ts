@@ -30,6 +30,7 @@ const TEST_ONLY_DEFAULTS: Readonly<Record<string, string>> = {
   BETTER_AUTH_URL: 'http://localhost:3000',
   ASSISTANT_SECRET_KEY:
     '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff',
+  PIPECAT_API_KEY: 'test-only-placeholder-not-a-real-pipecat-key',
 };
 
 /**

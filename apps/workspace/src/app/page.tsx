@@ -28,7 +28,7 @@ export default async function HomePage() {
       </p>
       <p>
         <Link href="/assistants">Assistants</Link> ·{' '}
-        <Link href="/keys">API keys</Link>
+        <Link href="/keys">API keys</Link> · <Link href="/calls">Calls</Link>
       </p>
       <SignOutButton />
     </main>

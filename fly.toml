@@ -32,4 +32,6 @@ primary_region = "lhr"
 # Secrets are set with `fly secrets set`, never in this file or the image:
 #   DATABASE_URL           the Neon connection string
 #   BETTER_AUTH_SECRET     session signing secret
+#   BETTER_AUTH_URL        public workspace origin
 #   ASSISTANT_SECRET_KEY   32 bytes hex, encrypts assistants' webhook secrets
+#   PIPECAT_API_KEY        starts the deployed Pipecat agent

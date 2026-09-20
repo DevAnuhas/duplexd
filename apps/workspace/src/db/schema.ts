@@ -4,6 +4,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgTable,
   primaryKey,
   text,
@@ -176,10 +177,11 @@ export const assistants = pgTable(
 /**
  * Calls.
  *
- * `assistant_snapshot` is the resolved assistant as it was when the call
- * started, minus the secret: editing an assistant tomorrow must not rewrite
- * what yesterday's call did, or the transcript stops matching the instructions
- * that produced it.
+ * `assistant_snapshot` is the resolved runtime configuration as it was when
+ * the call started. The customer's secret is present only as ciphertext, so
+ * the config endpoint can serve the call's own snapshot after a rotation.
+ * Every public call projection must enumerate fields and omit the snapshot —
+ * ciphertext is still credential material, not a convenient opaque blob.
  *
  * `ended` is only ever written by the agent reporting completion. A call whose
  * container died is `incomplete`, written by the sweeper, with its last known
@@ -199,7 +201,9 @@ export const calls = pgTable(
     apiKeyId: text('api_key_id').references(() => apiKeys.id, {
       onDelete: 'set null',
     }),
-    assistantSnapshot: jsonb('assistant_snapshot'),
+    assistantSnapshot: jsonb('assistant_snapshot').notNull(),
+    agentTokenHash: text('agent_token_hash').notNull(),
+    configClaimedAt: timestamp('config_claimed_at', { withTimezone: true }),
     pipecatSessionId: text('pipecat_session_id'),
     dailyRoom: text('daily_room'),
     state: text('state').notNull(),
@@ -209,10 +213,15 @@ export const calls = pgTable(
       .defaultNow(),
     startedAt: timestamp('started_at', { withTimezone: true }),
     endedAt: timestamp('ended_at', { withTimezone: true }),
-    durationSecs: integer('duration_secs'),
+    durationSecs: numeric('duration_secs', {
+      precision: 12,
+      scale: 3,
+      mode: 'number',
+    }),
     lastHeartbeatAt: timestamp('last_heartbeat_at', { withTimezone: true }),
   },
   (table) => [
+    uniqueIndex('calls_agent_token_hash_idx').on(table.agentTokenHash),
     index('calls_account_created_idx').on(
       table.accountId,
       table.createdAt.desc(),
@@ -221,6 +230,9 @@ export const calls = pgTable(
     index('calls_active_idx')
       .on(table.state)
       .where(sql`${table.state} = 'active'`),
+    index('calls_starting_idx')
+      .on(table.state)
+      .where(sql`${table.state} = 'starting'`),
   ],
 );
 
@@ -237,4 +249,25 @@ export const callEvents = pgTable(
     payload: jsonb('payload'),
   },
   (table) => [primaryKey({ columns: [table.callId, table.seq] })],
+);
+
+/**
+ * Atomic fixed-window counters for call creation.
+ *
+ * A read-then-increment over `calls` races under concurrent customer retries.
+ * One row per key/window lets the insert/update itself decide whether capacity
+ * remains, without adding Redis for launch traffic.
+ */
+export const callRateLimits = pgTable(
+  'call_rate_limits',
+  {
+    apiKeyId: text('api_key_id')
+      .notNull()
+      .references(() => apiKeys.id, { onDelete: 'cascade' }),
+    windowStartedAt: timestamp('window_started_at', {
+      withTimezone: true,
+    }).notNull(),
+    count: integer('count').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.apiKeyId, table.windowStartedAt] })],
 );

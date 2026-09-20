@@ -8,6 +8,20 @@
       "when": 1789742127707,
       "tag": "0000_abnormal_ma_gnuci",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789881566196,
+      "tag": "0001_nice_serpent_society",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789882188121,
+      "tag": "0002_purple_green_goblin",
+      "breakpoints": true
     }
   ]
 }
