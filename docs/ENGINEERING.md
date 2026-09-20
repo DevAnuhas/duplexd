@@ -202,7 +202,7 @@ One more is **optional**, and it is the one an operator can set wrongly:
 
 - `ALLOW_LOOPBACK_SERVER_URL` — set to the literal `true` to let an assistant's server URL point at loopback (`http://localhost`, `127.0.0.1`, `[::1]`) for local development.
 
-It must **not** join the list above, and the server must not exit without it: unset means off, which is the safe behaviour. That is why the exit check covers four variables and not five, and a test asserts the absent-safety rather than describing it — with the flag unset or empty, a loopback URL is refused.
+It must **not** join the list above, and the server must not exit without it: unset means off, which is the safe behaviour. That is why the exit check covers five variables and not six, and a test asserts the absent-safety rather than describing it — with the flag unset or empty, a loopback URL is refused.
 
 **Setting it in a hosted environment opens the private-network exception in production.** A webhook is called from the platform's own network, so a loopback target there is not the customer's service but ours. See [OPERATIONS.md](OPERATIONS.md#webhook-targets) for what the rule protects.
 
