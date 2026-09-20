@@ -24,17 +24,17 @@ This is not an implementation detail. It is why a second voice provider stays ch
 
 Three parts:
 
-| Part | What it is |
-| --- | --- |
-| **Workspace** | Sign in, create and edit assistants, mint and revoke API keys, browse calls, transcripts, and usage. Next.js. |
-| **Control API** | Start a call against an assistant with an API key; receive events; records and metering per key. Next.js route handlers under `/v1`, in the same app. |
+| Part              | What it is                                                                                                                                            |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Workspace**     | Sign in, create and edit assistants, mint and revoke API keys, browse calls, transcripts, and usage. Next.js.                                         |
+| **Control API**   | Start a call against an assistant with an API key; receive events; records and metering per key. Next.js route handlers under `/v1`, in the same app. |
 | **Agent runtime** | One data-driven [Pipecat](https://github.com/pipecat-ai/pipecat) agent image. Per call it loads the assistant record and builds the pipeline. Python. |
 
 ## Status
 
 Direction is settled and recorded in [ADR 010](docs/decisions/010-pipecat-runtime.md): Pipecat is the voice runtime, pinned as a dependency and never forked, and this project is the platform on top of it. A gate spike proved the loop end to end — a real call, a real webhook, honest results and honest failures — and it is kept at [`spikes/pipecat-gate/`](spikes/pipecat-gate/) as the regression test for a future Pipecat upgrade.
 
-**The workspace app exists and runs.** `apps/workspace` is a Next.js app backed by Postgres through Drizzle: sign in, create and edit assistants with instructions, tools and a webhook secret, and mint and revoke API keys. No call has ever been placed — the agent runtime and the control API come next — and nothing is deployed.
+**The platform exists and runs locally.** `apps/workspace` contains the workspace and `/v1` control API, backed by Postgres through Drizzle; `agent/` is the deployable Pipecat runtime. Repository configuration targets Vercel and Neon, but owner dashboard setup and the first real deployment remain unverified. See [the deployment runbook](docs/DEPLOYMENT.md).
 
 An earlier milestone built a delegation engine from scratch — a TypeScript core, a wire contract, transports. ADR 010 retired it, and it has been removed. The ADRs that decided it are kept, superseded rather than deleted, because why a direction was abandoned is worth as much as why it was chosen.
 

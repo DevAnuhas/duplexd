@@ -1,6 +1,6 @@
 # 005: Fly.io for the server
 
-Status: superseded by 010
+Status: superseded by 011 for the platform layer
 Date: 2026-09-15
 
 ## Context
