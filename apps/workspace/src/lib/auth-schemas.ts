@@ -152,12 +152,22 @@ const workspaceName = z
     error: `Keep the workspace name under ${WORKSPACE_NAME_MAX_LENGTH} characters.`,
   });
 
-/** The person's own name, shown in the user menu instead of their address. */
+/**
+ * The person's own name, shown in the user menu instead of their address.
+ *
+ * Carries the same `rendersAsNothing` guard as the workspace name, for the
+ * same reason: `users.name` is what the user menu displays, so a zero-width
+ * name renders the menu blank. `.min(1)` does not catch it — U+200B has
+ * length 1.
+ */
 const personName = z
   .string({ error: 'Enter your name.' })
   .trim()
   .min(1, { error: 'Enter your name.' })
-  .max(120, { error: 'Keep your name under 120 characters.' });
+  .refine((value) => !rendersAsNothing(value), { error: 'Enter your name.' })
+  .max(WORKSPACE_NAME_MAX_LENGTH, {
+    error: `Keep your name under ${WORKSPACE_NAME_MAX_LENGTH} characters.`,
+  });
 
 /**
  * Signing up.

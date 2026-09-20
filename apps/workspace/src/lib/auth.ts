@@ -243,7 +243,18 @@ function createAuth() {
               alone, which is the easiest property to lose in a refactor and
               the reason it is written down here.
             */
-            return { data: { ...user, accountId } };
+            /**
+             * `users.name` gets the same treatment as the account's.
+             *
+             * It arrives on Better Auth's own body, so the form schema is the
+             * only thing bounding it — the same client-side-only shape the
+             * workspace name had. It is what the user menu displays instead of
+             * the address, so a zero-width name renders that menu blank.
+             * Falling back to the email keeps the menu legible.
+             */
+            const displayName = workspaceNameOrFallback(user.name, user.email);
+
+            return { data: { ...user, name: displayName, accountId } };
           },
         },
       },
