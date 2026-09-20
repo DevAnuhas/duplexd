@@ -73,7 +73,49 @@ export function previewBuildPlan(env: Environment): PreviewBuildPlan {
   };
 }
 
-type NeonIdentity = { project_id: string | null; branch_id: string | null };
+export type NeonIdentity = {
+  project_id: string | null;
+  branch_id: string | null;
+};
+
+export type PreviewDatabaseDecision =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: 'not_neon' | 'wrong_project' | 'production_branch';
+      message: string;
+    };
+
+/** Pure identity decision kept in CI; the live Neon query is a manual gate. */
+export function previewDatabaseDecision(
+  identity: NeonIdentity | undefined,
+  productionBranchId: string,
+): PreviewDatabaseDecision {
+  if (identity?.project_id == null || identity.branch_id == null) {
+    return {
+      ok: false,
+      reason: 'not_neon',
+      message: '[preview-migration] target is not a Neon database; refusing.',
+    };
+  }
+  if (identity.project_id !== NEON_PROJECT_ID) {
+    return {
+      ok: false,
+      reason: 'wrong_project',
+      message:
+        '[preview-migration] target belongs to the wrong Neon project; refusing.',
+    };
+  }
+  if (identity.branch_id === productionBranchId) {
+    return {
+      ok: false,
+      reason: 'production_branch',
+      message:
+        '[preview-migration] target is the production Neon branch; refusing.',
+    };
+  }
+  return { ok: true };
+}
 
 /** Checks the exact unpooled connection that migration will use. */
 export async function assertSafePreviewDatabase(
@@ -86,21 +128,11 @@ export async function assertSafePreviewDatabase(
               current_setting('neon.branch_id', true) AS branch_id`,
     );
     const identity = result.rows[0];
-    if (identity?.project_id == null || identity.branch_id == null) {
-      throw new Error(
-        '[preview-migration] target is not a Neon database; refusing.',
-      );
-    }
-    if (identity.project_id !== NEON_PROJECT_ID) {
-      throw new Error(
-        '[preview-migration] target belongs to the wrong Neon project; refusing.',
-      );
-    }
-    if (identity.branch_id === plan.productionBranchId) {
-      throw new Error(
-        '[preview-migration] target is the production Neon branch; refusing.',
-      );
-    }
+    const decision = previewDatabaseDecision(
+      identity,
+      plan.productionBranchId,
+    );
+    if (!decision.ok) throw new Error(decision.message);
   } finally {
     await pool.end();
   }

@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assertSafePreviewDatabase,
+  previewDatabaseDecision,
   previewBuildPlan,
 } from '../scripts/vercel-build.ts';
 import { productionContextDecision } from '../scripts/production-context.ts';
@@ -63,15 +64,41 @@ describe('preview migration gate', () => {
       kind: 'build_only',
     });
   });
+
+  it('rejects the production branch and accepts a different Neon branch', () => {
+    const identity = {
+      project_id: 'autumn-frog-71299404',
+      branch_id: 'br-connected',
+    };
+    expect(
+      previewDatabaseDecision(identity, 'br-connected'),
+    ).toStrictEqual({
+      ok: false,
+      reason: 'production_branch',
+      message:
+        '[preview-migration] target is the production Neon branch; refusing.',
+    });
+    expect(
+      previewDatabaseDecision(identity, 'br-production'),
+    ).toStrictEqual({ ok: true });
+  });
 });
 
-const hasNeonGateEnvironment =
-  process.env.DATABASE_URL !== undefined &&
-  process.env.DATABASE_URL_UNPOOLED !== undefined;
+const hasNeonGateEnvironment = [
+  process.env.DATABASE_URL,
+  process.env.DATABASE_URL_UNPOOLED,
+].every((value) => value !== undefined && value.trim() !== '');
 
-describe.skipIf(!hasNeonGateEnvironment)(
-  'real Neon preview identity gate',
-  () => {
+const neonGateCommand =
+  'node --env-file=apps/workspace/.env.local apps/workspace/node_modules/vitest/vitest.mjs run --root apps/workspace test/vercel-deployment.test.ts -t "real Neon preview identity gate"';
+
+describe('real Neon preview identity gate', () => {
+  if (!hasNeonGateEnvironment) {
+    process.stderr.write(
+      `[manual-neon-gate] NOT RUN: DATABASE_URL and DATABASE_URL_UNPOOLED are required. Run: ${neonGateCommand}\n`,
+    );
+    it.skip(`NOT RUN without real Neon URLs; run: ${neonGateCommand}`, () => {});
+  } else {
     async function ledgerCount(): Promise<number> {
       const pool = new Pool({
         connectionString: process.env.DATABASE_URL_UNPOOLED,
@@ -133,8 +160,8 @@ describe.skipIf(!hasNeonGateEnvironment)(
         assertSafePreviewDatabase(accepted),
       ).resolves.toBeUndefined();
     });
-  },
-);
+  }
+});
 
 describe('repository deployment wiring', () => {
   it('refuses preview-shaped production contexts and accepts main production', () => {
