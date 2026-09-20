@@ -14,11 +14,12 @@ import './globals.css';
  * self-hosted at build time, so there is still no request to Google at
  * runtime, and no font binaries in the repository.
  *
- * It replaces Founders Grotesk, whose metrics sat visibly off-centre inside
- * fixed-height controls — buttons, inputs, badges — because its vertical
- * metrics do not agree with the em box the way a UI face's should. Jakarta is
- * well-behaved there, which is why no per-component line-height correction
- * accompanies this change.
+ * **History, so nobody re-does the work that isn't here.** This replaced
+ * Founders Grotesk, whose vertical metrics were the cause of the off-centre
+ * text in fixed-height controls — buttons, inputs, badges. Jakarta sits
+ * correctly in the em box, so the face *was* the fix: there is deliberately
+ * no per-primitive line-height or vertical-trim correction anywhere in the
+ * codebase, and none should be added on the strength of that old symptom.
  */
 const jakarta = Plus_Jakarta_Sans({
   subsets: ['latin'],
