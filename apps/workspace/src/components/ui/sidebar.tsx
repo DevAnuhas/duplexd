@@ -588,9 +588,16 @@ function SidebarMenuBadge({
       className={cn(
         "pointer-events-none absolute right-1 flex h-5 min-w-5 items-center justify-center rounded-md px-1 text-xs font-medium text-sidebar-foreground tabular-nums select-none",
         "peer-hover/menu-button:text-sidebar-accent-foreground peer-data-[active=true]/menu-button:text-sidebar-accent-foreground",
-        "peer-data-[size=sm]/menu-button:top-1",
-        "peer-data-[size=default]/menu-button:top-1.5",
-        "peer-data-[size=lg]/menu-button:top-2.5",
+        /*
+          Centred against the button, not offset from its top.
+
+          Upstream pins the badge with a `top-*` value per button size — `top-1.5`
+          for the default 32px row. Our nav buttons are `h-11` for the 44px
+          minimum target, so a fixed top offset leaves the count sitting high in
+          the row instead of beside the label. Centring on the axis is correct at
+          any height and removes the three size-keyed offsets it replaces.
+        */
+        "top-1/2 -translate-y-1/2",
         "group-data-[collapsible=icon]:hidden",
         className
       )}

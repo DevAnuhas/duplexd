@@ -2,7 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Gear as Settings, Key as KeyRound, Phone as PhoneCall, Robot as Bot, SquaresFour as LayoutGrid } from '@phosphor-icons/react';
+import {
+  Gear as Settings,
+  Key as KeyRound,
+  Phone as PhoneCall,
+  SquaresFour as LayoutGrid,
+  Waveform,
+} from '@phosphor-icons/react';
 import type { ComponentProps } from 'react';
 
 import { NavUser } from '@/components/nav-user';
@@ -41,7 +47,7 @@ import {
 type NavItem = {
   href: string;
   label: string;
-  icon: typeof Bot;
+  icon: typeof Waveform;
   count?: number;
 };
 
@@ -61,7 +67,18 @@ export function AppSidebar({
 
   const build: NavItem[] = [
     { href: '/', label: 'Overview', icon: LayoutGrid },
-    { href: '/assistants', label: 'Assistants', icon: Bot, count: counts.assistants },
+    /*
+      Waveform, not a robot head: these are voice agents, and the head reads as
+      chatbot. It also stays legible beside `Phone` at 16px, which `Headset`
+      would not — the two are near-identical at that size, and Calls already
+      owns the handset.
+    */
+    {
+      href: '/assistants',
+      label: 'Assistants',
+      icon: Waveform,
+      count: counts.assistants,
+    },
   ];
   const configure: NavItem[] = [
     { href: '/keys', label: 'API keys', icon: KeyRound, count: counts.apiKeys },
