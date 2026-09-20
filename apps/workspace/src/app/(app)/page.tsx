@@ -1,5 +1,4 @@
 import Link from 'next/link';
-import { Suspense } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -16,7 +15,6 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from '@/components/ui/empty';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -30,6 +28,15 @@ import { listCallsForAccount } from '@/data/calls';
 import { CallStateBadge } from './calls/call-state-badge';
 import { requireShell } from './shell-data';
 
+type Counts = {
+  assistants: number;
+  apiKeys: number;
+  calls: number;
+  incompleteCalls: number;
+};
+
+export const dynamic = 'force-dynamic';
+
 /**
  * Overview.
  *
@@ -40,8 +47,15 @@ import { requireShell } from './shell-data';
  * `incomplete` gets a tile of its own rather than being folded into the total,
  * because it is the one number that means something is wrong. A tenant should
  * not have to open the call list to discover that agents have been dying.
+ *
+ * **Awaited, not streamed.** The stat tiles are links and the empty state
+ * holds the "Create an assistant" button; behind a Suspense boundary those
+ * rendered correctly and never hydrated, working only as full-page anchors.
+ * This was the last page in the app still streaming its session content.
  */
-export default function OverviewPage() {
+export default async function OverviewPage() {
+  const { account, counts } = await requireShell();
+
   return (
     <div className="space-y-6">
       <div>
@@ -51,13 +65,8 @@ export default function OverviewPage() {
         </p>
       </div>
 
-      <Suspense fallback={<StatsSkeleton />}>
-        <Stats />
-      </Suspense>
-
-      <Suspense fallback={<Skeleton className="h-64 w-full" />}>
-        <RecentActivity />
-      </Suspense>
+      <Stats counts={counts} />
+      <RecentActivity accountId={account.id} assistantCount={counts.assistants} />
     </div>
   );
 }
@@ -95,19 +104,7 @@ function StatTile({
   );
 }
 
-function StatsSkeleton() {
-  return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      {[0, 1, 2, 3].map((index) => (
-        <Skeleton key={index} className="h-28 w-full" />
-      ))}
-    </div>
-  );
-}
-
-async function Stats() {
-  const { counts } = await requireShell();
-
+function Stats({ counts }: { counts: Counts }) {
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
       <StatTile label="Assistants" value={counts.assistants} href="/assistants" />
@@ -152,15 +149,19 @@ function duration(value: number | null): string {
   return value === null ? 'Not reported' : `${Math.round(value)}s`;
 }
 
-async function RecentActivity() {
-  const { account, counts } = await requireShell();
-
+async function RecentActivity({
+  accountId,
+  assistantCount,
+}: {
+  accountId: string;
+  assistantCount: number;
+}) {
   /**
    * No assistants means no calls can exist — there is nothing to have called.
    * Saying "no calls yet" there would be true and useless; the tenant's actual
    * next action is to create one.
    */
-  if (counts.assistants === 0) {
+  if (assistantCount === 0) {
     return (
       <Empty>
         <EmptyHeader>
@@ -179,7 +180,7 @@ async function RecentActivity() {
     );
   }
 
-  const result = await listCallsForAccount(account.id, { limit: 5 });
+  const result = await listCallsForAccount(accountId, { limit: 5 });
 
   if (result.kind !== 'ok') {
     throw new Error('The overview passes no cursor, so it cannot be invalid.');
