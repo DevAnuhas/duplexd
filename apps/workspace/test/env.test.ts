@@ -11,6 +11,7 @@ import {
   requireDatabaseUrl,
   requireEncryptionKey,
   requirePipecatApiKey,
+  readCallSweepToken,
 } from '@/db/env';
 
 /**
@@ -35,6 +36,7 @@ const VARIABLES = [
   'BETTER_AUTH_SECRET',
   'BETTER_AUTH_URL',
   'PIPECAT_API_KEY',
+  'CALL_SWEEP_TOKEN',
 ] as const;
 
 /**
@@ -48,10 +50,13 @@ const VARIABLES = [
 const OPTIONAL_VARIABLES = ['ALLOW_LOOPBACK_SERVER_URL'] as const;
 
 describe('environment guards', () => {
-  let saved: Partial<Record<(typeof VARIABLES)[number], string | undefined>> = {};
+  let saved: Partial<Record<(typeof VARIABLES)[number], string | undefined>> =
+    {};
 
   beforeEach(() => {
-    saved = Object.fromEntries(VARIABLES.map((name) => [name, process.env[name]]));
+    saved = Object.fromEntries(
+      VARIABLES.map((name) => [name, process.env[name]]),
+    );
   });
 
   afterEach(() => {
@@ -103,6 +108,22 @@ describe('environment guards', () => {
       process.env.DATABASE_URL = 'postgres://localhost:5432/anything';
 
       expect(requireDatabaseUrl()).toBe('postgres://localhost:5432/anything');
+    });
+  });
+
+  describe('readCallSweepToken', () => {
+    it.each([undefined, '', '   '])(
+      'reports an absent or blank value as unconfigured: %s',
+      (value) => {
+        if (value === undefined) delete process.env.CALL_SWEEP_TOKEN;
+        else process.env.CALL_SWEEP_TOKEN = value;
+        expect(readCallSweepToken()).toBeNull();
+      },
+    );
+
+    it('returns a configured token without exposing a fallback', () => {
+      process.env.CALL_SWEEP_TOKEN = '  synthetic-sweep-token  ';
+      expect(readCallSweepToken()).toBe('synthetic-sweep-token');
     });
   });
 
@@ -278,10 +299,9 @@ describe('environment guards', () => {
   });
 
   /**
-   * The same for all four, because importing this module is what `next build`
-   * does. If any getter read its variable at import rather than at call time,
-   * the production image build would need that variable — and `requireAuthUrl`
-   * is the newest one, so it is the likeliest to acquire the habit.
+   * The same for every accessor, because importing this module is what
+   * `next build` does. If any accessor read its variable at import rather than
+   * at call time, the deployment build would need that variable.
    */
   it('lets every getter be imported with nothing set at all', () => {
     for (const name of VARIABLES) {
@@ -293,29 +313,28 @@ describe('environment guards', () => {
     expect(() => requireAuthSecret()).toThrow(/BETTER_AUTH_SECRET/);
     expect(() => requireAuthUrl()).toThrow(/BETTER_AUTH_URL/);
     expect(() => requirePipecatApiKey()).toThrow(/PIPECAT_API_KEY/);
+    expect(readCallSweepToken()).toBeNull();
   });
 
   /**
    * `.env.example` is the app's account of what it needs, and item 19 requires
    * it to be complete and to contain nothing else.
    *
-   * **This was "exactly the guarded variables" and is now "guarded plus
-   * declared-optional", which is a weakening, so it is worth saying what was
-   * kept.** The original invariant's real value was that nothing could sit in
-   * this file unvalidated — a variable the app reads but nothing checks is a
-   * trap. `ALLOW_LOOPBACK_SERVER_URL` genuinely has no guard and should not
-   * have one: a `require…()` guard exists to fail closed when *required*
-   * config is missing, and an optional flag whose absence means "off" is
-   * already closed.
+   * **This was "exactly the globally guarded variables" and is now "required
+   * accessors plus declared-optional", so the replacement invariant needs to
+   * stay explicit.** `CALL_SWEEP_TOKEN` is required only at its route and its
+   * accessor reports absence for the route to refuse. `ALLOW_LOOPBACK_SERVER_URL`
+   * genuinely has no accessor guard and should not have one: absence means
+   * "off", which is already closed.
    *
    * So the teeth move rather than come out. An optional variable has to earn
    * its place by being **absent-safe** — with it unset the application must
    * behave as the safe default — and that is asserted below rather than
-   * asserted about. A new *required* variable still has to have a guard,
-   * because it will not be in `OPTIONAL_VARIABLES` and the set comparison will
-   * fail.
+   * asserted about. A new *required* variable still has to have an accessor and
+   * fail closed at its owning surface, because it will not be in
+   * `OPTIONAL_VARIABLES` and the set comparison will fail.
    */
-  it('lists exactly the guarded and declared-optional variables in .env.example', () => {
+  it('lists exactly the required and declared-optional variables in .env.example', () => {
     const example = readFileSync(
       fileURLToPath(new URL('../../../.env.example', import.meta.url)),
       'utf8',
@@ -325,9 +344,7 @@ describe('environment guards', () => {
       .map((match) => match[1] ?? '')
       .sort();
 
-    expect(listed).toStrictEqual(
-      [...VARIABLES, ...OPTIONAL_VARIABLES].sort(),
-    );
+    expect(listed).toStrictEqual([...VARIABLES, ...OPTIONAL_VARIABLES].sort());
   });
 });
 
@@ -354,18 +371,21 @@ describe('declared-optional variables are absent-safe', () => {
   it.each([
     ['unset', undefined],
     ['the empty string', ''],
-  ])('refuses loopback when ALLOW_LOOPBACK_SERVER_URL is %s', (_label, value) => {
-    if (value === undefined) {
-      delete process.env.ALLOW_LOOPBACK_SERVER_URL;
-    } else {
-      process.env.ALLOW_LOOPBACK_SERVER_URL = value;
-    }
+  ])(
+    'refuses loopback when ALLOW_LOOPBACK_SERVER_URL is %s',
+    (_label, value) => {
+      if (value === undefined) {
+        delete process.env.ALLOW_LOOPBACK_SERVER_URL;
+      } else {
+        process.env.ALLOW_LOOPBACK_SERVER_URL = value;
+      }
 
-    expect(
-      validateServerUrl('http://localhost:3000/hook'),
-      'loopback was accepted with the flag unset — the dev exception is on by default',
-    ).not.toBeNull();
-  });
+      expect(
+        validateServerUrl('http://localhost:3000/hook'),
+        'loopback was accepted with the flag unset — the dev exception is on by default',
+      ).not.toBeNull();
+    },
+  );
 
   it('accepts loopback only when it is exactly "true"', () => {
     process.env.ALLOW_LOOPBACK_SERVER_URL = 'true';
@@ -375,6 +395,8 @@ describe('declared-optional variables are absent-safe', () => {
 
   /** Every optional variable is covered above; this fails if one is added. */
   it('has an absent-safe assertion for every declared-optional variable', () => {
-    expect([...OPTIONAL_VARIABLES]).toStrictEqual(['ALLOW_LOOPBACK_SERVER_URL']);
+    expect([...OPTIONAL_VARIABLES]).toStrictEqual([
+      'ALLOW_LOOPBACK_SERVER_URL',
+    ]);
   });
 });

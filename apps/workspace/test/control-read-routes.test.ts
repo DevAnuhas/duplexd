@@ -4,6 +4,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 import { GET as listCalls } from '@/app/v1/calls/route';
 import { GET as getCall } from '@/app/v1/calls/[id]/route';
+import { PLATFORM_SWEEP_SEQUENCE } from '@/control/constants';
 import { mintApiKey } from '@/data/api-keys';
 import { closeDb, getDb } from '@/db/client';
 import { callEvents, callRateLimits, calls } from '@/db/schema';
@@ -26,28 +27,37 @@ async function seedCall(input: {
   createdAt: Date;
   durationSecs?: number;
   state?: string;
+  lastHeartbeatAt?: Date | null;
   secretCanary?: string;
 }): Promise<string> {
   const id = randomUUID();
-  await getDb().insert(calls).values({
-    id,
-    accountId: input.accountId,
-    apiKeyId: input.apiKeyId,
-    assistantSnapshot: {
-      assistantId: `snapshot-${id}`,
-      serverSecretCiphertext: input.secretCanary ?? `ciphertext-${id}`,
-    },
-    agentTokenHash: randomUUID().replaceAll('-', '').padEnd(64, '0'),
-    state: input.state ?? 'ended',
-    endedReason: 'client_disconnected',
-    createdAt: input.createdAt,
-    durationSecs: input.durationSecs ?? 12.345,
-  });
+  await getDb()
+    .insert(calls)
+    .values({
+      id,
+      accountId: input.accountId,
+      apiKeyId: input.apiKeyId,
+      assistantSnapshot: {
+        assistantId: `snapshot-${id}`,
+        serverSecretCiphertext: input.secretCanary ?? `ciphertext-${id}`,
+      },
+      agentTokenHash: randomUUID().replaceAll('-', '').padEnd(64, '0'),
+      state: input.state ?? 'ended',
+      endedReason:
+        input.state === undefined || input.state === 'ended'
+          ? 'client_disconnected'
+          : null,
+      createdAt: input.createdAt,
+      durationSecs: input.durationSecs ?? 12.345,
+      lastHeartbeatAt: input.lastHeartbeatAt ?? null,
+    });
   return id;
 }
 
 function customerRequest(rawKey: string, path: string): Request {
-  return new Request(`http://localhost:3000${path}`, { headers: bearer(rawKey) });
+  return new Request(`http://localhost:3000${path}`, {
+    headers: bearer(rawKey),
+  });
 }
 
 describeDatabase('customer call detail and account scoping', () => {
@@ -89,7 +99,11 @@ describeDatabase('customer call detail and account scoping', () => {
 
   it('returns numeric duration and ordered events while omitting every private field', async () => {
     const account = await signUpNewAccount();
-    const key = await mintApiKey(account.accountId, 'detail key', account.userId);
+    const key = await mintApiKey(
+      account.accountId,
+      'detail key',
+      account.userId,
+    );
     const secretCiphertextCanary = `ciphertext-canary-${randomUUID()}`;
     const transcriptCanary = `transcript-canary-${randomUUID()}`;
     const callId = await seedCall({
@@ -99,22 +113,24 @@ describeDatabase('customer call detail and account scoping', () => {
       durationSecs: 12.345,
       secretCanary: secretCiphertextCanary,
     });
-    await getDb().insert(callEvents).values([
-      {
-        callId,
-        seq: 2,
-        at: new Date('2026-09-20T10:00:02Z'),
-        type: 'transcript_assistant',
-        payload: { text: transcriptCanary },
-      },
-      {
-        callId,
-        seq: 1,
-        at: new Date('2026-09-20T10:00:01Z'),
-        type: 'bot_speech_started',
-        payload: {},
-      },
-    ]);
+    await getDb()
+      .insert(callEvents)
+      .values([
+        {
+          callId,
+          seq: 2,
+          at: new Date('2026-09-20T10:00:02Z'),
+          type: 'transcript_assistant',
+          payload: { text: transcriptCanary },
+        },
+        {
+          callId,
+          seq: 1,
+          at: new Date('2026-09-20T10:00:01Z'),
+          type: 'bot_speech_started',
+          payload: {},
+        },
+      ]);
 
     const response = await getCall(
       customerRequest(key.raw, `/v1/calls/${callId}`),
@@ -143,6 +159,95 @@ describeDatabase('customer call detail and account scoping', () => {
     });
     expect(text).not.toContain(storedHash);
   });
+
+  it('projects stale and fresh calls honestly through both customer read routes', async () => {
+    const account = await signUpNewAccount();
+    const key = await mintApiKey(
+      account.accountId,
+      'staleness key',
+      account.userId,
+    );
+    const now = new Date();
+    const staleAt = new Date(now.getTime() - 10 * 60_000);
+    const staleId = await seedCall({
+      accountId: account.accountId,
+      apiKeyId: key.id,
+      state: 'active',
+      createdAt: staleAt,
+      lastHeartbeatAt: staleAt,
+    });
+    const freshId = await seedCall({
+      accountId: account.accountId,
+      apiKeyId: key.id,
+      state: 'active',
+      createdAt: now,
+      lastHeartbeatAt: now,
+    });
+
+    const staleDetail = await getCall(
+      customerRequest(key.raw, `/v1/calls/${staleId}`),
+      detailContext(staleId),
+    );
+    const freshDetail = await getCall(
+      customerRequest(key.raw, `/v1/calls/${freshId}`),
+      detailContext(freshId),
+    );
+    expect(staleDetail.status).toBe(200);
+    expect(freshDetail.status).toBe(200);
+    expect((await staleDetail.json()).call).toMatchObject({
+      id: staleId,
+      state: 'incomplete',
+      endedReason: 'agent_lost',
+      endedAt: null,
+    });
+    expect((await freshDetail.json()).call).toMatchObject({
+      id: freshId,
+      state: 'active',
+      endedReason: null,
+      endedAt: null,
+    });
+
+    const listResponse = await listCalls(customerRequest(key.raw, '/v1/calls'));
+    expect(listResponse.status).toBe(200);
+    const body = (await listResponse.json()) as {
+      calls: Array<{
+        id: string;
+        state: string;
+        endedReason: string | null;
+        endedAt: string | null;
+      }>;
+    };
+    expect(body.calls.find((call) => call.id === staleId)).toMatchObject({
+      state: 'incomplete',
+      endedReason: 'agent_lost',
+      endedAt: null,
+    });
+    expect(body.calls.find((call) => call.id === freshId)).toMatchObject({
+      state: 'active',
+      endedReason: null,
+      endedAt: null,
+    });
+
+    const stored = await withTestPool(async (pool) => {
+      const callsResult = await pool.query<{ id: string; state: string }>(
+        'SELECT id, state FROM calls WHERE id = ANY($1::text[]) ORDER BY id',
+        [[staleId, freshId]],
+      );
+      const eventsResult = await pool.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM call_events
+         WHERE call_id = $1 AND seq = $2`,
+        [staleId, PLATFORM_SWEEP_SEQUENCE],
+      );
+      return {
+        calls: callsResult.rows,
+        sweepEvents: Number(eventsResult.rows[0]?.count ?? 0),
+      };
+    });
+    expect(stored.calls).toStrictEqual(
+      [staleId, freshId].sort().map((id) => ({ id, state: 'active' })),
+    );
+    expect(stored.sweepEvents).toBe(0);
+  });
 });
 
 describeDatabase('stable cursor pagination', () => {
@@ -158,7 +263,11 @@ describeDatabase('stable cursor pagination', () => {
     const tied = new Date('2026-09-20T10:00:00.000Z');
     const ownIds = await Promise.all(
       Array.from({ length: 5 }, () =>
-        seedCall({ accountId: accountA.accountId, apiKeyId: keyA.id, createdAt: tied }),
+        seedCall({
+          accountId: accountA.accountId,
+          apiKeyId: keyA.id,
+          createdAt: tied,
+        }),
       ),
     );
     const otherId = await seedCall({
@@ -166,13 +275,13 @@ describeDatabase('stable cursor pagination', () => {
       apiKeyId: keyB.id,
       createdAt: tied,
     });
-    await getDb().insert(callRateLimits).values({
-      apiKeyId: keyA.id,
-      windowStartedAt: new Date(
-        Math.floor(Date.now() / 60_000) * 60_000,
-      ),
-      count: 999,
-    });
+    await getDb()
+      .insert(callRateLimits)
+      .values({
+        apiKeyId: keyA.id,
+        windowStartedAt: new Date(Math.floor(Date.now() / 60_000) * 60_000),
+        count: 999,
+      });
 
     const seen: string[] = [];
     let cursor: string | null = null;
@@ -191,7 +300,9 @@ describeDatabase('stable cursor pagination', () => {
         nextCursor: string | null;
       };
       expect(page.calls.length).toBeGreaterThan(0);
-      expect(page.calls.every((call) => typeof call.durationSecs === 'number')).toBe(true);
+      expect(
+        page.calls.every((call) => typeof call.durationSecs === 'number'),
+      ).toBe(true);
       seen.push(...page.calls.map((call) => call.id));
       cursor = page.nextCursor;
     } while (cursor !== null);
@@ -205,9 +316,7 @@ describeDatabase('stable cursor pagination', () => {
     );
     await expectProblem(malformed, 400, 'invalid_request');
     expect(
-      (
-        await listCalls(customerRequest(keyA.raw, '/v1/calls?limit=2'))
-      ).status,
+      (await listCalls(customerRequest(keyA.raw, '/v1/calls?limit=2'))).status,
     ).toBe(200);
   });
 });

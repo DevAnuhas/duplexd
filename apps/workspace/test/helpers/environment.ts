@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 /** The repository root, four levels up from `apps/workspace/test/helpers/`. */
 const repositoryRoot = fileURLToPath(new URL('../../../../', import.meta.url));
+const workspaceRoot = fileURLToPath(new URL('../../', import.meta.url));
 
 /**
  * Obviously-fake defaults so the non-database tests run in a fresh clone with
@@ -31,6 +32,7 @@ const TEST_ONLY_DEFAULTS: Readonly<Record<string, string>> = {
   ASSISTANT_SECRET_KEY:
     '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff',
   PIPECAT_API_KEY: 'test-only-placeholder-not-a-real-pipecat-key',
+  CALL_SWEEP_TOKEN: 'test-only-placeholder-not-a-real-sweep-token',
 };
 
 /**
@@ -49,10 +51,17 @@ const TEST_ONLY_DEFAULTS: Readonly<Record<string, string>> = {
  * `.env.local`.
  */
 export function loadTestEnvironment(): void {
-  const envLocal = `${repositoryRoot}.env.local`;
-
-  if (existsSync(envLocal)) {
-    process.loadEnvFile(envLocal);
+  // Next's conventional location is the package directory. The root fallback
+  // preserves older worktrees. `loadEnvFile` never overwrites an existing
+  // value, so the process environment still wins and the first file wins over
+  // the fallback.
+  for (const envLocal of [
+    `${workspaceRoot}.env.local`,
+    `${repositoryRoot}.env.local`,
+  ]) {
+    if (existsSync(envLocal)) {
+      process.loadEnvFile(envLocal);
+    }
   }
 
   for (const [name, value] of Object.entries(TEST_ONLY_DEFAULTS)) {

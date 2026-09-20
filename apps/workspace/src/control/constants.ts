@@ -19,8 +19,6 @@ export const PLATFORM_CORRECTION_SEQUENCE = AGENT_SEQUENCE_LIMIT + 1;
 
 export const ACTIVE_STALE_AFTER_MS = 2 * 60 * 1_000;
 export const STARTING_STALE_AFTER_MS = 2 * 60 * 1_000;
-export const SWEEP_INTERVAL_MS = 30 * 1_000;
-
 export const CALL_RATE_LIMIT = 10;
 export const CALL_RATE_WINDOW_MS = 60 * 1_000;
 
