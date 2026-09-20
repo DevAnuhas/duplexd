@@ -361,9 +361,13 @@ describeDatabase('real standalone server behavior', () => {
     );
     const staleHtml = await stalePage.text();
     expect(stalePage.status).toBe(200);
+    // The reason and the missing duration are still asserted; only the strings
+    // moved. The detail page renders `ended_reason` with its underscores
+    // replaced, and a null duration as "Not reported" — so the raw column value
+    // and the old "not recorded" wording no longer appear anywhere in the HTML.
     expect(staleHtml).toContain('incomplete');
-    expect(staleHtml).toContain('agent_lost');
-    expect(staleHtml).toContain('not recorded');
+    expect(staleHtml).toContain('agent lost');
+    expect(staleHtml).toContain('Not reported');
     expect(await callRecord(staleCallId)).toStrictEqual(bootSnapshot);
     expect(await eventCount(staleCallId)).toBe(1);
 
@@ -552,7 +556,10 @@ describeDatabase('real standalone server behavior', () => {
     const listHtml = await listResponse.text();
     expect(listResponse.status).toBe(200);
     expect(listHtml).toContain(own.callId);
-    expect(listHtml).toContain('12.345 seconds');
+    // The list and the detail format the same 12.345s differently on purpose:
+    // the list rounds for scanning, the detail keeps every millisecond the
+    // agent reported. Both are asserted so a change to either is visible.
+    expect(listHtml).toContain('12 sec');
     expect(listHtml).not.toContain(other.callId);
     expect(listHtml).not.toContain(ownKey.raw);
 
@@ -561,7 +568,7 @@ describeDatabase('real standalone server behavior', () => {
       { headers: { cookie: pageAccount.cookie }, redirect: 'manual' },
     );
     expect(ownDetail.status).toBe(200);
-    expect(await ownDetail.text()).toContain('12.345 seconds');
+    expect(await ownDetail.text()).toContain('12.345 sec');
 
     const liveDetail = await fetch(
       `http://127.0.0.1:${port}/calls/${liveCallId}`,
@@ -569,15 +576,81 @@ describeDatabase('real standalone server behavior', () => {
     );
     const liveHtml = await liveDetail.text();
     expect(liveDetail.status).toBe(200);
-    for (const canary of [...liveCanaries, ownKey.raw]) {
-      expect(`${listHtml}\n${liveHtml}`).not.toContain(canary);
+
+    /**
+     * Credentials must never reach a page; the transcript must.
+     *
+     * These four used to be one blanket "none of this appears anywhere" loop,
+     * written when the call detail rendered nothing but event type names. The
+     * workspace event projection now renders transcripts, so the transcript
+     * canary legitimately appears on its own account's call detail — and the
+     * blanket assertion was failing on the one line that is supposed to be
+     * there while proving nothing about the three that are not.
+     *
+     * Splitting it matters for a second reason. As one loop, this test would
+     * still pass if transcripts silently stopped rendering: absence of the
+     * canary would read as success. The positive assertion below is the
+     * control that makes the negative ones mean something.
+     *
+     * Labelled, because an unlabelled `not.toContain` failure prints the
+     * canary, and three of these are credentials.
+     */
+    for (const [label, canary] of [
+      ['the agent token', liveCanaries[0]!],
+      ['the webhook secret plaintext', liveCanaries[1]!],
+      ['the webhook secret ciphertext', liveCanaries[2]!],
+      ['a raw API key', ownKey.raw],
+    ] as const) {
+      expect(
+        `${listHtml}\n${liveHtml}`.includes(canary),
+        `${label} reached a workspace page`,
+      ).toBe(false);
     }
 
+    // The transcript the real Python agent reported, read back through the
+    // whitelisted projection and rendered on its own account's detail page.
+    expect(
+      liveHtml.includes(liveCanaries[3]!),
+      'the transcript never reached the call detail — the event projection is not rendering',
+    ).toBe(true);
+
+    // ...and nowhere near the list, which projects no payloads at all.
+    expect(
+      listHtml.includes(liveCanaries[3]!),
+      'a transcript line leaked into the calls list',
+    ).toBe(false);
+
+    /**
+     * Another account's call, requested with a real session for this one.
+     *
+     * **This asserts the body, not the status, and that is a deliberate
+     * weakening of the wrong assertion into the right one.** It used to read
+     * `toBe(404)`. Under `cacheComponents` the prerendered shell is flushed
+     * with `200` before the page's `notFound()` runs inside its Suspense
+     * boundary, so the status line no longer carries the answer — the body
+     * does. Left as `toBe(404)` this fails on a status code while checking
+     * nothing about what was served.
+     *
+     * The scoping itself is intact: `getWorkspaceCallForAccount` filters by
+     * `accountId`, returns null, and the page renders its not-found view. What
+     * matters is that no part of the other account's call is in the response,
+     * which is now what gets asserted. The call id is excluded from that check
+     * on purpose — it is the path the caller themselves supplied, and it is
+     * echoed back in the router state on any 404.
+     */
     const otherDetail = await fetch(
       `http://127.0.0.1:${port}/calls/${other.callId}`,
       { headers: { cookie: pageAccount.cookie }, redirect: 'manual' },
     );
-    expect(otherDetail.status).toBe(404);
+    const otherHtml = await otherDetail.text();
+
+    expect(otherHtml).toContain('could not be found');
+    for (const absent of ['End reason', 'Detected', 'Transcript', otherAccount.email]) {
+      expect(
+        otherHtml.includes(absent),
+        `another account's call detail rendered ${absent}`,
+      ).toBe(false);
+    }
 
     const unauthenticated = await fetch(`http://127.0.0.1:${port}/calls`, {
       redirect: 'manual',
@@ -585,6 +658,98 @@ describeDatabase('real standalone server behavior', () => {
     expect([303, 307, 308]).toContain(unauthenticated.status);
     expect(unauthenticated.headers.get('location')).toContain('/sign-in');
   });
+
+  /**
+   * The two halves of what protects a signed-out visitor, asserted separately
+   * because only one of them is a security guarantee.
+   *
+   * `src/proxy.ts` redirects when no session cookie is present. That is a
+   * convenience: it is cookie *presence*, so a forged cookie of the right name
+   * walks straight past it, and this test forges one deliberately rather than
+   * pretending the proxy is a gate.
+   *
+   * What the forged request must then meet is the real boundary — the page
+   * resolves the session server-side, finds nothing, and renders the
+   * prerendered shell. The shell is built with no database and no session, so
+   * it cannot carry tenant data; this asserts that rather than assuming it,
+   * against the account whose rows are seeded two hundred lines above and whose
+   * name, email and id would be the things to leak.
+   *
+   * Both assertions matter and they fail for different reasons. If the proxy
+   * regresses, the first goes. If a page ever reads the session outside its
+   * Suspense boundary and bakes an account into the shell, the second goes.
+   */
+  it('redirects a visitor with no cookie and leaks nothing to one with a forged cookie', async () => {
+    const origin = `http://127.0.0.1:${port}`;
+
+    const noCookie = await fetch(`${origin}/`, { redirect: 'manual' });
+    expect(noCookie.status).toBe(307);
+    expect(noCookie.headers.get('location')).toContain('/sign-in');
+
+    // A cookie of the right name carrying a value that was never issued. The
+    // proxy sees a cookie and steps aside; nothing else does.
+    const forged = await fetch(`${origin}/`, {
+      headers: {
+        cookie: `better-auth.session_token=${randomUUID()}.forged-not-a-real-signature`,
+      },
+      redirect: 'manual',
+    });
+    const forgedHtml = await forged.text();
+
+    expect(
+      forged.status,
+      'the forged cookie was rejected by the proxy, so this proves nothing about the shell',
+    ).toBe(200);
+
+    // `accounts.name` is the signup email, so the email canary covers the
+    // organization name the sidebar renders as well as the address itself.
+    for (const canary of [
+      pageAccount.accountId,
+      pageAccount.email,
+      pageAccount.userId,
+      otherAccount.accountId,
+      otherAccount.email,
+    ]) {
+      expect(forgedHtml, `the shell served a signed-out request leaked ${canary}`).not.toContain(
+        canary,
+      );
+    }
+  });
+
+  /**
+   * The pages a signed-out person is *supposed* to reach must answer for
+   * themselves, rather than being bounced to `/sign-in` by the proxy.
+   *
+   * This exists because the first version of `src/proxy.ts` broke it. Written
+   * as "proxy everything except the routes I remembered to exclude", it caught
+   * `/reset-password` — the page opened from a password-reset email — and
+   * would have redirected it to `/sign-in`, dropping the `?token=` that makes
+   * it work. Password reset would have shipped broken with nothing to say so.
+   * The matcher is an allowlist of the `(app)` routes for that reason, and this
+   * asserts the property instead of trusting the list to stay correct.
+   *
+   * **The assertion is "the proxy did not touch it", not "it returned 200",**
+   * and the difference is load-bearing. `/forgot-password` and
+   * `/reset-password` call `notFound()` when email delivery is unconfigured,
+   * and `productionEnvironment()` sets no `RESEND_API_KEY` — so a 404 is the
+   * correct answer here and asserting 200 would make this test fail for a
+   * reason that has nothing to do with the proxy. What must never happen is a
+   * redirect to `/sign-in`, whichever way email is configured.
+   */
+  it.each([['/sign-in'], ['/sign-up'], ['/forgot-password'], ['/reset-password']])(
+    'lets a signed-out visitor reach %s rather than proxying it to /sign-in',
+    async (path) => {
+      const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+        redirect: 'manual',
+      });
+
+      expect(
+        [200, 404],
+        `${path} answered ${response.status} → ${response.headers.get('location')}`,
+      ).toContain(response.status);
+      expect(response.headers.get('location')).toBeNull();
+    },
+  );
 });
 
 async function eventCount(callId: string): Promise<number> {
