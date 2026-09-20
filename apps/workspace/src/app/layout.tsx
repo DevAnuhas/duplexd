@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import localFont from 'next/font/local';
+import { Plus_Jakarta_Sans } from 'next/font/google';
 
 import { ThemeProvider } from '@/components/theme-provider';
 import { Toaster } from '@/components/ui/sonner';
@@ -7,19 +7,23 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 
 import './globals.css';
 
-const foundersGrotesk = localFont({
-  src: [
-    { path: '../fonts/FoundersGrotesk-Light.otf', weight: '300', style: 'normal' },
-    { path: '../fonts/FoundersGrotesk-LightItalic.otf', weight: '300', style: 'italic' },
-    { path: '../fonts/FoundersGrotesk-Regular.otf', weight: '400', style: 'normal' },
-    { path: '../fonts/FoundersGrotesk-RegularItalic.otf', weight: '400', style: 'italic' },
-    { path: '../fonts/FoundersGrotesk-Medium.otf', weight: '500', style: 'normal' },
-    { path: '../fonts/FoundersGrotesk-MediumItalic.otf', weight: '500', style: 'italic' },
-    { path: '../fonts/FoundersGrotesk-Semibold.otf', weight: '600', style: 'normal' },
-    { path: '../fonts/FoundersGrotesk-SemiboldItalic.otf', weight: '600', style: 'italic' },
-    { path: '../fonts/FoundersGrotesk-Bold.otf', weight: '700', style: 'normal' },
-    { path: '../fonts/FoundersGrotesk-BoldItalic.otf', weight: '700', style: 'italic' },
-  ],
+/**
+ * Plus Jakarta Sans, the product's one typeface.
+ *
+ * `next/font/google` rather than a local file: the family is fetched and
+ * self-hosted at build time, so there is still no request to Google at
+ * runtime, and no font binaries in the repository.
+ *
+ * It replaces Founders Grotesk, whose metrics sat visibly off-centre inside
+ * fixed-height controls — buttons, inputs, badges — because its vertical
+ * metrics do not agree with the em box the way a UI face's should. Jakarta is
+ * well-behaved there, which is why no per-component line-height correction
+ * accompanies this change.
+ */
+const jakarta = Plus_Jakarta_Sans({
+  subsets: ['latin'],
+  weight: ['300', '400', '500', '600', '700'],
+  style: ['normal', 'italic'],
   variable: '--font-sans',
   display: 'swap',
 });
@@ -32,7 +36,7 @@ export const metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${foundersGrotesk.variable} font-sans`}>
+      <body className={`${jakarta.variable} font-sans`}>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <TooltipProvider>{children}</TooltipProvider>
           {/*

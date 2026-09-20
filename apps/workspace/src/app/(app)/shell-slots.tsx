@@ -56,8 +56,8 @@ export async function AccountIdentity() {
                 The first eight characters of the account id. It is the
                 identifier in every support conversation and every log line,
                 and showing it proves the boundary to a sceptical tenant: two
-                browsers, two ids. Tabular numerals keep it legible in Founders
-                Grotesk, which ships no monospace cut.
+                browsers, two ids. Tabular numerals keep the digits aligned
+                without reaching for a second typeface.
               */}
               <span className="text-muted-foreground truncate text-xs tabular-nums">
                 acct {account.id.slice(0, 8)}
