@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { AlertTriangle, ArrowLeft, ChevronDown } from 'lucide-react';
+import { ArrowLeft, CaretDown, Warning } from '@phosphor-icons/react/ssr';
 import { Suspense } from 'react';
 
 import { CallStateBadge } from '../call-state-badge';
@@ -171,7 +171,7 @@ async function CallDetailContent({
 
       {result.call.state === 'incomplete' && (
         <Alert className="border-orange-500/30 bg-orange-500/5">
-          <AlertTriangle aria-hidden="true" />
+          <Warning aria-hidden="true" className="size-4" />
           <AlertTitle>Call incomplete</AlertTitle>
           <AlertDescription>
             Agent stopped reporting. A completed ending was not received.
@@ -306,9 +306,9 @@ async function CallDetailContent({
                 Technical events
                 <span className="flex items-center gap-2 text-xs text-muted-foreground">
                   {technical.length}
-                  <ChevronDown
+                  <CaretDown
                     aria-hidden="true"
-                    className="transition-transform group-data-[state=open]:rotate-180 motion-reduce:transition-none"
+                    className="size-4 transition-transform group-data-[state=open]:rotate-180 motion-reduce:transition-none"
                   />
                 </span>
               </Button>
@@ -364,7 +364,7 @@ export default function CallDetailPage({
       <header className="space-y-4">
         <Button variant="ghost" asChild className="-ml-3 h-11">
           <Link href="/calls">
-            <ArrowLeft aria-hidden="true" />
+            <ArrowLeft aria-hidden="true" className="size-4" />
             All calls
           </Link>
         </Button>
