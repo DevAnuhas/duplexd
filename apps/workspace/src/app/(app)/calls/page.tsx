@@ -1,10 +1,8 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { Suspense } from 'react';
 
 import { CopyButton } from '@/components/copy-button';
 import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -16,6 +14,8 @@ import {
 import { listWorkspaceCallsForAccount } from '@/data/calls';
 import { requireShell } from '../shell-data';
 import { CallStateBadge } from './call-state-badge';
+
+export const dynamic = 'force-dynamic';
 
 const dateTime = new Intl.DateTimeFormat('en', {
   year: 'numeric',
@@ -48,7 +48,7 @@ function shortId(id: string): string {
   return id.length <= 16 ? id : `${id.slice(0, 8)}…${id.slice(-4)}`;
 }
 
-async function CallsContent({
+export default async function CallsPage({
   searchParams,
 }: {
   searchParams: Promise<{ cursor?: string | string[] }>;
@@ -66,7 +66,14 @@ async function CallsContent({
   }
 
   return (
-    <>
+    <main className="space-y-6">
+      <header>
+        <h1 className="text-2xl font-semibold tracking-tight">Calls</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Inspect call outcomes, transcripts, and tool activity.
+        </p>
+      </header>
+
       {result.calls.length === 0 ? (
         <div className="flex min-h-52 flex-col items-start justify-center border-y py-10">
           <h2 className="text-lg font-medium">No calls yet</h2>
@@ -144,42 +151,6 @@ async function CallsContent({
           </Link>
         </Button>
       )}
-    </>
-  );
-}
-
-function CallsSkeleton() {
-  return (
-    <div className="overflow-hidden rounded-lg border p-4" aria-label="Loading calls">
-      <div className="space-y-4">
-        {Array.from({ length: 5 }, (_, index) => (
-          <div key={index} className="grid grid-cols-3 gap-4 sm:grid-cols-6">
-            {Array.from({ length: 6 }, (_, cell) => (
-              <Skeleton key={cell} className="h-5 w-full" />
-            ))}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-export default function CallsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ cursor?: string | string[] }>;
-}) {
-  return (
-    <main className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Calls</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Inspect call outcomes, transcripts, and tool activity.
-        </p>
-      </header>
-      <Suspense fallback={<CallsSkeleton />}>
-        <CallsContent searchParams={searchParams} />
-      </Suspense>
     </main>
   );
 }

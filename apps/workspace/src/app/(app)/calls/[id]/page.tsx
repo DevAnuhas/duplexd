@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, CaretDown, Warning } from '@phosphor-icons/react/ssr';
-import { Suspense } from 'react';
 
 import { CallStateBadge } from '../call-state-badge';
 import { CopyButton } from '@/components/copy-button';
@@ -13,12 +12,13 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
   getWorkspaceCallForAccount,
   type WorkspaceCallEvent,
 } from '@/data/calls';
 import { requireShell } from '../../shell-data';
+
+export const dynamic = 'force-dynamic';
 
 const dateTime = new Intl.DateTimeFormat('en', {
   year: 'numeric',
@@ -140,7 +140,7 @@ function technicalLabel(type: string): string {
   return type.replaceAll('_', ' ');
 }
 
-async function CallDetailContent({
+export default async function CallDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
@@ -158,7 +158,17 @@ async function CallDetailContent({
   const endingLabel = result.call.state === 'incomplete' ? 'Detected' : 'Ended';
 
   return (
-    <>
+    <main className="space-y-8">
+      <header className="space-y-4">
+        <Button variant="ghost" asChild className="-ml-3 h-11">
+          <Link href="/calls">
+            <ArrowLeft aria-hidden="true" className="size-4" />
+            All calls
+          </Link>
+        </Button>
+        <h1 className="text-2xl font-semibold tracking-tight">Call detail</h1>
+      </header>
+
       <div className="flex items-center gap-1 text-sm text-muted-foreground tabular-nums">
         <span className="break-all">{result.call.id}</span>
         <CopyButton
@@ -333,46 +343,6 @@ async function CallDetailContent({
           </Collapsible>
         )}
       </section>
-    </>
-  );
-}
-
-function CallDetailSkeleton() {
-  return (
-    <div className="space-y-6" aria-label="Loading call detail">
-      <Skeleton className="h-5 w-72 max-w-full" />
-      <div className="grid overflow-hidden rounded-lg border sm:grid-cols-2 lg:grid-cols-3">
-        {Array.from({ length: 6 }, (_, index) => (
-          <div key={index} className="space-y-2 border-b p-4 lg:border-r">
-            <Skeleton className="h-3 w-16" />
-            <Skeleton className="h-5 w-32 max-w-full" />
-          </div>
-        ))}
-      </div>
-      <Skeleton className="h-36 w-full rounded-lg" />
-    </div>
-  );
-}
-
-export default function CallDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  return (
-    <main className="space-y-8">
-      <header className="space-y-4">
-        <Button variant="ghost" asChild className="-ml-3 h-11">
-          <Link href="/calls">
-            <ArrowLeft aria-hidden="true" className="size-4" />
-            All calls
-          </Link>
-        </Button>
-        <h1 className="text-2xl font-semibold tracking-tight">Call detail</h1>
-      </header>
-      <Suspense fallback={<CallDetailSkeleton />}>
-        <CallDetailContent params={params} />
-      </Suspense>
     </main>
   );
 }

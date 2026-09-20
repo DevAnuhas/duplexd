@@ -1,23 +1,19 @@
-import { Suspense } from 'react';
-
-import { Skeleton } from '@/components/ui/skeleton';
 import { listApiKeysForAccount } from '@/data/api-keys';
 import { requireShell } from '../shell-data';
 import { KeyManager } from './key-manager';
 
+export const dynamic = 'force-dynamic';
+export const fetchCache = 'force-no-store';
+
 /**
- * With Cache Components, this uncached session/database read runs at request
- * time and is never stored. The one-time reveal therefore cannot be copied
- * into a prerender or page cache; only the client owner ever holds the raw key.
+ * This page is explicitly request-time and uncached. A minted key is revealed
+ * once by the client owner and must never be copied into a prerender or page
+ * cache; the server stores only its prefix and hash.
  */
-async function KeysContent() {
+export default async function KeysPage() {
   const { account } = await requireShell();
   const keys = await listApiKeysForAccount(account.id);
 
-  return <KeyManager keys={keys} />;
-}
-
-export default function KeysPage() {
   return (
     <main className="space-y-6">
       <header>
@@ -26,16 +22,7 @@ export default function KeysPage() {
           Create credentials for projects that start calls through the API.
         </p>
       </header>
-      <Suspense
-        fallback={
-          <div className="space-y-4" aria-label="Loading API keys">
-            <Skeleton className="h-24 w-full rounded-lg" />
-            <Skeleton className="h-56 w-full rounded-lg" />
-          </div>
-        }
-      >
-        <KeysContent />
-      </Suspense>
+      <KeyManager keys={keys} />
     </main>
   );
 }
