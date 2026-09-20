@@ -1,8 +1,9 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
+import { ArrowLeft } from '@phosphor-icons/react';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 
 import { PasswordInput } from '@/components/password-input';
@@ -16,29 +17,56 @@ import {
 import { Input } from '@/components/ui/input';
 import { authClient } from '@/lib/auth-client';
 import {
-  PASSWORD_MIN_LENGTH,
+  SIGN_UP_STEP_ONE_FIELDS,
   signUpSchema,
   type SignUpValues,
 } from '@/lib/auth-schemas';
 
+/**
+ * Signing up, in two steps.
+ *
+ * **One form, one submit.** Both steps are panes of the same React Hook Form,
+ * so step one's values are still in hand when step two submits and there is
+ * exactly one `signUp.email` call carrying everything. Two separate forms
+ * would mean holding the password in state between them, which is worse in
+ * every way that matters.
+ *
+ * The split is about load, not mechanics: four fields and four helper lines on
+ * one screen is a lot to meet a product with. Credentials first — the part
+ * every signup has — then the two questions that are actually about *this*
+ * product.
+ *
+ * Step two is only reachable once step one validates, so nobody names a
+ * workspace and is then sent back for a typo in an email they entered two
+ * screens ago.
+ */
 export function SignUpForm() {
   const router = useRouter();
   const [formError, setFormError] = useState<string | null>(null);
+  const [step, setStep] = useState<1 | 2>(1);
+  const workspaceRef = useRef<HTMLInputElement>(null);
 
   const {
     control,
     handleSubmit,
+    trigger,
     formState: { isSubmitting },
   } = useForm<SignUpValues>({
     resolver: zodResolver(signUpSchema),
-    defaultValues: {
-      workspaceName: '',
-      name: '',
-      email: '',
-      password: '',
-      confirmPassword: '',
-    },
+    defaultValues: { workspaceName: '', name: '', email: '', password: '' },
   });
+
+  /** Advance only if the credentials are good. */
+  async function goToStepTwo() {
+    if (!(await trigger([...SIGN_UP_STEP_ONE_FIELDS]))) {
+      return;
+    }
+
+    setStep(2);
+    // Focus follows the eye. Without this the caret is still on a field that
+    // is no longer visible, and a keyboard user has to tab back into the form.
+    window.setTimeout(() => workspaceRef.current?.focus(), 0);
+  }
 
   async function onSubmit(values: SignUpValues) {
     setFormError(null);
@@ -54,17 +82,14 @@ export function SignUpForm() {
       email: values.email,
       password: values.password,
       name: values.name,
-      /*
-        The client's generated type lists only Better Auth's own signup
-        fields, but the endpoint's runtime schema is an intersection with a
-        catch-all record, so this key is carried through untouched. The cast
-        is narrow and deliberate: widening the call signature would suggest
-        arbitrary fields are supported, when exactly one is.
-      */
       ...({ workspaceName: values.workspaceName } as { workspaceName: string }),
     });
 
     if (result.error) {
+      // Back to step one: every failure this can return — a taken address, a
+      // rejected password — belongs to the credentials, and leaving someone on
+      // the workspace step with an error about their email is a puzzle.
+      setStep(1);
       setFormError('Could not create that account. Check the details and retry.');
       return;
     }
@@ -74,135 +99,146 @@ export function SignUpForm() {
   }
 
   return (
+    /*
+      `method="post"` is deliberate on a form handled in JavaScript. If the
+      client bundle fails or is slow, the browser falls back to a native
+      submit — and a form with no method defaults to GET, putting the password
+      in the URL, the history, the Referer and every proxy log in front of it.
+      With POST the degraded case is a harmless request the server ignores.
+    */
     <form
       method="post"
       onSubmit={handleSubmit(onSubmit)}
       noValidate
       className="space-y-4"
     >
-      <Controller
-        control={control}
-        name="workspaceName"
-        render={({ field, fieldState }) => (
-          <Field data-invalid={fieldState.invalid || undefined}>
-            <FieldLabel htmlFor={field.name}>Workspace name</FieldLabel>
-            <Input
-              {...field}
-              id={field.name}
-              placeholder="Acme Inc."
-              autoComplete="organization"
-              className="h-11"
-              aria-invalid={fieldState.invalid || undefined}
-            />
-            <FieldDescription>
-              What your organization is called. You can change it in Settings.
-            </FieldDescription>
-            {fieldState.error && (
-              <FieldError>{fieldState.error.message}</FieldError>
-            )}
-          </Field>
+      <p className="text-muted-foreground text-xs" aria-live="polite">
+        Step {step} of 2
+      </p>
+
+      {/*
+        Both panes stay mounted; the hidden one is `hidden`, not unmounted.
+        Unmounting would take step one's inputs out of the form, and the
+        degraded native submit above would then post an incomplete body.
+      */}
+      <div hidden={step !== 1} className="space-y-4">
+        <Controller
+          control={control}
+          name="email"
+          render={({ field, fieldState }) => (
+            <Field data-invalid={fieldState.invalid || undefined}>
+              <FieldLabel htmlFor={field.name}>Email</FieldLabel>
+              <Input
+                {...field}
+                id={field.name}
+                type="email"
+                autoComplete="email"
+                className="h-11"
+                aria-invalid={fieldState.invalid || undefined}
+              />
+              {fieldState.error && (
+                <FieldError>{fieldState.error.message}</FieldError>
+              )}
+            </Field>
+          )}
+        />
+
+        <Controller
+          control={control}
+          name="password"
+          render={({ field, fieldState }) => (
+            <Field data-invalid={fieldState.invalid || undefined}>
+              <FieldLabel htmlFor={field.name}>Password</FieldLabel>
+              <PasswordInput
+                {...field}
+                id={field.name}
+                autoComplete="new-password"
+                aria-invalid={fieldState.invalid || undefined}
+              />
+              {fieldState.error && (
+                <FieldError>{fieldState.error.message}</FieldError>
+              )}
+            </Field>
+          )}
+        />
+
+        {formError !== null && (
+          <p role="alert" className="text-destructive text-sm">
+            {formError}
+          </p>
         )}
-      />
 
-      <Controller
-        control={control}
-        name="name"
-        render={({ field, fieldState }) => (
-          <Field data-invalid={fieldState.invalid || undefined}>
-            <FieldLabel htmlFor={field.name}>Your name</FieldLabel>
-            <Input
-              {...field}
-              id={field.name}
-              placeholder="Alex Morgan"
-              autoComplete="name"
-              className="h-11"
-              aria-invalid={fieldState.invalid || undefined}
-            />
-            {fieldState.error && (
-              <FieldError>{fieldState.error.message}</FieldError>
-            )}
-          </Field>
-        )}
-      />
+        <Button
+          type="button"
+          className="h-11 w-full"
+          onClick={goToStepTwo}
+          data-testid="continue"
+        >
+          Continue
+        </Button>
+      </div>
 
-      <Controller
-        control={control}
-        name="email"
-        render={({ field, fieldState }) => (
-          <Field data-invalid={fieldState.invalid || undefined}>
-            <FieldLabel htmlFor={field.name}>Email</FieldLabel>
-            <Input
-              {...field}
-              id={field.name}
-              type="email"
-              autoComplete="email"
-              className="h-11"
-              aria-invalid={fieldState.invalid || undefined}
-            />
-            {/*
-              Signup names the account after this address, so say so here
-              rather than letting the tenant discover it in the sidebar.
-            */}
-            <FieldDescription>
-              Your organization starts out named after this address.
-            </FieldDescription>
-            {fieldState.error && (
-              <FieldError>{fieldState.error.message}</FieldError>
-            )}
-          </Field>
-        )}
-      />
+      <div hidden={step !== 2} className="space-y-4">
+        <Controller
+          control={control}
+          name="workspaceName"
+          render={({ field, fieldState }) => (
+            <Field data-invalid={fieldState.invalid || undefined}>
+              <FieldLabel htmlFor={field.name}>Workspace name</FieldLabel>
+              <Input
+                {...field}
+                ref={workspaceRef}
+                id={field.name}
+                placeholder="Acme Inc."
+                autoComplete="organization"
+                className="h-11"
+                aria-invalid={fieldState.invalid || undefined}
+              />
+              <FieldDescription>You can rename it in Settings.</FieldDescription>
+              {fieldState.error && (
+                <FieldError>{fieldState.error.message}</FieldError>
+              )}
+            </Field>
+          )}
+        />
 
-      <Controller
-        control={control}
-        name="password"
-        render={({ field, fieldState }) => (
-          <Field data-invalid={fieldState.invalid || undefined}>
-            <FieldLabel htmlFor={field.name}>Password</FieldLabel>
-            <PasswordInput
-              {...field}
-              id={field.name}
-              autoComplete="new-password"
-              aria-invalid={fieldState.invalid || undefined}
-            />
-            <FieldDescription>
-              At least {PASSWORD_MIN_LENGTH} characters.
-            </FieldDescription>
-            {fieldState.error && (
-              <FieldError>{fieldState.error.message}</FieldError>
-            )}
-          </Field>
-        )}
-      />
+        <Controller
+          control={control}
+          name="name"
+          render={({ field, fieldState }) => (
+            <Field data-invalid={fieldState.invalid || undefined}>
+              <FieldLabel htmlFor={field.name}>Your name</FieldLabel>
+              <Input
+                {...field}
+                id={field.name}
+                placeholder="Alex Morgan"
+                autoComplete="name"
+                className="h-11"
+                aria-invalid={fieldState.invalid || undefined}
+              />
+              {fieldState.error && (
+                <FieldError>{fieldState.error.message}</FieldError>
+              )}
+            </Field>
+          )}
+        />
 
-      <Controller
-        control={control}
-        name="confirmPassword"
-        render={({ field, fieldState }) => (
-          <Field data-invalid={fieldState.invalid || undefined}>
-            <FieldLabel htmlFor={field.name}>Confirm password</FieldLabel>
-            <PasswordInput
-              {...field}
-              id={field.name}
-              autoComplete="new-password"
-              aria-invalid={fieldState.invalid || undefined}
-            />
-            {fieldState.error && (
-              <FieldError>{fieldState.error.message}</FieldError>
-            )}
-          </Field>
-        )}
-      />
-
-      {formError !== null && (
-        <p role="alert" className="text-destructive text-sm">
-          {formError}
-        </p>
-      )}
-
-      <Button type="submit" className="h-11 w-full" disabled={isSubmitting}>
-        {isSubmitting ? 'Creating account…' : 'Create account'}
-      </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            className="h-11"
+            onClick={() => setStep(1)}
+            data-testid="back"
+          >
+            <ArrowLeft aria-hidden="true" />
+            Back
+          </Button>
+          <Button type="submit" className="h-11 flex-1" disabled={isSubmitting}>
+            {isSubmitting ? 'Creating account…' : 'Create account'}
+          </Button>
+        </div>
+      </div>
     </form>
   );
 }

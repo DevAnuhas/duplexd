@@ -25,9 +25,14 @@ export default function SignUpPage() {
         <Card>
           <CardHeader>
             <CardTitle>Create an account</CardTitle>
+            {/*
+              The old copy here said the workspace can be renamed in Settings
+              — which the workspace field now says, next to the field it is
+              about. Saying it twice on one screen is the redundancy this split
+              exists to remove.
+            */}
             <CardDescription>
-              This creates your organization. You can rename it in Settings
-              afterwards.
+              Your credentials first, then what to call your workspace.
             </CardDescription>
           </CardHeader>
           <CardContent>

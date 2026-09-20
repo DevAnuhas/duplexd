@@ -98,23 +98,30 @@ const personName = z
   .min(1, { error: 'Enter your name.' })
   .max(120, { error: 'Keep your name under 120 characters.' });
 
-export const signUpSchema = z
-  .object({
-    workspaceName,
-    name: personName,
-    email,
-    password,
-    confirmPassword: z.string().min(1, { error: 'Confirm your password.' }),
-  })
-  /**
-   * The mismatch is reported **on the confirm field**, not at the form root:
-   * that is the field the customer has to change, and an error floating above
-   * both inputs makes them guess which one is wrong.
-   */
-  .refine((values) => values.password === values.confirmPassword, {
-    error: 'Both passwords must match.',
-    path: ['confirmPassword'],
-  });
+/**
+ * Signing up.
+ *
+ * **There is no confirm-password field**, unlike the reset form. The password
+ * input carries a show/hide toggle, which covers the typo it would catch, and
+ * dropping it removes a field and a line of helper text from a first screen
+ * that is already asking for four things.
+ *
+ * The trade is real and worth naming: the toggle only helps someone who
+ * actually presses it, and a password mistyped identically-but-wrongly here
+ * surfaces later as "I can't sign in". The recovery is the reset email, which
+ * exists only on deployments with `RESEND_API_KEY` set. Reset **keeps** its
+ * confirm field for that reason — there, the person cannot see what they are
+ * replacing and has no second chance behind them.
+ */
+export const signUpSchema = z.object({
+  workspaceName,
+  name: personName,
+  email,
+  password,
+});
+
+/** The fields step one collects, validated before the form advances. */
+export const SIGN_UP_STEP_ONE_FIELDS = ['email', 'password'] as const;
 
 export const forgotPasswordSchema = z.object({ email });
 
