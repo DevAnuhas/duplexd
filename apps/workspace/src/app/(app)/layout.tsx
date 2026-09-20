@@ -48,13 +48,25 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <SidebarProvider>
+    /*
+      `h-svh overflow-hidden` rather than the default `min-h-svh`, and
+      `min-h-0` on the inset.
+
+      This is what makes `main` an actual scroll container. Left to grow, the
+      shell scrolls the window instead, `overflow-auto` on `main` never
+      engages, and a page's `sticky top-0` anchors to the viewport — sliding
+      under this header rather than resting below it. The assistant editor's
+      jump-link bar depends on getting this right. A flex child also needs
+      `min-h-0` or it refuses to shrink below its content and overflows the
+      screen.
+    */
+    <SidebarProvider className="h-svh overflow-hidden">
       <AppSidebar
         account={{ id: shell.account.id, name: shell.account.name }}
         user={{ email: shell.userEmail }}
         counts={shell.counts}
       />
-      <SidebarInset>
+      <SidebarInset className="flex min-h-0 flex-1 flex-col">
         <header className="bg-background sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b px-4">
           <SidebarTrigger className="-ml-1" />
           <Separator orientation="vertical" className="mr-2 h-4" />
@@ -68,7 +80,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           The width and padding live here, once. Pages return their content
           directly and must not repeat them.
         */}
-        <main className="flex-1 overflow-auto">
+        <main className="min-h-0 flex-1 overflow-auto">
           <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6">
             {children}
           </div>
