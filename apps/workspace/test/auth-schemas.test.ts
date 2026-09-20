@@ -1,0 +1,399 @@
+import { describe, expect, it } from 'vitest';
+import type { ZodType } from 'zod';
+
+import {
+  forgotPasswordSchema,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  resetPasswordSchema,
+  signInSchema,
+  signUpSchema,
+} from '@/lib/auth-schemas';
+
+/**
+ * The rules every authentication form is validated against.
+ *
+ * Nothing is mocked and nothing needs a database: these are pure functions over
+ * plain objects, which is most of why they are worth having as a module at all.
+ *
+ * **Every rejection asserts which rule fired, not merely that something did.**
+ * A password refused for being too short and a password refused for not
+ * matching its confirmation are the same `success: false`, and only one of them
+ * tells the customer what to change. The same goes for *where* the rejection
+ * lands: a mismatch reported at the form root instead of on `confirmPassword`
+ * makes someone guess which of two boxes to retype, so the path is asserted as
+ * carefully as the message.
+ *
+ * Written against Zod 4 (pinned 4.6.5), where issues carry `path` and `message`
+ * and customisation is the `error` key. The Zod 3 idioms — `z.string().email()`,
+ * `required_error` — do not apply and would silently produce a schema that
+ * validates nothing.
+ */
+
+/** A rejection, flattened to the two things a form actually renders. */
+type Issue = { path: string; message: string };
+
+/**
+ * Every issue a schema produced, or `[]` when it accepted the value.
+ *
+ * Returning the issues rather than a boolean is the point: a test that can only
+ * see `success: false` cannot tell a correct rejection from a rejection for the
+ * wrong reason, and those two are the difference between useful copy and copy
+ * that misdirects.
+ */
+function issuesFor(schema: ZodType, value: unknown): Issue[] {
+  const result = schema.safeParse(value);
+
+  if (result.success) {
+    return [];
+  }
+
+  return result.error.issues.map((issue) => ({
+    path: issue.path.join('.'),
+    message: issue.message,
+  }));
+}
+
+/** Whether the schema accepted the value outright. */
+function accepts(schema: ZodType, value: unknown): boolean {
+  return issuesFor(schema, value).length === 0;
+}
+
+/** A password of exactly `length` characters that passes every rule but length. */
+function passwordOfLength(length: number): string {
+  return 'a'.repeat(length);
+}
+
+/**
+ * A syntactically valid address of exactly `length` characters.
+ *
+ * Built rather than hard-coded so the 320/321 boundary cases differ only in
+ * length — if the over-length case were also malformed, it would be rejected
+ * either way and would prove nothing about the limit.
+ */
+function emailOfLength(length: number): string {
+  const domain = '@example.com';
+
+  return `${'a'.repeat(length - domain.length)}${domain}`;
+}
+
+const VALID_EMAIL = 'kevin@example.com';
+const VALID_PASSWORD = passwordOfLength(PASSWORD_MIN_LENGTH);
+
+/** The email rule is one shared object, and every schema carrying it must agree. */
+const SCHEMAS_WITH_EMAIL = [
+  [
+    'signInSchema',
+    signInSchema,
+    (email: string) => ({ email, password: VALID_PASSWORD }),
+  ],
+  [
+    'signUpSchema',
+    signUpSchema,
+    (email: string) => ({
+      email,
+      password: VALID_PASSWORD,
+      confirmPassword: VALID_PASSWORD,
+    }),
+  ],
+  [
+    'forgotPasswordSchema',
+    forgotPasswordSchema,
+    (email: string) => ({ email }),
+  ],
+] as const;
+
+describe('the shared email rule', () => {
+  describe.each(SCHEMAS_WITH_EMAIL)('%s', (_name, schema, build) => {
+    it.each([
+      ['an ordinary address', VALID_EMAIL],
+      ['a subdomain', 'kevin@mail.example.co.uk'],
+      ['a plus tag', "kevin+duplexd@example.com"],
+      ['exactly the maximum length', emailOfLength(320)],
+    ])('accepts %s', (_label, email) => {
+      expect(accepts(schema, build(email))).toBe(true);
+    });
+
+    it.each([
+      ['the empty string', '', /valid email/i],
+      ['no at sign', 'kevin.example.com', /valid email/i],
+      ['no domain', 'kevin@', /valid email/i],
+      ['no local part', '@example.com', /valid email/i],
+      ['a space inside', 'ke vin@example.com', /valid email/i],
+      // Leading and trailing whitespace is the case a pasted address hits.
+      // Nothing trims before validating, so this is a rejection today.
+      ['surrounding whitespace', `  ${VALID_EMAIL}  `, /valid email/i],
+      ['one character over the maximum', emailOfLength(321), /too long/i],
+    ])('rejects %s, on the email field', (_label, email, expected) => {
+      expect(issuesFor(schema, build(email))).toContainEqual({
+        path: 'email',
+        message: expect.stringMatching(expected),
+      });
+    });
+  });
+});
+
+describe('signInSchema', () => {
+  it('accepts a valid pair', () => {
+    expect(
+      accepts(signInSchema, { email: VALID_EMAIL, password: VALID_PASSWORD }),
+    ).toBe(true);
+  });
+
+  it('rejects an empty password, naming the password field', () => {
+    expect(
+      issuesFor(signInSchema, { email: VALID_EMAIL, password: '' }),
+    ).toStrictEqual([
+      { path: 'password', message: expect.stringMatching(/enter your password/i) },
+    ]);
+  });
+
+  /**
+   * **The load-bearing case in this file.**
+   *
+   * Sign-in deliberately does *not* apply the length minimum. Applying it would
+   * tell an attacker which passwords are too short to be real before a single
+   * request leaves the browser, and it would lock out any existing account
+   * whose password predates the rule — the person it would fail is the one
+   * already unable to get in.
+   *
+   * So this is not a gap being tolerated, it is the behaviour, and a test
+   * asserting the minimum here would be asserting a bug. Every length below the
+   * sign-up minimum is checked rather than one representative value, because a
+   * minimum reintroduced at any point in that range is the same defect.
+   */
+  it.each(
+    Array.from({ length: PASSWORD_MIN_LENGTH - 1 }, (_unused, index) => index + 1),
+  )(
+    'accepts a %i-character password, because sign-in must not apply the minimum',
+    (length) => {
+      expect(
+        issuesFor(signInSchema, {
+          email: VALID_EMAIL,
+          password: passwordOfLength(length),
+        }),
+        'sign-in applied a length rule it must not apply',
+      ).toStrictEqual([]);
+    },
+  );
+
+  /**
+   * The other half of that decision: no maximum either. A password longer than
+   * the sign-up ceiling still belongs to somebody, and refusing to *submit* it
+   * would lock out an account the server would have let in.
+   */
+  it('accepts a password longer than the sign-up maximum', () => {
+    expect(
+      accepts(signInSchema, {
+        email: VALID_EMAIL,
+        password: passwordOfLength(PASSWORD_MAX_LENGTH + 1),
+      }),
+    ).toBe(true);
+  });
+
+  it('rejects a missing password rather than treating it as empty', () => {
+    expect(issuesFor(signInSchema, { email: VALID_EMAIL })).toContainEqual({
+      path: 'password',
+      message: expect.any(String),
+    });
+  });
+});
+
+/**
+ * The two schemas that set a *new* password share every rule that matters, so
+ * they are checked by the same table. If one ever drifts from the other — a
+ * looser minimum on reset, say — this block is what notices.
+ */
+const PASSWORD_SETTING_SCHEMAS = [
+  [
+    'signUpSchema',
+    signUpSchema,
+    (password: string, confirmPassword: string) => ({
+      email: VALID_EMAIL,
+      password,
+      confirmPassword,
+    }),
+  ],
+  [
+    'resetPasswordSchema',
+    resetPasswordSchema,
+    (password: string, confirmPassword: string) => ({
+      password,
+      confirmPassword,
+    }),
+  ],
+] as const;
+
+describe.each(PASSWORD_SETTING_SCHEMAS)('%s', (_name, schema, build) => {
+  const atMinimum = passwordOfLength(PASSWORD_MIN_LENGTH);
+  const belowMinimum = passwordOfLength(PASSWORD_MIN_LENGTH - 1);
+  const atMaximum = passwordOfLength(PASSWORD_MAX_LENGTH);
+  const aboveMaximum = passwordOfLength(PASSWORD_MAX_LENGTH + 1);
+
+  it('accepts a password of exactly the minimum length', () => {
+    expect(accepts(schema, build(atMinimum, atMinimum))).toBe(true);
+  });
+
+  it('accepts a password of exactly the maximum length', () => {
+    expect(accepts(schema, build(atMaximum, atMaximum))).toBe(true);
+  });
+
+  it('rejects one character below the minimum, naming the length rule', () => {
+    expect(issuesFor(schema, build(belowMinimum, belowMinimum))).toStrictEqual([
+      {
+        path: 'password',
+        message: expect.stringMatching(
+          new RegExp(`at least ${PASSWORD_MIN_LENGTH}`, 'i'),
+        ),
+      },
+    ]);
+  });
+
+  it('rejects one character above the maximum, naming the length rule', () => {
+    expect(issuesFor(schema, build(aboveMaximum, aboveMaximum))).toStrictEqual([
+      {
+        path: 'password',
+        message: expect.stringMatching(
+          new RegExp(`at most ${PASSWORD_MAX_LENGTH}`, 'i'),
+        ),
+      },
+    ]);
+  });
+
+  /**
+   * The mismatch lands **on the confirm field**, which is the one the customer
+   * has to retype. An error floating at the form root is the version that makes
+   * them guess which of two boxes is wrong, and it is the version a careless
+   * `.refine` without a `path` produces — so the path is the assertion here,
+   * not a detail alongside it.
+   */
+  it('reports a mismatch on confirmPassword, not at the form root', () => {
+    expect(issuesFor(schema, build(atMinimum, `${atMinimum}x`))).toStrictEqual([
+      {
+        path: 'confirmPassword',
+        message: expect.stringMatching(/match/i),
+      },
+    ]);
+  });
+
+  it('rejects an empty confirmation, naming the confirm field', () => {
+    expect(issuesFor(schema, build(atMinimum, ''))).toContainEqual({
+      path: 'confirmPassword',
+      message: expect.stringMatching(/confirm your password/i),
+    });
+  });
+
+  it('accepts a matching pair at the minimum length', () => {
+    expect(accepts(schema, build(atMinimum, atMinimum))).toBe(true);
+  });
+
+  /**
+   * A password that is both too short *and* mismatched reports **both**, in
+   * one pass.
+   *
+   * This is worth pinning because the opposite is the intuitive guess and it is
+   * wrong: Zod 4 still evaluates a `.refine` on the object when the inner
+   * fields failed, so the equality check runs against a password it already
+   * rejected. The customer-visible consequence is the good one — fix both
+   * problems from one submission rather than learning about the second only
+   * after fixing the first — so the behaviour is worth protecting rather than
+   * merely recording.
+   *
+   * If this ever flips to reporting only the length, the flow silently becomes
+   * a two-round-trip correction and nothing else would notice.
+   */
+  it('reports both the length and the mismatch when the password is short and mismatched', () => {
+    expect(
+      issuesFor(schema, build(belowMinimum, 'something else')),
+    ).toStrictEqual([
+      {
+        path: 'password',
+        message: expect.stringMatching(
+          new RegExp(`at least ${PASSWORD_MIN_LENGTH}`, 'i'),
+        ),
+      },
+      {
+        path: 'confirmPassword',
+        message: expect.stringMatching(/match/i),
+      },
+    ]);
+  });
+});
+
+describe('forgotPasswordSchema', () => {
+  it('asks for nothing but an address', () => {
+    const result = forgotPasswordSchema.safeParse({
+      email: VALID_EMAIL,
+      password: 'ignored',
+    });
+
+    expect(result.success).toBe(true);
+    expect(
+      result.success && result.data,
+      'a stray field survived parsing, so the form could submit more than it collects',
+    ).toStrictEqual({ email: VALID_EMAIL });
+  });
+
+  it('rejects a missing email', () => {
+    expect(issuesFor(forgotPasswordSchema, {})).toContainEqual({
+      path: 'email',
+      message: expect.any(String),
+    });
+  });
+});
+
+/**
+ * The constants, and the one thing that can silently invalidate them.
+ *
+ * `PASSWORD_MIN_LENGTH` and `PASSWORD_MAX_LENGTH` are **hand-copied** from
+ * Better Auth's defaults, and the module's own comment says matching them
+ * matters in both directions: a looser rule lets the form submit what the
+ * server refuses, a stricter one locks out an account whose password predates
+ * it. Nothing in the type system connects the two.
+ *
+ * Pinning the literals catches someone editing `auth-schemas.ts`. It does not
+ * catch the other direction — configuring `minPasswordLength` in
+ * `src/lib/auth.ts`, which moves the server's rule out from under a schema that
+ * still says 8. That is the quieter of the two: the form keeps accepting an
+ * 8-character password and the customer meets a server error on a form that
+ * told them it was fine.
+ *
+ * So the second test reads the auth module and asserts the defaults are still
+ * what is in force. Asserting on source text is unusual, and it is the same
+ * technique `test/database-gating.test.ts` already uses to keep a hand-written
+ * list honest; the alternative here is a live Better Auth instance, which needs
+ * a database and would turn a pure schema file into a database-gated one for a
+ * single assertion.
+ */
+describe('the password bounds', () => {
+  it('match Better Auth 1.7.5 defaults', () => {
+    expect(PASSWORD_MIN_LENGTH).toBe(8);
+    expect(PASSWORD_MAX_LENGTH).toBe(128);
+  });
+
+  it('are not overridden in the Better Auth configuration', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const { fileURLToPath } = await import('node:url');
+
+    const source = await readFile(
+      fileURLToPath(new URL('../src/lib/auth.ts', import.meta.url)),
+      'utf8',
+    );
+
+    // Comments mention these names when explaining the defaults, so the match
+    // is on an actual assignment rather than on the bare word.
+    expect(
+      /\bminPasswordLength\s*:/.test(source),
+      'src/lib/auth.ts now configures minPasswordLength. PASSWORD_MIN_LENGTH ' +
+        'in src/lib/auth-schemas.ts is hand-copied from the default and must ' +
+        'be updated to match, or the sign-up form will accept a password the ' +
+        'server rejects.',
+    ).toBe(false);
+
+    expect(
+      /\bmaxPasswordLength\s*:/.test(source),
+      'src/lib/auth.ts now configures maxPasswordLength. PASSWORD_MAX_LENGTH ' +
+        'in src/lib/auth-schemas.ts must be updated to match.',
+    ).toBe(false);
+  });
+});
