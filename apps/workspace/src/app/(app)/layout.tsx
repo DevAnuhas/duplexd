@@ -93,14 +93,21 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           </Suspense>
         </header>
         {/*
+          A `div`, not a `main`. **`SidebarInset` already renders `<main>`**,
+          so wrapping the content in another one nested `<main>` inside
+          `<main>` — invalid HTML, and the kind the parser is entitled to
+          rearrange. A DOM that does not match what React rendered is how a
+          subtree silently fails to hydrate: the markup looks right and every
+          control inside it is inert.
+
           The width and padding live here, once. Pages return their content
           directly and must not repeat them.
         */}
-        <main className="min-h-0 flex-1 overflow-auto">
+        <div className="min-h-0 flex-1 overflow-auto">
           <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6">
             {children}
           </div>
-        </main>
+        </div>
       </SidebarInset>
     </SidebarProvider>
   );
