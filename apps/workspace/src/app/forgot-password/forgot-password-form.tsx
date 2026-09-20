@@ -95,6 +95,7 @@ export function ForgotPasswordForm() {
               id={field.name}
               type="email"
               autoComplete="email"
+              className="h-11"
               aria-invalid={fieldState.invalid || undefined}
             />
             {fieldState.error && (
@@ -104,7 +105,7 @@ export function ForgotPasswordForm() {
         )}
       />
 
-      <Button type="submit" className="w-full" disabled={isSubmitting}>
+      <Button type="submit" className="h-11 w-full" disabled={isSubmitting}>
         {isSubmitting ? 'Sending…' : 'Send reset link'}
       </Button>
     </form>

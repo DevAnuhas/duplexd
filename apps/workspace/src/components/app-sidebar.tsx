@@ -128,8 +128,14 @@ function NavButton({
   label: string;
   icon: typeof Bot;
 }) {
+  /*
+    `h-11` overrides the sidebar's 32px default to clear the 44px minimum
+    target. Applied here rather than in `components/ui/sidebar.tsx`, because
+    that variant is shared and changing it would silently resize controls in
+    lanes I do not own.
+  */
   const link = (isActive: boolean) => (
-    <SidebarMenuButton asChild isActive={isActive} tooltip={label}>
+    <SidebarMenuButton asChild isActive={isActive} tooltip={label} className="h-11">
       <Link href={href}>
         <Icon />
         <span>{label}</span>

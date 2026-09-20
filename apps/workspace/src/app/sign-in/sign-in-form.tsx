@@ -80,6 +80,7 @@ export function SignInForm({
               id={field.name}
               type="email"
               autoComplete="email"
+              className="h-11"
               aria-invalid={fieldState.invalid || undefined}
             />
             {fieldState.error && (
@@ -130,7 +131,7 @@ export function SignInForm({
         </p>
       )}
 
-      <Button type="submit" className="w-full" disabled={isSubmitting}>
+      <Button type="submit" className="h-11 w-full" disabled={isSubmitting}>
         {isSubmitting ? 'Signing in…' : 'Sign in'}
       </Button>
     </form>

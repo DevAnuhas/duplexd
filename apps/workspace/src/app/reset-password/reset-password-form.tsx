@@ -94,7 +94,7 @@ export function ResetPasswordForm() {
             ? 'This page needs a reset link to work.'
             : 'That reset link has expired or has already been used.'}
         </p>
-        <Button asChild className="w-full">
+        <Button asChild className="h-11 w-full">
           <Link href="/forgot-password">Request a new link</Link>
         </Button>
       </div>
@@ -155,7 +155,7 @@ export function ResetPasswordForm() {
         </p>
       )}
 
-      <Button type="submit" className="w-full" disabled={isSubmitting}>
+      <Button type="submit" className="h-11 w-full" disabled={isSubmitting}>
         {isSubmitting ? 'Saving…' : 'Change password'}
       </Button>
     </form>

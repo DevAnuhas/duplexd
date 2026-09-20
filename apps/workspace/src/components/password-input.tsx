@@ -47,6 +47,12 @@ export function PasswordInput({
       <InputGroupInput
         {...props}
         id={inputId}
+        /*
+          44px, not the 36px default. The toggle sits inside this row, so the
+          row's height is what gives the button a 44×44 target without it
+          overflowing the group.
+        */
+        className="h-11"
         type={visible ? 'text' : 'password'}
         /*
           `current-password` and `new-password` are passed in by each form;
@@ -59,8 +65,8 @@ export function PasswordInput({
       <InputGroupAddon align="inline-end">
         <InputGroupButton
           type="button"
-          size="icon-xs"
           variant="ghost"
+          className="size-11"
           aria-label={visible ? 'Hide password' : 'Show password'}
           aria-pressed={visible}
           aria-controls={inputId}

@@ -70,6 +70,7 @@ export function SignUpForm() {
               id={field.name}
               type="email"
               autoComplete="email"
+              className="h-11"
               aria-invalid={fieldState.invalid || undefined}
             />
             {/*
@@ -133,7 +134,7 @@ export function SignUpForm() {
         </p>
       )}
 
-      <Button type="submit" className="w-full" disabled={isSubmitting}>
+      <Button type="submit" className="h-11 w-full" disabled={isSubmitting}>
         {isSubmitting ? 'Creating account…' : 'Create account'}
       </Button>
     </form>
