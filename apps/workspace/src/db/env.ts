@@ -75,6 +75,55 @@ export function requireAuthSecret(): string {
 }
 
 /**
+ * Better Auth's allowlisted, per-request base URL. Structural rather than
+ * imported so this module stays free of an auth dependency; the shape is
+ * Better Auth's `DynamicBaseURLConfig`.
+ */
+export type DynamicAuthBaseUrl = {
+  allowedHosts: string[];
+  protocol: 'https';
+  fallback: string;
+};
+
+/** `BETTER_AUTH_URL` when it is set to something, otherwise `undefined`. */
+function explicitAuthUrl(): string | undefined {
+  const url = process.env.BETTER_AUTH_URL?.trim();
+
+  return url ? url : undefined;
+}
+
+/**
+ * The hostnames a Vercel preview answers on, most stable first, deduplicated.
+ *
+ * Empty off Vercel and on production, which is what keeps the fallback
+ * preview-only. Both callers below read this rather than the variables, so
+ * "which hosts count" has one definition; two would drift, and the one that
+ * drifted would be the one nobody was looking at.
+ */
+function previewHosts(): string[] {
+  if (process.env.VERCEL_ENV !== 'preview') {
+    return [];
+  }
+
+  const hosts = [process.env.VERCEL_BRANCH_URL, process.env.VERCEL_URL]
+    .map((host) => host?.trim())
+    .filter((host): host is string => Boolean(host));
+
+  return [...new Set(hosts)];
+}
+
+/** The one error both accessors raise, so the message cannot drift. */
+function missingAuthUrl(): Error {
+  return new Error(
+    'BETTER_AUTH_URL is unset or empty. Set it to the origin the app is ' +
+      'served from, for example http://localhost:3000. It is not derived ' +
+      'from the request, because behind a proxy the request does not decide ' +
+      'what this deployment is. Vercel preview deployments may instead leave ' +
+      'it unset and let VERCEL_BRANCH_URL and VERCEL_URL supply the origins.',
+  );
+}
+
+/**
  * The public origin the app is served from, or an error naming it.
  *
  * Required rather than optional. Better Auth will happily derive this from the
@@ -97,13 +146,16 @@ export function requireAuthSecret(): string {
  * decides the cookie domain and the `__Secure-` prefix, so a wrong origin
  * signs in and then silently fails to keep the session.
  *
- * `VERCEL_BRANCH_URL` is not the request's `Host` header. It is injected by
- * the platform and names this deployment, so the deployment still states its
+ * The preview hosts are not the request's `Host` header. They are injected by
+ * the platform and name this deployment, so the deployment still states its
  * own identity rather than inferring it from traffic — it reads that identity
- * from the platform instead of a dashboard field. It is preferred over the
- * per-deployment `VERCEL_URL` because it is stable across redeploys of the
- * same pull request, so a session survives a push; `VERCEL_URL` also does not
- * work under Standard Deployment Protection.
+ * from the platform instead of a dashboard field.
+ *
+ * This returns **one** origin, for the callers that need a single URL to hand
+ * to something else: the agent's `apiBase` has to be one address it can call
+ * back on. The branch URL is preferred because it survives a redeploy of the
+ * same pull request. Auth itself needs both hosts and uses
+ * {@link resolveAuthBaseUrl}.
  *
  * **Only previews.** A production deployment missing this must still fail
  * loudly, rather than quietly minting cookies for a `vercel.app` domain
@@ -111,25 +163,64 @@ export function requireAuthSecret(): string {
  * someone cannot stay signed in.
  */
 export function requireAuthUrl(): string {
-  const url = process.env.BETTER_AUTH_URL;
+  const explicit = explicitAuthUrl();
 
-  if (url !== undefined && url.trim() !== '') {
-    return url.trim();
+  if (explicit !== undefined) {
+    return explicit;
   }
 
-  const branchHost = process.env.VERCEL_BRANCH_URL?.trim();
+  const [preferred] = previewHosts();
 
-  if (process.env.VERCEL_ENV === 'preview' && branchHost) {
-    return `https://${branchHost}`;
+  if (preferred !== undefined) {
+    return `https://${preferred}`;
   }
 
-  throw new Error(
-    'BETTER_AUTH_URL is unset or empty. Set it to the origin the app is ' +
-      'served from, for example http://localhost:3000. It is not derived ' +
-      'from the request, because behind a proxy the request does not decide ' +
-      'what this deployment is. Vercel preview deployments may instead leave ' +
-      'it unset and let VERCEL_BRANCH_URL supply the origin.',
-  );
+  throw missingAuthUrl();
+}
+
+/**
+ * Better Auth's base URL: one origin normally, both preview hosts on Vercel.
+ *
+ * A Vercel preview answers on **two** hostnames that both legitimately serve
+ * it — the stable branch URL and the per-deployment URL — and Vercel's
+ * dashboard and pull-request comments link the per-deployment one. Better
+ * Auth's origin check compares the request's `Origin` against the configured
+ * base URL, so pinning either host rejects the other with `403 Invalid
+ * origin`. That is what a single-host preview fallback produced, and it stayed
+ * invisible to a check that requested the branch URL with a matching `Origin`
+ * header — the one path that fallback was built for.
+ *
+ * `DynamicBaseURLConfig` is Better Auth's answer to this, documented for
+ * Vercel previews by name. The base URL becomes per-request but **allowlisted**
+ * to origins this deployment already knows about, so the distinction the
+ * comment above draws still holds: the request may pick between our hosts, it
+ * cannot name one.
+ *
+ * `allowedHosts` carries exact hostnames and never a wildcard. `*.vercel.app`
+ * would match every deployment on the platform, including other people's.
+ *
+ * Production keeps a plain string. It has a single hostname, so a per-request
+ * base URL would put a request header into the auth decision for no benefit.
+ */
+export function resolveAuthBaseUrl(): string | DynamicAuthBaseUrl {
+  const explicit = explicitAuthUrl();
+
+  if (explicit !== undefined) {
+    return explicit;
+  }
+
+  const hosts = previewHosts();
+  const [preferred] = hosts;
+
+  if (preferred !== undefined) {
+    return {
+      allowedHosts: hosts,
+      protocol: 'https',
+      fallback: `https://${preferred}`,
+    };
+  }
+
+  throw missingAuthUrl();
 }
 
 /** Pipecat Cloud API key used only by the server-side start request. */
