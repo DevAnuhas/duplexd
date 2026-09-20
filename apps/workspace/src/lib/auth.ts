@@ -229,19 +229,12 @@ function createAuth() {
             });
 
             /*
-              **`accountId` is spread after `...user`, and only that ordering
-              makes this safe.**
-
-              The signup body is a catch-all, so a caller can put `accountId`
-              in it and it arrives here on `user`. Writing ours last overwrites
-              theirs. Any edit that spreads request-derived values *after* this
-              — a merge, a reordering, a "tidy up" that puts `...user` at the
-              end — hands account selection to the caller, and the tenant
-              boundary with it.
-
-              There is no runtime guard behind this: it is safe by position
-              alone, which is the easiest property to lose in a refactor and
-              the reason it is written down here.
+              Better Auth first rejects a caller-supplied `accountId` with
+              FIELD_NOT_ALLOWED. Writing our generated value after `...user`
+              is the second, defense-in-depth layer: even if that library guard
+              changes, request-derived values cannot select another account.
+              Keep `accountId` after the spread so a refactor cannot weaken
+              that tenant boundary.
             */
             /**
              * `users.name` gets the same treatment as the account's.
