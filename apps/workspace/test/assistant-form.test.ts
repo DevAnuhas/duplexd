@@ -155,6 +155,23 @@ function clearSecretBox(mounted: Mounted): HTMLElement | null {
   return mounted.form.querySelector<HTMLElement>('[role="checkbox"]');
 }
 
+/**
+ * The text of the tools section's summary table alone.
+ *
+ * Scoped deliberately. A tool name is an ordinary word that an operator may
+ * well have typed into the instructions too, so a negative assertion against
+ * the whole form could never go false and would read as coverage.
+ */
+function toolSummary(mounted: Mounted): string {
+  const table = mounted.container.querySelector('#tool-settings table');
+
+  if (table === null) {
+    throw new Error('The tools section is showing no summary table.');
+  }
+
+  return table.textContent ?? '';
+}
+
 beforeEach(() => {
   document.body.replaceChildren();
   router.push.mockClear();
@@ -581,16 +598,18 @@ describe('the tool summary beside the editor', () => {
     const raw =
       '[ {"name":"refunds","description":"Issues a refund.","parameters":{}} ]';
 
-    expect(mounted.container.textContent).toContain('lookup_order');
+    expect(toolSummary(mounted)).toContain('lookup_order');
 
     await typeInto(tools, raw);
     await blur(tools);
 
     // The summary caught up — without this the test would pass on an editor
     // whose `onBlur` never ran, since the textarea holds what it was given
-    // either way.
-    expect(mounted.container.textContent).toContain('refunds');
-    expect(mounted.container.textContent).not.toContain('lookup_order');
+    // either way. Read from the summary table rather than the whole form: the
+    // backend-instructions field legitimately mentions `lookup_order` too, and
+    // a page-wide search would never go false.
+    expect(toolSummary(mounted)).toContain('refunds');
+    expect(toolSummary(mounted)).not.toContain('lookup_order');
 
     // ...and the bytes are still the operator's, spacing included.
     expect(tools.value).toBe(raw);
