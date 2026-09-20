@@ -28,6 +28,7 @@ export const EXPECTED_TABLES = [
   'assistants',
   'auth_accounts',
   'call_events',
+  'call_rate_limits',
   'calls',
   'sessions',
   'users',

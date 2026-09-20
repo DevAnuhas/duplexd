@@ -10,6 +10,7 @@ import {
   requireAuthUrl,
   requireDatabaseUrl,
   requireEncryptionKey,
+  requirePipecatApiKey,
 } from '@/db/env';
 
 /**
@@ -33,6 +34,7 @@ const VARIABLES = [
   'ASSISTANT_SECRET_KEY',
   'BETTER_AUTH_SECRET',
   'BETTER_AUTH_URL',
+  'PIPECAT_API_KEY',
 ] as const;
 
 /**
@@ -239,6 +241,28 @@ describe('environment guards', () => {
     });
   });
 
+  describe('requirePipecatApiKey', () => {
+    it.each([
+      ['unset', undefined],
+      ['the empty string', ''],
+      ['only whitespace', '   '],
+    ])('throws when PIPECAT_API_KEY is %s', (_label, value) => {
+      if (value === undefined) {
+        delete process.env.PIPECAT_API_KEY;
+      } else {
+        process.env.PIPECAT_API_KEY = value;
+      }
+
+      expect(() => requirePipecatApiKey()).toThrow(/PIPECAT_API_KEY/);
+    });
+
+    it('returns a configured key without exposing it elsewhere', () => {
+      process.env.PIPECAT_API_KEY = 'synthetic-pipecat-key-for-env-test';
+
+      expect(requirePipecatApiKey()).toBe('synthetic-pipecat-key-for-env-test');
+    });
+  });
+
   /**
    * Reading at call time rather than module import is what lets `next build`
    * run with no database and no secrets. If these were read at import, the
@@ -268,6 +292,7 @@ describe('environment guards', () => {
     expect(() => requireEncryptionKey()).toThrow(/ASSISTANT_SECRET_KEY/);
     expect(() => requireAuthSecret()).toThrow(/BETTER_AUTH_SECRET/);
     expect(() => requireAuthUrl()).toThrow(/BETTER_AUTH_URL/);
+    expect(() => requirePipecatApiKey()).toThrow(/PIPECAT_API_KEY/);
   });
 
   /**

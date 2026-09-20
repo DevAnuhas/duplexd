@@ -104,6 +104,20 @@ describeDatabase('migrations from an empty database', () => {
       expect(definition).toMatch(/WHERE .*state = 'active'/i);
     });
 
+    it('indexes starting calls separately for expiry sweeps', () => {
+      const definition = definitionOf('calls_starting_idx');
+
+      expect(definition).toMatch(/\(state\)/i);
+      expect(definition).toMatch(/WHERE .*state = 'starting'/i);
+    });
+
+    it('requires each stored agent-token digest to identify one call', () => {
+      const definition = definitionOf('calls_agent_token_hash_idx');
+
+      expect(definition).toMatch(/CREATE UNIQUE INDEX/i);
+      expect(definition).toMatch(/\(agent_token_hash\)/i);
+    });
+
     it('gives call_events a composite primary key on (call_id, seq)', async () => {
       const key = await withTestPool(async (pool) => {
         const { rows } = await pool.query<{ column_name: string }>(
