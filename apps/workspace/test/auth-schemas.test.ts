@@ -59,6 +59,26 @@ function accepts(schema: ZodType, value: unknown): boolean {
   return issuesFor(schema, value).length === 0;
 }
 
+/**
+ * The email as the schema *stores* it, or `null` when it was rejected.
+ *
+ * Acceptance alone is not the contract here. The email rule trims, so what
+ * matters downstream is the normalized value — a schema that let the padding
+ * through unchanged would satisfy every boolean assertion and still hand
+ * Better Auth an address with a space in it.
+ */
+function parsedEmailOf(schema: ZodType, value: unknown): string | null {
+  const result = schema.safeParse(value);
+
+  if (!result.success) {
+    return null;
+  }
+
+  const parsed = result.data as { email?: unknown };
+
+  return typeof parsed.email === 'string' ? parsed.email : null;
+}
+
 /** A password of exactly `length` characters that passes every rule but length. */
 function passwordOfLength(length: number): string {
   return 'a'.repeat(length);
@@ -106,12 +126,30 @@ const SCHEMAS_WITH_EMAIL = [
 describe('the shared email rule', () => {
   describe.each(SCHEMAS_WITH_EMAIL)('%s', (_name, schema, build) => {
     it.each([
-      ['an ordinary address', VALID_EMAIL],
-      ['a subdomain', 'kevin@mail.example.co.uk'],
-      ['a plus tag', "kevin+duplexd@example.com"],
-      ['exactly the maximum length', emailOfLength(320)],
-    ])('accepts %s', (_label, email) => {
-      expect(accepts(schema, build(email))).toBe(true);
+      ['an ordinary address', VALID_EMAIL, VALID_EMAIL],
+      ['a subdomain', 'kevin@mail.example.co.uk', 'kevin@mail.example.co.uk'],
+      ['a plus tag', 'kevin+duplexd@example.com', 'kevin+duplexd@example.com'],
+      ['exactly the maximum length', emailOfLength(320), emailOfLength(320)],
+      ['a space-padded address', `  ${VALID_EMAIL}  `, VALID_EMAIL],
+      ['a tab- and newline-padded address', `\t\n ${VALID_EMAIL} \n\t`, VALID_EMAIL],
+      [
+        'a single trailing space, as a password manager pastes it',
+        `${VALID_EMAIL} `,
+        VALID_EMAIL,
+      ],
+      // The bound is measured after trimming, so padding cannot push a legal
+      // address over the limit. This is the positive half of the over-length
+      // padded case below.
+      [
+        'padding around an address of exactly the maximum length',
+        `  ${emailOfLength(320)}  `,
+        emailOfLength(320),
+      ],
+    ])('accepts %s, and stores it trimmed', (_label, submitted, stored) => {
+      expect(
+        parsedEmailOf(schema, build(submitted)),
+        'accepted, but the padding survived into the parsed value',
+      ).toBe(stored);
     });
 
     it.each([
@@ -119,11 +157,22 @@ describe('the shared email rule', () => {
       ['no at sign', 'kevin.example.com', /valid email/i],
       ['no domain', 'kevin@', /valid email/i],
       ['no local part', '@example.com', /valid email/i],
+      // Trimming is the ends and only the ends. Whitespace in the middle is a
+      // typo, not padding, and closing it up would submit an address the
+      // customer never typed.
       ['a space inside', 'ke vin@example.com', /valid email/i],
-      // Leading and trailing whitespace is the case a pasted address hits.
-      // Nothing trims before validating, so this is a rejection today.
-      ['surrounding whitespace', `  ${VALID_EMAIL}  `, /valid email/i],
+      ['a tab inside', 'ke\tvin@example.com', /valid email/i],
+      // After trimming, these are the empty string, so either rule could
+      // plausibly fire. They must read as an invalid address — which is what
+      // the field is asking for — rather than as a length complaint.
+      ['only whitespace', '   ', /valid email/i],
+      ['only a tab and a newline', '\t\n', /valid email/i],
       ['one character over the maximum', emailOfLength(321), /too long/i],
+      [
+        'padding around an already over-length address',
+        `  ${emailOfLength(321)}  `,
+        /too long/i,
+      ],
     ])('rejects %s, on the email field', (_label, email, expected) => {
       expect(issuesFor(schema, build(email))).toContainEqual({
         path: 'email',
@@ -334,11 +383,21 @@ describe('forgotPasswordSchema', () => {
     ).toStrictEqual({ email: VALID_EMAIL });
   });
 
-  it('rejects a missing email', () => {
-    expect(issuesFor(forgotPasswordSchema, {})).toContainEqual({
-      path: 'email',
-      message: expect.any(String),
-    });
+  /**
+   * A non-string reads as an invalid address, not as Zod's own type error.
+   *
+   * The form cannot produce this — React Hook Form always supplies a string —
+   * but the module is imported by server paths too, and "Invalid input:
+   * expected string, received undefined" is a stack trace wearing a label.
+   */
+  it.each([
+    ['a missing email', {}],
+    ['a null email', { email: null }],
+    ['a numeric email', { email: 42 }],
+  ])('rejects %s with the same copy a bad address gets', (_label, value) => {
+    expect(issuesFor(forgotPasswordSchema, value)).toStrictEqual([
+      { path: 'email', message: expect.stringMatching(/valid email/i) },
+    ]);
   });
 });
 

@@ -28,9 +28,41 @@ export const PASSWORD_MIN_LENGTH = 8;
 /** Better Auth's default `maxPasswordLength`. */
 export const PASSWORD_MAX_LENGTH = 128;
 
+/**
+ * The address, trimmed before it is judged.
+ *
+ * **The order of this chain is the whole point.** `z.email().trim()` reads the
+ * same and does the opposite: it validates first and trims the survivor, so a
+ * pasted `"  kevin@example.com  "` is rejected before the trim ever runs.
+ * Piping a trimmed string into the email check is what makes the padding
+ * invisible to validation.
+ *
+ * That padding is not an edge case. Password managers, mail clients and
+ * spreadsheets all hand over addresses with a trailing space, and the place
+ * this bites hardest is `/forgot-password`: the person there is already locked
+ * out, and telling them their own address is invalid is the worst false
+ * rejection in the product.
+ *
+ * Trimming is deliberately *only* the ends. An address with whitespace in the
+ * middle stays invalid — `"a b@c.com"` is a typo, not padding, and silently
+ * closing it up would submit an address the customer never typed.
+ *
+ * The `z.string()` at the head carries the same message as the email check so
+ * a non-string — which a server-side caller can produce even though the form
+ * cannot — reads as "Enter a valid email address." rather than leaking Zod's
+ * own "Invalid input: expected string, received undefined".
+ *
+ * `.max(320)` sits after the trim, so the bound applies to the address that
+ * would actually be stored rather than to the whitespace around it.
+ */
 const email = z
-  .email({ error: 'Enter a valid email address.' })
-  .max(320, { error: 'That email address is too long.' });
+  .string({ error: 'Enter a valid email address.' })
+  .trim()
+  .pipe(
+    z
+      .email({ error: 'Enter a valid email address.' })
+      .max(320, { error: 'That email address is too long.' }),
+  );
 
 const password = z
   .string()
