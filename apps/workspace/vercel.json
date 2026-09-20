@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "node --experimental-strip-types scripts/vercel-build.ts",
+  "framework": "nextjs",
+  "git": {
+    "deploymentEnabled": {
+      "main": false
+    }
+  }
+}

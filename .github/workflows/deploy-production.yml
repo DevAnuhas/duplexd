@@ -1,0 +1,47 @@
+name: Deploy production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Set up pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - name: Refuse non-production context before deploy or database work
+        env:
+          DEPLOYMENT_TARGET: production
+        run: node --experimental-strip-types apps/workspace/scripts/production-context.ts
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      # The orchestrator keeps the successful build away from production
+      # traffic, migrates, then promotes. This restores Fly release_command's
+      # migrate-before-serve ordering and makes the recovery path testable.
+      - name: Stage, migrate, and promote production
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DEPLOYMENT_TARGET: production
+        run: node --experimental-strip-types apps/workspace/scripts/production-deploy.ts
