@@ -3,8 +3,9 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Bot, KeyRound, LayoutGrid, PhoneCall, Settings } from 'lucide-react';
-import { Suspense, type ComponentProps, type ReactNode } from 'react';
+import type { ComponentProps } from 'react';
 
+import { NavUser } from '@/components/nav-user';
 import {
   Sidebar,
   SidebarContent,
@@ -13,18 +14,22 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
 } from '@/components/ui/sidebar';
 
 /**
- * The tenant's navigation — the **static** half of the shell.
+ * The tenant's navigation.
  *
- * The links themselves prerender and are served immediately. Three kinds of
- * thing stream in behind Suspense boundaries: the identity block, the user
- * menu and the counts (passed in as slots by the layout), and the active-link
- * highlight (see `NavButton`).
+ * **Everything here arrives as plain serializable props, rendered in the
+ * initial HTML.** It used to receive `<Suspense>`-wrapped server slots so the
+ * frame could prerender while the tenant streamed in. That cost the product
+ * every control in this component: a client island reached through a streamed
+ * boundary never hydrates, so sign out and the theme toggle were inert on
+ * every page while looking perfectly normal. Streaming the shell's session
+ * data is not worth a sidebar that cannot be clicked.
  *
  * **Every link is backed by a query that runs today.** No Phone numbers,
  * Squads, Webhooks, Integrations, Billing or Metrics — there is no data behind
@@ -37,45 +42,105 @@ type NavItem = {
   href: string;
   label: string;
   icon: typeof Bot;
-  badge?: ReactNode;
+  count?: number;
 };
 
+export type AccountSummary = { id: string; name: string };
+
 export function AppSidebar({
-  identity,
-  userMenu,
-  assistantsBadge,
-  apiKeysBadge,
-  callsBadge,
+  account,
+  userEmail,
+  counts,
   ...props
 }: {
-  identity: ReactNode;
-  userMenu: ReactNode;
-  assistantsBadge: ReactNode;
-  apiKeysBadge: ReactNode;
-  callsBadge: ReactNode;
+  account: AccountSummary;
+  userEmail: string;
+  counts: { assistants: number; apiKeys: number; calls: number };
 } & ComponentProps<typeof Sidebar>) {
+  const pathname = usePathname();
+
   const build: NavItem[] = [
     { href: '/', label: 'Overview', icon: LayoutGrid },
-    { href: '/assistants', label: 'Assistants', icon: Bot, badge: assistantsBadge },
+    { href: '/assistants', label: 'Assistants', icon: Bot, count: counts.assistants },
   ];
   const configure: NavItem[] = [
-    { href: '/keys', label: 'API keys', icon: KeyRound, badge: apiKeysBadge },
+    { href: '/keys', label: 'API keys', icon: KeyRound, count: counts.apiKeys },
   ];
   const observe: NavItem[] = [
-    { href: '/calls', label: 'Calls', icon: PhoneCall, badge: callsBadge },
+    { href: '/calls', label: 'Calls', icon: PhoneCall, count: counts.calls },
   ];
+
+  /**
+   * `/assistants/new` must light up `Assistants`, so this is a prefix match.
+   *
+   * `/` is the exception and needs the explicit guard: every path starts with
+   * a slash, so a prefix test would light up Overview on every page.
+   */
+  const isActive = (href: string): boolean =>
+    href === '/'
+      ? pathname === '/'
+      : pathname === href || pathname.startsWith(`${href}/`);
 
   const renderItems = (items: NavItem[]) =>
     items.map((item) => (
       <SidebarMenuItem key={item.href}>
-        <NavButton href={item.href} label={item.label} icon={item.icon} />
-        {item.badge}
+        <SidebarMenuButton
+          asChild
+          isActive={isActive(item.href)}
+          tooltip={item.label}
+          className="h-11"
+        >
+          <Link href={item.href}>
+            <item.icon />
+            <span>{item.label}</span>
+          </Link>
+        </SidebarMenuButton>
+        {/*
+          Counts are queried, never decorative. Zero renders as nothing rather
+          than as `0`: an empty section says so with its own empty state, and a
+          badge reading zero beside every link is noise on a new account.
+        */}
+        {item.count !== undefined && item.count > 0 && (
+          <SidebarMenuBadge>{item.count}</SidebarMenuBadge>
+        )}
       </SidebarMenuItem>
     ));
 
   return (
     <Sidebar collapsible="icon" {...props}>
-      <SidebarHeader>{identity}</SidebarHeader>
+      <SidebarHeader>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            {/*
+              Who you are looking at — deliberately **not** a switcher. Both
+              references put a chevron here because both have real multi-org;
+              duplexd resolves exactly one account per session and has no route
+              that could switch, so a chevron would promise a list that cannot
+              exist. It links to Settings instead: same weight, same position,
+              and it goes somewhere that does something.
+            */}
+            <SidebarMenuButton size="lg" asChild tooltip={account.name}>
+              <Link href="/settings">
+                <div className="bg-primary text-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg text-xs font-semibold">
+                  {account.name.slice(0, 2).toUpperCase()}
+                </div>
+                <div className="grid flex-1 text-left text-sm leading-tight">
+                  <span className="truncate font-semibold">{account.name}</span>
+                  {/*
+                    The first eight characters of the account id. It is the
+                    identifier in every support conversation and every log
+                    line, and showing it proves the boundary to a sceptical
+                    tenant: two browsers, two ids.
+                  */}
+                  <span className="text-muted-foreground truncate text-xs tabular-nums">
+                    acct {account.id.slice(0, 8)}
+                  </span>
+                </div>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarHeader>
 
       <SidebarContent>
         <SidebarGroup>
@@ -96,80 +161,23 @@ export function AppSidebar({
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
-            <NavButton href="/settings" label="Settings" icon={Settings} />
+            <SidebarMenuButton
+              asChild
+              isActive={isActive('/settings')}
+              tooltip="Settings"
+              className="h-11"
+            >
+              <Link href="/settings">
+                <Settings />
+                <span>Settings</span>
+              </Link>
+            </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
-        {userMenu}
+        <NavUser email={userEmail} />
       </SidebarFooter>
 
       <SidebarRail />
     </Sidebar>
   );
-}
-
-/**
- * A nav link whose highlight streams in after the link itself.
- *
- * `usePathname()` cannot run while the shell is being prerendered — under
- * Cache Components it is a build error (`CLIENT_HOOK_DYNAMIC`), because the
- * path is not knowable until there is a request. Wrapping only the highlight
- * keeps the rest static: the **fallback is the same link, unhighlighted**, so
- * the nav is present and clickable in the prerendered shell and the active
- * state settles a moment later. The alternative — one boundary around the
- * whole nav — would hold the links themselves behind a skeleton, which is the
- * thing partial prerendering exists to avoid.
- */
-function NavButton({
-  href,
-  label,
-  icon: Icon,
-}: {
-  href: string;
-  label: string;
-  icon: typeof Bot;
-}) {
-  /*
-    `h-11` overrides the sidebar's 32px default to clear the 44px minimum
-    target. Applied here rather than in `components/ui/sidebar.tsx`, because
-    that variant is shared and changing it would silently resize controls in
-    lanes I do not own.
-  */
-  const link = (isActive: boolean) => (
-    <SidebarMenuButton asChild isActive={isActive} tooltip={label} className="h-11">
-      <Link href={href}>
-        <Icon />
-        <span>{label}</span>
-      </Link>
-    </SidebarMenuButton>
-  );
-
-  return (
-    <Suspense fallback={link(false)}>
-      <ActiveNavButton href={href}>{link}</ActiveNavButton>
-    </Suspense>
-  );
-}
-
-function ActiveNavButton({
-  href,
-  children,
-}: {
-  href: string;
-  children: (isActive: boolean) => ReactNode;
-}) {
-  const pathname = usePathname();
-
-  /**
-   * `/assistants/new` must light up `Assistants`, so this is a prefix match.
-   *
-   * `/` is the exception and needs the explicit guard: every path starts with
-   * a slash, so a prefix test would light up Overview on every page in the
-   * product.
-   */
-  const isActive =
-    href === '/'
-      ? pathname === '/'
-      : pathname === href || pathname.startsWith(`${href}/`);
-
-  return children(isActive);
 }

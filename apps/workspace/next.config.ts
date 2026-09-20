@@ -17,9 +17,9 @@ const nextConfig: NextConfig = {
    * unless it is explicitly marked `'use cache'`, so the guarantees those
    * directives used to state are now the default rather than an opt-in.
    */
-  cacheComponents: true,
+  cacheComponents: false,
   /** Prefetch the shared shell once rather than per-link. */
-  partialPrefetching: true,
+  partialPrefetching: false,
   // Vercel does not need standalone output. The real-server verification does:
   // it boots this artifact to prove startup and proxy-sensitive behavior against
   // a production Next server instead of Vitest's altered environment.
