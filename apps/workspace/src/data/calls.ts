@@ -513,8 +513,17 @@ export async function getWorkspaceCallForAccount(
   const rows = await getDb()
     .select(workspaceCallColumns)
     .from(calls)
-    .leftJoin(assistants, eq(assistants.id, calls.assistantId))
-    .leftJoin(apiKeys, eq(apiKeys.id, calls.apiKeyId))
+    .leftJoin(
+      assistants,
+      and(
+        eq(assistants.id, calls.assistantId),
+        eq(assistants.accountId, accountId),
+      ),
+    )
+    .leftJoin(
+      apiKeys,
+      and(eq(apiKeys.id, calls.apiKeyId), eq(apiKeys.accountId, accountId)),
+    )
     .where(and(eq(calls.id, callId), eq(calls.accountId, accountId)))
     .limit(1);
 
@@ -654,8 +663,17 @@ export async function listWorkspaceCallsForAccount(
   const rows = await getDb()
     .select(workspaceCallColumns)
     .from(calls)
-    .leftJoin(assistants, eq(assistants.id, calls.assistantId))
-    .leftJoin(apiKeys, eq(apiKeys.id, calls.apiKeyId))
+    .leftJoin(
+      assistants,
+      and(
+        eq(assistants.id, calls.assistantId),
+        eq(assistants.accountId, accountId),
+      ),
+    )
+    .leftJoin(
+      apiKeys,
+      and(eq(apiKeys.id, calls.apiKeyId), eq(apiKeys.accountId, accountId)),
+    )
     .where(predicate)
     .orderBy(desc(calls.createdAt), desc(calls.id))
     .limit(limit + 1);

@@ -1,51 +1,189 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { Suspense } from 'react';
 
-import { listCallsForAccount } from '@/data/calls';
+import { CopyButton } from '@/components/copy-button';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { listWorkspaceCallsForAccount } from '@/data/calls';
 import { getCurrentAccount } from '@/lib/account';
+import { CallStateBadge } from './call-state-badge';
 
-export const dynamic = 'force-dynamic';
+const dateTime = new Intl.DateTimeFormat('en', {
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+  timeZone: 'UTC',
+  timeZoneName: 'short',
+});
 
-function duration(value: number | null): string {
-  return value === null ? 'not reported' : `${value.toFixed(3)} seconds`;
+function formatTimestamp(value: string | null): string {
+  return value === null ? 'Not reported' : dateTime.format(new Date(value));
 }
 
-export default async function CallsPage() {
+function formatDuration(value: number | null): string {
+  if (value === null) {
+    return 'Not reported';
+  }
+  if (value < 60) {
+    return `${value.toFixed(value < 10 ? 1 : 0)} sec`;
+  }
+
+  const minutes = Math.floor(value / 60);
+  const seconds = Math.round(value % 60);
+  return `${minutes} min ${seconds} sec`;
+}
+
+function shortId(id: string): string {
+  return id.length <= 16 ? id : `${id.slice(0, 8)}…${id.slice(-4)}`;
+}
+
+async function CallsContent({
+  searchParams,
+}: {
+  searchParams: Promise<{ cursor?: string | string[] }>;
+}) {
   const account = await getCurrentAccount();
 
   if (account === null) {
     redirect('/sign-in');
   }
 
-  const result = await listCallsForAccount(account.accountId);
+  const value = (await searchParams).cursor;
+  const cursor = typeof value === 'string' ? value : null;
+  const result = await listWorkspaceCallsForAccount(account.accountId, {
+    cursor,
+  });
 
-  if (result.kind !== 'ok') {
-    throw new Error('The initial calls page cannot have an invalid cursor.');
+  if (result.kind === 'invalid_cursor') {
+    redirect('/calls');
   }
 
   return (
-    <main>
-      <h1>Calls</h1>
-      <p>
-        <Link href="/assistants">Assistants</Link> ·{' '}
-        <Link href="/keys">API keys</Link>
-      </p>
-
+    <>
       {result.calls.length === 0 ? (
-        <p>No calls yet.</p>
+        <div className="flex min-h-52 flex-col items-start justify-center border-y py-10">
+          <h2 className="text-lg font-medium">No calls yet</h2>
+          <p className="mt-1 max-w-md text-sm text-muted-foreground">
+            Calls started through the API appear here.
+          </p>
+          <Button asChild className="mt-5">
+            <Link href="/keys">View API keys</Link>
+          </Button>
+        </div>
       ) : (
-        <ul>
-          {result.calls.map((call) => (
-            <li key={call.id}>
-              <Link href={`/calls/${call.id}`}>{call.id}</Link>
-              {' — '}
-              {call.state}
-              {' — '}
-              {duration(call.durationSecs)}
-            </li>
-          ))}
-        </ul>
+        <div className="overflow-hidden rounded-lg border">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-muted/40 hover:bg-muted/40">
+                <TableHead>Started</TableHead>
+                <TableHead>Assistant</TableHead>
+                <TableHead>State</TableHead>
+                <TableHead>Duration</TableHead>
+                <TableHead>API key</TableHead>
+                <TableHead className="text-right">Call ID</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {result.calls.map((call) => (
+                <TableRow key={call.id}>
+                  <TableCell>
+                    <Link
+                      href={`/calls/${call.id}`}
+                      prefetch={true}
+                      className="font-medium underline-offset-4 hover:underline"
+                    >
+                      {formatTimestamp(call.startedAt)}
+                    </Link>
+                  </TableCell>
+                  <TableCell>{call.assistantName ?? 'Unavailable'}</TableCell>
+                  <TableCell>
+                    <CallStateBadge state={call.state} />
+                  </TableCell>
+                  <TableCell>{formatDuration(call.durationSecs)}</TableCell>
+                  <TableCell>
+                    {call.apiKey === null ? (
+                      'Unavailable'
+                    ) : (
+                      <div>
+                        <div>{call.apiKey.name}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {call.apiKey.prefix}…
+                        </div>
+                      </div>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center justify-end gap-1 tabular-nums">
+                      <span>{shortId(call.id)}</span>
+                      <CopyButton
+                        value={call.id}
+                        label="Copy call ID"
+                        successLabel="Call ID copied"
+                        compact
+                      />
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       )}
+
+      {result.nextCursor !== null && (
+        <Button variant="outline" asChild>
+          <Link href={`/calls?cursor=${encodeURIComponent(result.nextCursor)}`}>
+            Older calls
+          </Link>
+        </Button>
+      )}
+    </>
+  );
+}
+
+function CallsSkeleton() {
+  return (
+    <div className="overflow-hidden rounded-lg border p-4" aria-label="Loading calls">
+      <div className="space-y-4">
+        {Array.from({ length: 5 }, (_, index) => (
+          <div key={index} className="grid grid-cols-3 gap-4 sm:grid-cols-6">
+            {Array.from({ length: 6 }, (_, cell) => (
+              <Skeleton key={cell} className="h-5 w-full" />
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export default function CallsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ cursor?: string | string[] }>;
+}) {
+  return (
+    <main className="space-y-6">
+      <header>
+        <h1 className="text-2xl font-semibold tracking-tight">Calls</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Inspect call outcomes, transcripts, and tool activity.
+        </p>
+      </header>
+      <Suspense fallback={<CallsSkeleton />}>
+        <CallsContent searchParams={searchParams} />
+      </Suspense>
     </main>
   );
 }

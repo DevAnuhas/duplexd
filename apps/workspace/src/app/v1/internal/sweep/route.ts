@@ -3,7 +3,6 @@ import { json, problem } from '@/control/http';
 import { sweepStaleCalls } from '@/data/calls';
 import { readCallSweepToken } from '@/db/env';
 
-export const dynamic = 'force-dynamic';
 
 export async function handleSweepRequest(
   request: Request,

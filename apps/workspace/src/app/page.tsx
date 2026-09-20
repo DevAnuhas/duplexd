@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import { Suspense } from 'react';
 
 import { getCurrentAccount } from '@/lib/account';
 
@@ -10,12 +11,24 @@ import { getCurrentAccount } from '@/lib/account';
  * deliberately — it renders nothing, so wrapping it in the shell would build a
  * sidebar for a response that is only ever a redirect.
  *
- * Dynamic because it reads the session, and therefore the database. Without
- * this, `next build` would try to prerender it and would need a reachable
- * database at build time.
+ * The session read sits inside a `<Suspense>` boundary because under
+ * `cacheComponents` a request-time read outside one is a build error. There is
+ * nothing to show while it resolves — both outcomes are redirects — so the
+ * fallback is empty rather than a skeleton of a page that will never paint.
  */
-export const dynamic = 'force-dynamic';
+export default function RootPage() {
+  return (
+    <Suspense fallback={null}>
+      <RootRedirect />
+    </Suspense>
+  );
+}
 
-export default async function RootPage() {
+/**
+ * `redirect()` throws, so nothing after it runs — but its `never` return type
+ * makes this component infer `Promise<void>`, which is not a valid JSX element
+ * type. The explicit `null` is what makes it one.
+ */
+async function RootRedirect(): Promise<null> {
   redirect((await getCurrentAccount()) === null ? '/sign-in' : '/assistants');
 }

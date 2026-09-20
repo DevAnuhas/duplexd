@@ -4,6 +4,29 @@ import { useRouter } from 'next/navigation';
 import { useState, useTransition, type FormEvent } from 'react';
 
 import { mintApiKeyAction, revokeApiKeyAction } from '@/app/actions';
+import { CopyButton } from '@/components/copy-button';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
 type KeyRow = {
   id: string;
@@ -104,67 +127,121 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
   }
 
   return (
-    <>
-      {revealed !== null && (
-        <section role="alert" data-testid="revealed-key">
-          <h2>Copy this key now</h2>
-          <p>
-            This is the only time it will ever be shown. Nothing can retrieve it
-            afterwards — the platform stores only a hash.
-          </p>
-          <code>{revealed}</code>
-          <button type="button" onClick={() => setRevealed(null)}>
-            I have copied it
-          </button>
-        </section>
-      )}
+    <div className="space-y-6">
+      <Dialog
+        open={revealed !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRevealed(null);
+          }
+        }}
+      >
+        <DialogContent
+          data-testid="revealed-key"
+          className="border-primary/30 sm:max-w-xl"
+        >
+          <DialogHeader>
+            <DialogTitle>Copy this key now</DialogTitle>
+            <DialogDescription>
+              This is the only time it will ever be shown. Nothing can retrieve
+              it afterwards — the platform stores only a hash.
+            </DialogDescription>
+          </DialogHeader>
+          {revealed !== null && (
+            <div className="flex items-start gap-2 rounded-lg border bg-primary/5 p-3">
+              <span className="min-w-0 flex-1 break-all text-sm leading-relaxed">
+                {revealed}
+              </span>
+              <CopyButton
+                value={revealed}
+                label="Copy key"
+                successLabel="Key copied"
+              />
+            </div>
+          )}
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button>I have saved it</Button>
+            </DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      <form method="post" onSubmit={onMint}>
-        <label htmlFor="keyName">Name</label>
-        <input
-          id="keyName"
-          name="name"
-          required
-          placeholder="What will use this key?"
-        />
-        {error !== null && <p role="alert">{error}</p>}
-        <button type="submit" disabled={busy}>
-          Mint a key
-        </button>
+      <form
+        method="post"
+        onSubmit={onMint}
+        className="flex flex-col gap-3 rounded-lg border bg-card p-4 sm:flex-row sm:items-end"
+      >
+        <div className="min-w-0 flex-1 space-y-2">
+          <Label htmlFor="keyName">Key name</Label>
+          <Input
+            id="keyName"
+            name="name"
+            required
+            placeholder="Production backend"
+            autoComplete="off"
+          />
+        </div>
+        <Button type="submit" disabled={busy}>
+          {busy ? 'Minting…' : 'Mint a key'}
+        </Button>
       </form>
 
+      {error !== null && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
       {keys.length === 0 ? (
-        <p>No keys yet.</p>
+        <div className="border-y py-10">
+          <h2 className="text-lg font-medium">No API keys yet</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Mint a key to start calls from your app.
+          </p>
+        </div>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Prefix</th>
-              <th>Created</th>
-              <th>Last used</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
+        <div className="overflow-hidden rounded-lg border">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-muted/40 hover:bg-muted/40">
+                <TableHead>Name</TableHead>
+                <TableHead>Prefix</TableHead>
+                <TableHead>Created</TableHead>
+                <TableHead>Last used</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Action</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
             {keys.map((key) => (
-              <tr key={key.id}>
-                <td>{key.name}</td>
-                <td>
-                  <code>{key.prefix}…</code>
-                </td>
-                <td>{new Date(key.createdAt).toISOString()}</td>
-                <td>
+              <TableRow key={key.id}>
+                <TableCell className="font-medium">{key.name}</TableCell>
+                <TableCell className="tabular-nums">{key.prefix}…</TableCell>
+                <TableCell>{formatDate(key.createdAt)}</TableCell>
+                <TableCell>
                   {key.lastUsedAt === null
-                    ? 'never'
-                    : new Date(key.lastUsedAt).toISOString()}
-                </td>
-                <td>
-                  {key.revokedAt !== null ? (
-                    'revoked'
-                  ) : (
-                    <button
+                    ? 'Never'
+                    : formatDate(key.lastUsedAt)}
+                </TableCell>
+                <TableCell>
+                  <Badge
+                    variant="outline"
+                    className={
+                      key.revokedAt === null
+                        ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                        : 'bg-secondary text-secondary-foreground'
+                    }
+                  >
+                    {key.revokedAt === null ? 'Active' : 'Revoked'}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-right">
+                  {key.revokedAt === null && (
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="sm"
                       onClick={() => {
                         // A rejection here was a silent no-op: the key stayed
                         // live, the row did not change, and nothing said so.
@@ -173,6 +250,7 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
                         // is dead when it is not.
                         withRefresh(async () => {
                           try {
+                            setError(null);
                             await revokeApiKeyAction(key.id);
                           } catch {
                             setError(
@@ -183,14 +261,29 @@ export function KeyManager({ keys }: { keys: KeyRow[] }) {
                       }}
                     >
                       Revoke
-                    </button>
+                    </Button>
                   )}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+            </TableBody>
+          </Table>
+        </div>
       )}
-    </>
+    </div>
   );
+}
+
+const dateTime = new Intl.DateTimeFormat('en', {
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+  timeZone: 'UTC',
+  timeZoneName: 'short',
+});
+
+function formatDate(value: Date): string {
+  return dateTime.format(new Date(value));
 }

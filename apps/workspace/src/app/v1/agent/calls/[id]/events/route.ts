@@ -3,7 +3,6 @@ import { agentAuthProblem, requireAgentToken } from '@/control/agent-http';
 import { json, problem, readJsonObject } from '@/control/http';
 import { ingestAgentEvents, type AgentEventInput } from '@/data/calls';
 
-export const dynamic = 'force-dynamic';
 
 const acceptedTypes = new Set(AGENT_EVENT_TYPES);
 const RFC3339_TIMESTAMP =

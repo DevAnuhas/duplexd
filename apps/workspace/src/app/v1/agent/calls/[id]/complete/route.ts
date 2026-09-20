@@ -3,7 +3,6 @@ import { agentAuthProblem, requireAgentToken } from '@/control/agent-http';
 import { json, problem, readJsonObject } from '@/control/http';
 import { completeAgentCall } from '@/data/calls';
 
-export const dynamic = 'force-dynamic';
 
 const acceptedReasons = new Set<string>(AGENT_END_REASONS);
 

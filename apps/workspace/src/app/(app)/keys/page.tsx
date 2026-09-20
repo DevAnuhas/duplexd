@@ -1,21 +1,17 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { Suspense } from 'react';
 
+import { Skeleton } from '@/components/ui/skeleton';
 import { listApiKeysForAccount } from '@/data/api-keys';
 import { getCurrentAccount } from '@/lib/account';
 import { KeyManager } from './key-manager';
 
 /**
- * `no-store` is not a performance choice.
- *
- * A minted key is shown exactly once, and a cached page is another copy of
- * that moment — in a CDN, a proxy, or the browser's back-forward cache, where
- * it outlives the one view it was meant to have.
+ * With Cache Components, this uncached session/database read runs at request
+ * time and is never stored. The one-time reveal therefore cannot be copied
+ * into a prerender or page cache; only the client owner ever holds the raw key.
  */
-export const dynamic = 'force-dynamic';
-export const fetchCache = 'force-no-store';
-
-export default async function KeysPage() {
+async function KeysContent() {
   const account = await getCurrentAccount();
 
   if (account === null) {
@@ -24,13 +20,28 @@ export default async function KeysPage() {
 
   const keys = await listApiKeysForAccount(account.accountId);
 
+  return <KeyManager keys={keys} />;
+}
+
+export default function KeysPage() {
   return (
-    <main>
-      <h1>API keys</h1>
-      <p>
-        <Link href="/assistants">Assistants</Link>
-      </p>
-      <KeyManager keys={keys} />
+    <main className="space-y-6">
+      <header>
+        <h1 className="text-2xl font-semibold tracking-tight">API keys</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Create credentials for projects that start calls through the API.
+        </p>
+      </header>
+      <Suspense
+        fallback={
+          <div className="space-y-4" aria-label="Loading API keys">
+            <Skeleton className="h-24 w-full rounded-lg" />
+            <Skeleton className="h-56 w-full rounded-lg" />
+          </div>
+        }
+      >
+        <KeysContent />
+      </Suspense>
     </main>
   );
 }

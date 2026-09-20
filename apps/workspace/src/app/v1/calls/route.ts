@@ -14,7 +14,6 @@ import {
 } from '@/control/http';
 import { PipecatStartError, startPipecatSession } from '@/control/pipecat';
 
-export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request): Promise<Response> {
   const auth = await authenticateCustomer(request);
