@@ -1,3 +1,5 @@
+import { isTest as betterAuthIsTest } from '@better-auth/core/env';
+
 import {
   requireAuthSecret,
   requireAuthUrl,
@@ -7,11 +9,11 @@ import {
 } from '@/db/env';
 
 /**
- * Validates every environment variable the app reads, once, at server start.
+ * Validates the five app-wide runtime prerequisites at initialization.
  *
- * Next calls `register()` when the server boots — not during `next build` — so
- * this makes `.env.example`'s promise true without making the image build need
- * a database or a key.
+ * Next calls `register()` when a function or the standalone verification
+ * server initializes — not during `next build` — so the deployment build does
+ * not need a database or key.
  *
  * Checking at first use instead would be too late in the way that matters.
  * `ASSISTANT_SECRET_KEY` is read only when an assistant's webhook secret is
@@ -19,29 +21,38 @@ import {
  * missing it would boot green, serve every page, and fail in P03 on the first
  * customer who saves a secret.
  *
- * **Throwing here is not enough, and an earlier version of this file only
- * threw.** Next catches it: the process stays alive, keeps the port bound, and
- * answers every request with a bare 500. To anything watching the port — a Fly
- * health check, a supervisor, a load balancer — that machine looks healthy
- * while serving nothing. A process that cannot do its job should stop holding
- * the socket, so this exits and lets the platform report a failed release.
+ * `CALL_SWEEP_TOKEN` is deliberately not a sixth global prerequisite. The
+ * membership criterion here is discovery latency, not importance: the sweep
+ * scheduler exercises its token within minutes, its route refuses when the
+ * token is absent, and read-time staleness keeps customer-visible state correct
+ * even while persistence is degraded. Taking down unrelated functions would
+ * turn that safe degradation into a platform outage.
+ *
+ * On the old long-lived Fly server, throwing here was insufficient: Next
+ * caught the error while the process kept a healthy-looking port bound, so the
+ * process had to exit. Vercel functions have no durable application socket to
+ * surrender. Letting the registration error propagate makes every affected
+ * function invocation fail closed instead of terminating a shared serverless
+ * worker. The production-server test proves both halves: a complete
+ * environment serves every route class, and a missing variable makes every
+ * route class return 500 while naming only the variable in server logs.
  */
 export async function register(): Promise<void> {
-  try {
-    requireDatabaseUrl();
-    requireAuthSecret();
-    requireAuthUrl();
-    requireEncryptionKey();
-    requirePipecatApiKey();
+  requireDatabaseUrl();
+  requireAuthSecret();
+  requireAuthUrl();
+  requireEncryptionKey();
+  requirePipecatApiKey();
 
-    if (process.env.NEXT_RUNTIME === 'nodejs') {
-      const { startCallSweeper } = await import('@/control/sweeper-scheduler');
-      startCallSweeper();
-    }
-  } catch (error) {
-    console.error(
-      `[startup] ${error instanceof Error ? error.message : String(error)}`,
+  if (process.env.NODE_ENV === 'production' && betterAuthIsTest()) {
+    throw new Error(
+      'Better Auth resolved production as test mode. Remove TEST and test-runner markers from the runtime environment.',
     );
-    process.exit(1);
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    console.info(
+      '[startup] Better Auth production mode verified (isTest=false).',
+    );
   }
 }
