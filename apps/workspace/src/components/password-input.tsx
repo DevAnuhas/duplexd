@@ -1,14 +1,14 @@
-'use client';
+"use client"
 
-import { Eye, EyeSlash as EyeOff } from '@phosphor-icons/react';
-import { useId, useState, type ComponentProps } from 'react';
+import { Eye, EyeSlash as EyeOff } from "@phosphor-icons/react"
+import { useId, useState, type ComponentProps } from "react"
 
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupInput,
-} from '@/components/ui/input-group';
+} from "@/components/ui/input-group"
 
 /**
  * A password field you can read back.
@@ -37,10 +37,10 @@ import {
 export function PasswordInput({
   id,
   ...props
-}: Omit<ComponentProps<typeof InputGroupInput>, 'type'>) {
-  const [visible, setVisible] = useState(false);
-  const fallbackId = useId();
-  const inputId = id ?? fallbackId;
+}: Omit<ComponentProps<typeof InputGroupInput>, "type">) {
+  const [visible, setVisible] = useState(false)
+  const fallbackId = useId()
+  const inputId = id ?? fallbackId
 
   return (
     <InputGroup>
@@ -53,32 +53,28 @@ export function PasswordInput({
           overflowing the group.
         */
         className="h-11"
-        type={visible ? 'text' : 'password'}
+        type={visible ? "text" : "password"}
         /*
           `current-password` and `new-password` are passed in by each form;
           this only guarantees the browser is told something, because a
           password field with no autocomplete hint gets a warning in some
           browsers and unhelpful behaviour in others.
         */
-        autoComplete={props.autoComplete ?? 'current-password'}
+        autoComplete={props.autoComplete ?? "current-password"}
       />
       <InputGroupAddon align="inline-end">
         <InputGroupButton
           type="button"
           variant="ghost"
           className="size-11"
-          aria-label={visible ? 'Hide password' : 'Show password'}
+          aria-label={visible ? "Hide password" : "Show password"}
           aria-pressed={visible}
           aria-controls={inputId}
           onClick={() => setVisible((shown) => !shown)}
         >
-          {visible ? (
-            <EyeOff aria-hidden="true" />
-          ) : (
-            <Eye aria-hidden="true" />
-          )}
+          {visible ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
         </InputGroupButton>
       </InputGroupAddon>
     </InputGroup>
-  );
+  )
 }

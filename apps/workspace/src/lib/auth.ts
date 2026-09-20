@@ -1,13 +1,13 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID } from "node:crypto"
 
-import { betterAuth } from 'better-auth';
-import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { betterAuth } from "better-auth"
+import { drizzleAdapter } from "better-auth/adapters/drizzle"
 
-import { getDb } from '@/db/client';
-import { requireAuthSecret, resolveAuthBaseUrl } from '@/db/env';
-import * as schema from '@/db/schema';
-import { workspaceNameOrFallback } from '@/lib/auth-schemas';
-import { sendPasswordResetEmail } from '@/lib/email';
+import { getDb } from "@/db/client"
+import { requireAuthSecret, resolveAuthBaseUrl } from "@/db/env"
+import * as schema from "@/db/schema"
+import { workspaceNameOrFallback } from "@/lib/auth-schemas"
+import { sendPasswordResetEmail } from "@/lib/email"
 
 /**
  * Better Auth, constructed on first use.
@@ -48,7 +48,7 @@ function createAuth() {
     secret: requireAuthSecret(),
     baseURL: resolveAuthBaseUrl(),
     database: drizzleAdapter(getDb(), {
-      provider: 'pg',
+      provider: "pg",
       schema: {
         user: schema.users,
         session: schema.sessions,
@@ -83,7 +83,7 @@ function createAuth() {
        * account exists and "success" would mean it does not.
        */
       sendResetPassword: async ({ user, url }) => {
-        await sendPasswordResetEmail({ to: user.email, url });
+        await sendPasswordResetEmail({ to: user.email, url })
       },
     },
     /**
@@ -107,12 +107,12 @@ function createAuth() {
       // Off under test: the suite drives concurrent signups deliberately, and
       // a limiter would reject them and hide what those tests exist to check.
       // The production build has it on, which is where it is verified.
-      enabled: process.env.NODE_ENV !== 'test',
+      enabled: process.env.NODE_ENV !== "test",
       window: 60,
       max: 60,
       customRules: {
-        '/sign-up/email': { window: 60, max: 5 },
-        '/sign-in/email': { window: 60, max: 10 },
+        "/sign-up/email": { window: 60, max: 5 },
+        "/sign-in/email": { window: 60, max: 10 },
       },
     },
     advanced: {
@@ -141,13 +141,13 @@ function createAuth() {
        * single trusted header plus a deployed edge check.
        */
       ipAddress: {
-        ipAddressHeaders: ['x-real-ip'],
+        ipAddressHeaders: ["x-real-ip"],
       },
     },
     user: {
       additionalFields: {
         accountId: {
-          type: 'string',
+          type: "string",
           // `required` here means "the signup request must supply it", which
           // it cannot: `input: false` rejects a caller-supplied `accountId`
           // during body validation with `FIELD_NOT_ALLOWED`, before any
@@ -191,7 +191,7 @@ function createAuth() {
            * one already exists.
            */
           before: async (user, context) => {
-            const accountId = randomUUID();
+            const accountId = randomUUID()
 
             /**
              * The workspace name the person typed at signup.
@@ -220,13 +220,13 @@ function createAuth() {
             const workspaceName = workspaceNameOrFallback(
               (context as { body?: { workspaceName?: unknown } } | undefined)
                 ?.body?.workspaceName,
-              user.email,
-            );
+              user.email
+            )
 
             await getDb().insert(schema.accounts).values({
               id: accountId,
               name: workspaceName,
-            });
+            })
 
             /*
               The signup body otherwise preserves catch-all fields — that is
@@ -250,20 +250,20 @@ function createAuth() {
              * the address, so a zero-width name renders that menu blank.
              * Falling back to the email keeps the menu legible.
              */
-            const displayName = workspaceNameOrFallback(user.name, user.email);
+            const displayName = workspaceNameOrFallback(user.name, user.email)
 
-            return { data: { ...user, name: displayName, accountId } };
+            return { data: { ...user, name: displayName, accountId } }
           },
         },
       },
     },
-  });
+  })
 }
 
-let auth: ReturnType<typeof createAuth> | undefined;
+let auth: ReturnType<typeof createAuth> | undefined
 
 export function getAuth(): ReturnType<typeof createAuth> {
-  auth ??= createAuth();
+  auth ??= createAuth()
 
-  return auth;
+  return auth
 }

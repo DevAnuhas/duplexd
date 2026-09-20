@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import Link from "next/link"
 
 import {
   Card,
@@ -6,10 +6,10 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
-import { emailDeliveryConfigured } from '@/db/env';
+} from "@/components/ui/card"
+import { emailDeliveryConfigured } from "@/db/env"
 
-import { SignInForm } from './sign-in-form';
+import { SignInForm } from "./sign-in-form"
 
 /**
  * Sign in.
@@ -29,7 +29,7 @@ export default function SignInPage() {
       <div className="w-full max-w-sm space-y-6">
         <div className="space-y-1 text-center">
           <h1 className="text-2xl font-semibold tracking-tight">duplexd</h1>
-          <p className="text-muted-foreground text-sm">
+          <p className="text-sm text-muted-foreground">
             Manage your voice assistants and the calls they take.
           </p>
         </div>
@@ -51,8 +51,8 @@ export default function SignInPage() {
           </CardContent>
         </Card>
 
-        <p className="text-muted-foreground text-center text-sm">
-          No account?{' '}
+        <p className="text-center text-sm text-muted-foreground">
+          No account?{" "}
           <Link
             href="/sign-up"
             className="text-foreground underline underline-offset-4"
@@ -63,5 +63,5 @@ export default function SignInPage() {
         </p>
       </div>
     </main>
-  );
+  )
 }

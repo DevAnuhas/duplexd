@@ -1,12 +1,12 @@
-'use client';
+"use client"
 
-import { useRouter } from 'next/navigation';
-import { useState, useTransition, type FormEvent } from 'react';
+import { useRouter } from "next/navigation"
+import { useState, useTransition, type FormEvent } from "react"
 
-import { renameAccountAction } from './actions';
-import { Button } from '@/components/ui/button';
-import { Field, FieldError, FieldLabel } from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
+import { renameAccountAction } from "./actions"
+import { Button } from "@/components/ui/button"
+import { Field, FieldError, FieldLabel } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
 
 /**
  * Renaming the organization.
@@ -20,9 +20,9 @@ import { Input } from '@/components/ui/input';
  * thing a future refactor decides to trust.
  */
 export function RenameForm({ currentName }: { currentName: string }) {
-  const router = useRouter();
-  const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const router = useRouter()
+  const [error, setError] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
 
   /**
    * The action runs **inside a transition**, not merely the refresh.
@@ -34,34 +34,34 @@ export function RenameForm({ currentName }: { currentName: string }) {
    * the old name after a successful rename — the rename appearing not to work
    * when it did.
    */
-  const [pending, startTransition] = useTransition();
+  const [pending, startTransition] = useTransition()
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+    event.preventDefault()
 
-    const data = new FormData(event.currentTarget);
+    const data = new FormData(event.currentTarget)
 
-    setError(null);
-    setSaved(false);
+    setError(null)
+    setSaved(false)
 
     startTransition(async () => {
       try {
-        const result = await renameAccountAction(data);
+        const result = await renameAccountAction(data)
 
         if (!result.ok) {
-          setError(result.message);
-          return;
+          setError(result.message)
+          return
         }
 
-        setSaved(true);
-        router.refresh();
+        setSaved(true)
+        router.refresh()
       } catch {
         // A rejected action must not leave the form silently inert. The
         // message is generic on purpose: it reaches a customer who can do
         // nothing with server detail.
-        setError('Something went wrong. The name was not changed — try again.');
+        setError("Something went wrong. The name was not changed — try again.")
       }
-    });
+    })
   }
 
   return (
@@ -79,14 +79,14 @@ export function RenameForm({ currentName }: { currentName: string }) {
             aria-invalid={error === null ? undefined : true}
           />
           <Button type="submit" disabled={pending}>
-            {pending ? 'Saving…' : 'Save'}
+            {pending ? "Saving…" : "Save"}
           </Button>
           {saved && !pending && (
-            <span className="text-muted-foreground text-sm">Saved</span>
+            <span className="text-sm text-muted-foreground">Saved</span>
           )}
         </div>
         {error !== null && <FieldError role="alert">{error}</FieldError>}
       </Field>
     </form>
-  );
+  )
 }

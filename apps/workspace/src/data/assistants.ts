@@ -1,10 +1,10 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID } from "node:crypto"
 
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from "drizzle-orm"
 
-import { getDb } from '@/db/client';
-import { assistants } from '@/db/schema';
-import { encryptSecret } from '@/lib/crypto';
+import { getDb } from "@/db/client"
+import { assistants } from "@/db/schema"
+import { encryptSecret } from "@/lib/crypto"
 
 /**
  * Server-side data access for assistants. No UI, no route handlers — P03 builds
@@ -49,21 +49,21 @@ const publicColumns = {
    * placeholder that round-trips would be the same leak wearing a costume.
    */
   hasServerSecret: sql<boolean>`jsonb_array_length(${assistants.serverSecrets}) > 0`,
-} as const;
+} as const
 
 export type AssistantInput = {
-  name: string;
-  voice?: string | null;
-  accentStyle?: string | null;
-  instructions?: string | null;
-  backendInstructions?: string | null;
-  backendModel?: string | null;
-  waitingBehavior?: string | null;
-  serverUrl?: string | null;
+  name: string
+  voice?: string | null
+  accentStyle?: string | null
+  instructions?: string | null
+  backendInstructions?: string | null
+  backendModel?: string | null
+  waitingBehavior?: string | null
+  serverUrl?: string | null
   /** Plaintext. Encrypted here; never stored or returned as given. */
-  serverSecret?: string | null;
-  tools?: unknown;
-};
+  serverSecret?: string | null
+  tools?: unknown
+}
 
 /**
  * A row as the public projection returns it.
@@ -75,23 +75,23 @@ export type AssistantInput = {
  */
 export type Assistant = Pick<
   typeof assistants.$inferSelect,
-  Exclude<keyof typeof publicColumns, 'hasServerSecret'>
-> & { hasServerSecret: boolean };
+  Exclude<keyof typeof publicColumns, "hasServerSecret">
+> & { hasServerSecret: boolean }
 
 /** Private source used only to freeze a call's runtime snapshot. */
 export type AssistantRuntimeSource = Pick<
   typeof assistants.$inferSelect,
-  | 'id'
-  | 'voice'
-  | 'accentStyle'
-  | 'instructions'
-  | 'backendInstructions'
-  | 'backendModel'
-  | 'waitingBehavior'
-  | 'serverUrl'
-  | 'serverSecrets'
-  | 'tools'
->;
+  | "id"
+  | "voice"
+  | "accentStyle"
+  | "instructions"
+  | "backendInstructions"
+  | "backendModel"
+  | "waitingBehavior"
+  | "serverUrl"
+  | "serverSecrets"
+  | "tools"
+>
 
 /**
  * Creates an assistant owned by `accountId`.
@@ -106,7 +106,7 @@ export type AssistantRuntimeSource = Pick<
  */
 export async function createAssistant(
   accountId: string,
-  input: AssistantInput,
+  input: AssistantInput
 ): Promise<Assistant> {
   // An empty string means "no secret given", not "encrypt the empty string".
   // `encryptSecret` refuses an empty plaintext, so without this a form that
@@ -115,14 +115,14 @@ export async function createAssistant(
   const secret =
     input.serverSecret === undefined ||
     input.serverSecret === null ||
-    input.serverSecret === ''
+    input.serverSecret === ""
       ? null
-      : input.serverSecret;
+      : input.serverSecret
 
   const secrets =
     secret === null
       ? []
-      : [{ id: randomUUID(), ciphertext: encryptSecret(secret) }];
+      : [{ id: randomUUID(), ciphertext: encryptSecret(secret) }]
 
   const rows = await getDb()
     .insert(assistants)
@@ -140,9 +140,9 @@ export async function createAssistant(
       serverSecrets: secrets,
       tools: input.tools ?? [],
     })
-    .returning(publicColumns);
+    .returning(publicColumns)
 
-  return rows[0]!;
+  return rows[0]!
 }
 
 /**
@@ -155,7 +155,7 @@ export async function createAssistant(
  */
 export async function getAssistantForAccount(
   accountId: string,
-  assistantId: string,
+  assistantId: string
 ): Promise<Assistant | null> {
   const rows = await getDb()
     .select(publicColumns)
@@ -164,12 +164,12 @@ export async function getAssistantForAccount(
       and(
         eq(assistants.id, assistantId),
         eq(assistants.accountId, accountId),
-        isNull(assistants.archivedAt),
-      ),
+        isNull(assistants.archivedAt)
+      )
     )
-    .limit(1);
+    .limit(1)
 
-  return rows[0] ?? null;
+  return rows[0] ?? null
 }
 
 /**
@@ -181,7 +181,7 @@ export async function getAssistantForAccount(
  */
 export async function getAssistantRuntimeSourceForAccount(
   accountId: string,
-  assistantId: string,
+  assistantId: string
 ): Promise<AssistantRuntimeSource | null> {
   const rows = await getDb()
     .select({
@@ -201,25 +201,25 @@ export async function getAssistantRuntimeSourceForAccount(
       and(
         eq(assistants.id, assistantId),
         eq(assistants.accountId, accountId),
-        isNull(assistants.archivedAt),
-      ),
+        isNull(assistants.archivedAt)
+      )
     )
-    .limit(1);
+    .limit(1)
 
-  return rows[0] ?? null;
+  return rows[0] ?? null
 }
 
 /** Every live assistant owned by `accountId`, newest first. */
 export async function listAssistantsForAccount(
-  accountId: string,
+  accountId: string
 ): Promise<Assistant[]> {
   return getDb()
     .select(publicColumns)
     .from(assistants)
     .where(
-      and(eq(assistants.accountId, accountId), isNull(assistants.archivedAt)),
+      and(eq(assistants.accountId, accountId), isNull(assistants.archivedAt))
     )
-    .orderBy(desc(assistants.createdAt));
+    .orderBy(desc(assistants.createdAt))
 }
 
 /**
@@ -236,14 +236,14 @@ export async function listAssistantsForAccount(
 export async function updateAssistantForAccount(
   accountId: string,
   assistantId: string,
-  input: AssistantInput & { clearServerSecret?: boolean },
+  input: AssistantInput & { clearServerSecret?: boolean }
 ): Promise<Assistant | null> {
   const replacement =
     input.serverSecret === undefined ||
     input.serverSecret === null ||
-    input.serverSecret === ''
+    input.serverSecret === ""
       ? null
-      : input.serverSecret;
+      : input.serverSecret
 
   const secretChange =
     replacement !== null
@@ -254,7 +254,7 @@ export async function updateAssistantForAccount(
         }
       : input.clearServerSecret === true
         ? { serverSecrets: [] }
-        : {};
+        : {}
 
   const rows = await getDb()
     .update(assistants)
@@ -275,12 +275,12 @@ export async function updateAssistantForAccount(
       and(
         eq(assistants.id, assistantId),
         eq(assistants.accountId, accountId),
-        isNull(assistants.archivedAt),
-      ),
+        isNull(assistants.archivedAt)
+      )
     )
-    .returning(publicColumns);
+    .returning(publicColumns)
 
-  return rows[0] ?? null;
+  return rows[0] ?? null
 }
 
 /**
@@ -290,7 +290,7 @@ export async function updateAssistantForAccount(
  */
 export async function archiveAssistantForAccount(
   accountId: string,
-  assistantId: string,
+  assistantId: string
 ): Promise<boolean> {
   const rows = await getDb()
     .update(assistants)
@@ -299,10 +299,10 @@ export async function archiveAssistantForAccount(
       and(
         eq(assistants.id, assistantId),
         eq(assistants.accountId, accountId),
-        isNull(assistants.archivedAt),
-      ),
+        isNull(assistants.archivedAt)
+      )
     )
-    .returning({ id: assistants.id });
+    .returning({ id: assistants.id })
 
-  return rows.length > 0;
+  return rows.length > 0
 }

@@ -1,4 +1,4 @@
-import { defineConfig } from 'drizzle-kit';
+import { defineConfig } from "drizzle-kit"
 
 /**
  * `DATABASE_URL` is read here rather than through `src/db/env.ts` because
@@ -7,21 +7,21 @@ import { defineConfig } from 'drizzle-kit';
  * rather than fall through to a client default that would connect to whatever
  * PostgreSQL happens to be listening locally.
  */
-const url = process.env.DATABASE_URL;
+const url = process.env.DATABASE_URL
 
-if (url === undefined || url.trim() === '') {
+if (url === undefined || url.trim() === "") {
   throw new Error(
-    'DATABASE_URL is unset or empty. drizzle-kit will not be given an empty ' +
-      'connection string, because an empty value connects to a local database ' +
-      'instead of failing.',
-  );
+    "DATABASE_URL is unset or empty. drizzle-kit will not be given an empty " +
+      "connection string, because an empty value connects to a local database " +
+      "instead of failing."
+  )
 }
 
 export default defineConfig({
-  dialect: 'postgresql',
-  schema: './src/db/schema.ts',
-  out: './drizzle',
+  dialect: "postgresql",
+  schema: "./src/db/schema.ts",
+  out: "./drizzle",
   dbCredentials: { url },
   strict: true,
   verbose: true,
-});
+})

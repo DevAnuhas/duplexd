@@ -3,8 +3,8 @@ import {
   isContinuousIntegration,
   isDatabaseConfigured,
   loadTestEnvironment,
-} from './helpers/environment.ts';
-import { applyMigrations, isSchemaPresent } from './helpers/database.ts';
+} from "./helpers/environment.ts"
+import { applyMigrations, isSchemaPresent } from "./helpers/database.ts"
 
 /**
  * Runs once before the suite, in the runner process.
@@ -28,57 +28,57 @@ import { applyMigrations, isSchemaPresent } from './helpers/database.ts';
  * it is the file that polices this arrangement.
  */
 export const DATABASE_BACKED_FILES = [
-  'migrations',
-  'cross-account-isolation',
-  'secret-at-rest',
-  'api-keys-schema',
-  'signup-account',
-  'account-resolver',
+  "migrations",
+  "cross-account-isolation",
+  "secret-at-rest",
+  "api-keys-schema",
+  "signup-account",
+  "account-resolver",
   // P03.
-  'api-keys',
-  'api-key-delete',
-  'assistant-write-path',
-  'cross-account-writes',
-  'query-param-redaction',
-  'server-secret-lifecycle',
+  "api-keys",
+  "api-key-delete",
+  "assistant-write-path",
+  "cross-account-writes",
+  "query-param-redaction",
+  "server-secret-lifecycle",
   // P05.
-  'control-schema',
-  'control-event-redaction',
-  'control-customer-routes',
-  'control-call-state',
-  'control-agent-routes',
-  'control-read-routes',
-  'control-live-server',
+  "control-schema",
+  "control-event-redaction",
+  "control-customer-routes",
+  "control-call-state",
+  "control-agent-routes",
+  "control-read-routes",
+  "control-live-server",
   // Account settings.
-  'account-rename-scoping',
-  'signup-workspace-name',
-] as const;
+  "account-rename-scoping",
+  "signup-workspace-name",
+] as const
 
 export default async function setup(): Promise<void> {
-  loadTestEnvironment();
+  loadTestEnvironment()
 
   if (!isDatabaseConfigured()) {
     if (isContinuousIntegration()) {
       // Belt to the braces in `test/database-gating.test.ts`: failing here as
       // well means a misconfigured CI job cannot even reach the suite.
       throw new Error(
-        'CI is set but DATABASE_URL is not. Database-backed tests would skip ' +
-          'in the one place that gates a merge, which would report green over ' +
-          'unenforced cross-account isolation, migration and encryption tests.',
-      );
+        "CI is set but DATABASE_URL is not. Database-backed tests would skip " +
+          "in the one place that gates a merge, which would report green over " +
+          "unenforced cross-account isolation, migration and encryption tests."
+      )
     }
 
     console.warn(
       [
-        '',
+        "",
         `[workspace tests] Database-backed tests will SKIP: ${databaseSkipReason()}`,
-        `[workspace tests] Skipping ${DATABASE_BACKED_FILES.length} files: ${DATABASE_BACKED_FILES.join(', ')}`,
-        '[workspace tests] Set DATABASE_URL to a PostgreSQL 17+ connection string to run them.',
-        '',
-      ].join('\n'),
-    );
+        `[workspace tests] Skipping ${DATABASE_BACKED_FILES.length} files: ${DATABASE_BACKED_FILES.join(", ")}`,
+        "[workspace tests] Set DATABASE_URL to a PostgreSQL 17+ connection string to run them.",
+        "",
+      ].join("\n")
+    )
 
-    return;
+    return
   }
 
   // Deliberately unguarded. If DATABASE_URL is set and this throws — wrong
@@ -86,6 +86,6 @@ export default async function setup(): Promise<void> {
   // downgrades to a skip, because a broken database that reports green is a
   // worse outcome than a broken database that reports red.
   if (!(await isSchemaPresent())) {
-    await applyMigrations();
+    await applyMigrations()
   }
 }

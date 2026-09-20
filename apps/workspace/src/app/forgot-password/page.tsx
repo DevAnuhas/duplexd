@@ -1,5 +1,5 @@
-import Link from 'next/link';
-import { notFound } from 'next/navigation';
+import Link from "next/link"
+import { notFound } from "next/navigation"
 
 import {
   Card,
@@ -7,10 +7,10 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
-import { emailDeliveryConfigured } from '@/db/env';
+} from "@/components/ui/card"
+import { emailDeliveryConfigured } from "@/db/env"
 
-import { ForgotPasswordForm } from './forgot-password-form';
+import { ForgotPasswordForm } from "./forgot-password-form"
 
 /**
  * Request a password reset link.
@@ -23,7 +23,7 @@ import { ForgotPasswordForm } from './forgot-password-form';
  */
 export default function ForgotPasswordPage() {
   if (!emailDeliveryConfigured()) {
-    notFound();
+    notFound()
   }
 
   return (
@@ -46,8 +46,8 @@ export default function ForgotPasswordPage() {
           </CardContent>
         </Card>
 
-        <p className="text-muted-foreground text-center text-sm">
-          Remembered it?{' '}
+        <p className="text-center text-sm text-muted-foreground">
+          Remembered it?{" "}
           <Link
             href="/sign-in"
             className="text-foreground underline underline-offset-4"
@@ -58,5 +58,5 @@ export default function ForgotPasswordPage() {
         </p>
       </div>
     </main>
-  );
+  )
 }

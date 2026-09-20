@@ -1,26 +1,26 @@
-'use client';
+"use client"
 
-import { zodResolver } from '@hookform/resolvers/zod';
-import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { useState } from 'react';
-import { Controller, useForm } from 'react-hook-form';
-import { toast } from 'sonner';
+import { zodResolver } from "@hookform/resolvers/zod"
+import Link from "next/link"
+import { useRouter, useSearchParams } from "next/navigation"
+import { useState } from "react"
+import { Controller, useForm } from "react-hook-form"
+import { toast } from "sonner"
 
-import { PasswordInput } from '@/components/password-input';
-import { Button } from '@/components/ui/button';
+import { PasswordInput } from "@/components/password-input"
+import { Button } from "@/components/ui/button"
 import {
   Field,
   FieldDescription,
   FieldError,
   FieldLabel,
-} from '@/components/ui/field';
-import { authClient } from '@/lib/auth-client';
+} from "@/components/ui/field"
+import { authClient } from "@/lib/auth-client"
 import {
   PASSWORD_MIN_LENGTH,
   resetPasswordSchema,
   type ResetPasswordValues,
-} from '@/lib/auth-schemas';
+} from "@/lib/auth-schemas"
 
 /**
  * Choose a new password.
@@ -34,12 +34,12 @@ import {
  * this component in its own `<Suspense>` boundary.
  */
 export function ResetPasswordForm() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const [formError, setFormError] = useState<string | null>(null);
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const [formError, setFormError] = useState<string | null>(null)
 
-  const token = searchParams.get('token');
-  const linkError = searchParams.get('error');
+  const token = searchParams.get("token")
+  const linkError = searchParams.get("error")
 
   const {
     control,
@@ -47,20 +47,20 @@ export function ResetPasswordForm() {
     formState: { isSubmitting },
   } = useForm<ResetPasswordValues>({
     resolver: zodResolver(resetPasswordSchema),
-    defaultValues: { password: '', confirmPassword: '' },
-  });
+    defaultValues: { password: "", confirmPassword: "" },
+  })
 
   async function onSubmit(values: ResetPasswordValues) {
     if (token === null) {
-      return;
+      return
     }
 
-    setFormError(null);
+    setFormError(null)
 
     const result = await authClient.resetPassword({
       newPassword: values.password,
       token,
-    });
+    })
 
     if (result.error) {
       /*
@@ -70,9 +70,9 @@ export function ResetPasswordForm() {
         rather than restating the error.
       */
       setFormError(
-        'That reset link is no longer valid. Request a new one and try again.',
-      );
-      return;
+        "That reset link is no longer valid. Request a new one and try again."
+      )
+      return
     }
 
     /*
@@ -81,9 +81,9 @@ export function ResetPasswordForm() {
       the transition. Sign-in itself says nothing about the reset — the page
       a person lands on after a successful reset should be the ordinary one.
     */
-    toast.success('Password changed. Sign in with your new password.');
-    router.push('/sign-in');
-    router.refresh();
+    toast.success("Password changed. Sign in with your new password.")
+    router.push("/sign-in")
+    router.refresh()
   }
 
   if (token === null) {
@@ -91,14 +91,14 @@ export function ResetPasswordForm() {
       <div className="space-y-4">
         <p role="alert" className="text-sm">
           {linkError === null
-            ? 'This page needs a reset link to work.'
-            : 'That reset link has expired or has already been used.'}
+            ? "This page needs a reset link to work."
+            : "That reset link has expired or has already been used."}
         </p>
         <Button asChild className="h-11 w-full">
           <Link href="/forgot-password">Request a new link</Link>
         </Button>
       </div>
-    );
+    )
   }
 
   return (
@@ -150,14 +150,14 @@ export function ResetPasswordForm() {
       />
 
       {formError !== null && (
-        <p role="alert" className="text-destructive text-sm">
+        <p role="alert" className="text-sm text-destructive">
           {formError}
         </p>
       )}
 
       <Button type="submit" className="h-11 w-full" disabled={isSubmitting}>
-        {isSubmitting ? 'Saving…' : 'Change password'}
+        {isSubmitting ? "Saving…" : "Change password"}
       </Button>
     </form>
-  );
+  )
 }

@@ -1,29 +1,25 @@
-'use client';
+"use client"
 
-import { zodResolver } from '@hookform/resolvers/zod';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useState } from 'react';
-import { Controller, useForm } from 'react-hook-form';
+import { zodResolver } from "@hookform/resolvers/zod"
+import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { useState } from "react"
+import { Controller, useForm } from "react-hook-form"
 
-import { PasswordInput } from '@/components/password-input';
-import { Button } from '@/components/ui/button';
-import {
-  Field,
-  FieldError,
-  FieldLabel,
-} from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
-import { authClient } from '@/lib/auth-client';
-import { signInSchema, type SignInValues } from '@/lib/auth-schemas';
+import { PasswordInput } from "@/components/password-input"
+import { Button } from "@/components/ui/button"
+import { Field, FieldError, FieldLabel } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
+import { authClient } from "@/lib/auth-client"
+import { signInSchema, type SignInValues } from "@/lib/auth-schemas"
 
 export function SignInForm({
   passwordResetAvailable,
 }: {
-  passwordResetAvailable: boolean;
+  passwordResetAvailable: boolean
 }) {
-  const router = useRouter();
-  const [formError, setFormError] = useState<string | null>(null);
+  const router = useRouter()
+  const [formError, setFormError] = useState<string | null>(null)
 
   const {
     control,
@@ -31,13 +27,13 @@ export function SignInForm({
     formState: { isSubmitting },
   } = useForm<SignInValues>({
     resolver: zodResolver(signInSchema),
-    defaultValues: { email: '', password: '' },
-  });
+    defaultValues: { email: "", password: "" },
+  })
 
   async function onSubmit(values: SignInValues) {
-    setFormError(null);
+    setFormError(null)
 
-    const result = await authClient.signIn.email(values);
+    const result = await authClient.signIn.email(values)
 
     if (result.error) {
       /*
@@ -47,12 +43,12 @@ export function SignInForm({
         in. React Hook Form keeps both fields populated, so a mistyped
         password costs one field rather than the whole form.
       */
-      setFormError('Email or password is incorrect.');
-      return;
+      setFormError("Email or password is incorrect.")
+      return
     }
 
-    router.push('/');
-    router.refresh();
+    router.push("/")
+    router.refresh()
   }
 
   return (
@@ -106,7 +102,7 @@ export function SignInForm({
               {passwordResetAvailable && (
                 <Link
                   href="/forgot-password"
-                  className="text-muted-foreground hover:text-foreground text-sm underline-offset-4 hover:underline"
+                  className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
                 >
                   Forgot your password?
                 </Link>
@@ -126,14 +122,14 @@ export function SignInForm({
       />
 
       {formError !== null && (
-        <p role="alert" className="text-destructive text-sm">
+        <p role="alert" className="text-sm text-destructive">
           {formError}
         </p>
       )}
 
       <Button type="submit" className="h-11 w-full" disabled={isSubmitting}>
-        {isSubmitting ? 'Signing in…' : 'Sign in'}
+        {isSubmitting ? "Signing in…" : "Sign in"}
       </Button>
     </form>
-  );
+  )
 }

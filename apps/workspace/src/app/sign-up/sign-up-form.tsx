@@ -1,26 +1,26 @@
-'use client';
+"use client"
 
-import { zodResolver } from '@hookform/resolvers/zod';
-import { ArrowLeft } from '@phosphor-icons/react';
-import { useRouter } from 'next/navigation';
-import { useRef, useState } from 'react';
-import { Controller, useForm } from 'react-hook-form';
+import { zodResolver } from "@hookform/resolvers/zod"
+import { ArrowLeft } from "@phosphor-icons/react"
+import { useRouter } from "next/navigation"
+import { useRef, useState } from "react"
+import { Controller, useForm } from "react-hook-form"
 
-import { PasswordInput } from '@/components/password-input';
-import { Button } from '@/components/ui/button';
+import { PasswordInput } from "@/components/password-input"
+import { Button } from "@/components/ui/button"
 import {
   Field,
   FieldDescription,
   FieldError,
   FieldLabel,
-} from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
-import { authClient } from '@/lib/auth-client';
+} from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
+import { authClient } from "@/lib/auth-client"
 import {
   SIGN_UP_STEP_ONE_FIELDS,
   signUpSchema,
   type SignUpValues,
-} from '@/lib/auth-schemas';
+} from "@/lib/auth-schemas"
 
 /**
  * Signing up, in two steps.
@@ -41,10 +41,10 @@ import {
  * for a typo in an email they entered two screens ago.
  */
 export function SignUpForm() {
-  const router = useRouter();
-  const [formError, setFormError] = useState<string | null>(null);
-  const [step, setStep] = useState<1 | 2>(1);
-  const workspaceRef = useRef<HTMLInputElement>(null);
+  const router = useRouter()
+  const [formError, setFormError] = useState<string | null>(null)
+  const [step, setStep] = useState<1 | 2>(1)
+  const workspaceRef = useRef<HTMLInputElement>(null)
 
   const {
     control,
@@ -54,28 +54,28 @@ export function SignUpForm() {
   } = useForm<SignUpValues>({
     resolver: zodResolver(signUpSchema),
     defaultValues: {
-      workspaceName: '',
-      name: '',
-      email: '',
-      password: '',
-      confirmPassword: '',
+      workspaceName: "",
+      name: "",
+      email: "",
+      password: "",
+      confirmPassword: "",
     },
-  });
+  })
 
   /** Advance only if the credentials are good. */
   async function goToStepTwo() {
     if (!(await trigger([...SIGN_UP_STEP_ONE_FIELDS]))) {
-      return;
+      return
     }
 
-    setStep(2);
+    setStep(2)
     // Focus follows the eye. Without this the caret is still on a field that
     // is no longer visible, and a keyboard user has to tab back into the form.
-    window.setTimeout(() => workspaceRef.current?.focus(), 0);
+    window.setTimeout(() => workspaceRef.current?.focus(), 0)
   }
 
   async function onSubmit(values: SignUpValues) {
-    setFormError(null);
+    setFormError(null)
 
     /*
       `workspaceName` is not a column on `users` — it names the account. It
@@ -89,19 +89,21 @@ export function SignUpForm() {
       password: values.password,
       name: values.name,
       ...({ workspaceName: values.workspaceName } as { workspaceName: string }),
-    });
+    })
 
     if (result.error) {
       // Back to step one: every failure this can return — a taken address, a
       // rejected password — belongs to the credentials, and leaving someone on
       // the workspace step with an error about their email is a puzzle.
-      setStep(1);
-      setFormError('Could not create that account. Check the details and retry.');
-      return;
+      setStep(1)
+      setFormError(
+        "Could not create that account. Check the details and retry."
+      )
+      return
     }
 
-    router.push('/');
-    router.refresh();
+    router.push("/")
+    router.refresh()
   }
 
   return (
@@ -118,7 +120,7 @@ export function SignUpForm() {
       noValidate
       className="space-y-4"
     >
-      <p className="text-muted-foreground text-xs" aria-live="polite">
+      <p className="text-xs text-muted-foreground" aria-live="polite">
         Step {step} of 2
       </p>
 
@@ -188,7 +190,7 @@ export function SignUpForm() {
         />
 
         {formError !== null && (
-          <p role="alert" className="text-destructive text-sm">
+          <p role="alert" className="text-sm text-destructive">
             {formError}
           </p>
         )}
@@ -219,7 +221,9 @@ export function SignUpForm() {
                 className="h-11"
                 aria-invalid={fieldState.invalid || undefined}
               />
-              <FieldDescription>You can rename it in Settings.</FieldDescription>
+              <FieldDescription>
+                You can rename it in Settings.
+              </FieldDescription>
               {fieldState.error && (
                 <FieldError>{fieldState.error.message}</FieldError>
               )}
@@ -260,10 +264,10 @@ export function SignUpForm() {
             Back
           </Button>
           <Button type="submit" className="h-11 flex-1" disabled={isSubmitting}>
-            {isSubmitting ? 'Creating account…' : 'Create account'}
+            {isSubmitting ? "Creating account…" : "Create account"}
           </Button>
         </div>
       </div>
     </form>
-  );
+  )
 }

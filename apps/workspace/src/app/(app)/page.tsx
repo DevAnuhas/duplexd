@@ -1,20 +1,20 @@
-import Link from 'next/link';
+import Link from "next/link"
 
-import { Button } from '@/components/ui/button';
+import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
+} from "@/components/ui/card"
 import {
   Empty,
   EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyTitle,
-} from '@/components/ui/empty';
+} from "@/components/ui/empty"
 import {
   Table,
   TableBody,
@@ -22,20 +22,20 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table';
-import { listCallsForAccount } from '@/data/calls';
+} from "@/components/ui/table"
+import { listCallsForAccount } from "@/data/calls"
 
-import { CallStateBadge } from './calls/call-state-badge';
-import { requireShell } from './shell-data';
+import { CallStateBadge } from "./calls/call-state-badge"
+import { requireShell } from "./shell-data"
 
 type Counts = {
-  assistants: number;
-  apiKeys: number;
-  calls: number;
-  incompleteCalls: number;
-};
+  assistants: number
+  apiKeys: number
+  calls: number
+  incompleteCalls: number
+}
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic"
 
 /**
  * Overview.
@@ -54,7 +54,7 @@ export const dynamic = 'force-dynamic';
  * This was the last page in the app still streaming its session content.
  */
 export default async function OverviewPage() {
-  const { account, counts } = await requireShell();
+  const { account, counts } = await requireShell()
 
   return (
     <div className="space-y-6">
@@ -66,9 +66,12 @@ export default async function OverviewPage() {
       </div>
 
       <Stats counts={counts} />
-      <RecentActivity accountId={account.id} assistantCount={counts.assistants} />
+      <RecentActivity
+        accountId={account.id}
+        assistantCount={counts.assistants}
+      />
     </div>
-  );
+  )
 }
 
 function StatTile({
@@ -77,23 +80,23 @@ function StatTile({
   href,
   tone,
 }: {
-  label: string;
-  value: number;
-  href: string;
-  tone?: 'warning';
+  label: string
+  value: number
+  href: string
+  tone?: "warning"
 }) {
   return (
     <Link href={href} className="block">
-      <Card className="hover:border-foreground/20 h-full transition-colors">
+      <Card className="h-full transition-colors hover:border-foreground/20">
         <CardHeader className="pb-2">
           <CardDescription>{label}</CardDescription>
         </CardHeader>
         <CardContent>
           <span
             className={
-              tone === 'warning' && value > 0
-                ? 'text-3xl font-semibold tabular-nums text-orange-600 dark:text-orange-400'
-                : 'text-3xl font-semibold tabular-nums'
+              tone === "warning" && value > 0
+                ? "text-3xl font-semibold text-orange-600 tabular-nums dark:text-orange-400"
+                : "text-3xl font-semibold tabular-nums"
             }
           >
             {value}
@@ -101,13 +104,17 @@ function StatTile({
         </CardContent>
       </Card>
     </Link>
-  );
+  )
 }
 
 function Stats({ counts }: { counts: Counts }) {
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      <StatTile label="Assistants" value={counts.assistants} href="/assistants" />
+      <StatTile
+        label="Assistants"
+        value={counts.assistants}
+        href="/assistants"
+      />
       <StatTile label="API keys" value={counts.apiKeys} href="/keys" />
       <StatTile label="Calls" value={counts.calls} href="/calls" />
       <StatTile
@@ -117,7 +124,7 @@ function Stats({ counts }: { counts: Counts }) {
         tone="warning"
       />
     </div>
-  );
+  )
 }
 
 /**
@@ -131,30 +138,30 @@ function Stats({ counts }: { counts: Counts }) {
  */
 function when(value: string | null): string {
   if (value === null) {
-    return 'Not reported';
+    return "Not reported"
   }
 
-  const date = new Date(value);
+  const date = new Date(value)
 
-  return `${new Intl.DateTimeFormat('en-GB', {
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date)} · ${new Intl.DateTimeFormat('en-GB', {
-    day: 'numeric',
-    month: 'short',
-  }).format(date)}`;
+  return `${new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date)} · ${new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+  }).format(date)}`
 }
 
 function duration(value: number | null): string {
-  return value === null ? 'Not reported' : `${Math.round(value)}s`;
+  return value === null ? "Not reported" : `${Math.round(value)}s`
 }
 
 async function RecentActivity({
   accountId,
   assistantCount,
 }: {
-  accountId: string;
-  assistantCount: number;
+  accountId: string
+  assistantCount: number
 }) {
   /**
    * No assistants means no calls can exist — there is nothing to have called.
@@ -177,13 +184,13 @@ async function RecentActivity({
           </Button>
         </EmptyContent>
       </Empty>
-    );
+    )
   }
 
-  const result = await listCallsForAccount(accountId, { limit: 5 });
+  const result = await listCallsForAccount(accountId, { limit: 5 })
 
-  if (result.kind !== 'ok') {
-    throw new Error('The overview passes no cursor, so it cannot be invalid.');
+  if (result.kind !== "ok") {
+    throw new Error("The overview passes no cursor, so it cannot be invalid.")
   }
 
   return (
@@ -199,7 +206,7 @@ async function RecentActivity({
       </CardHeader>
       <CardContent>
         {result.calls.length === 0 ? (
-          <p className="text-muted-foreground text-sm">
+          <p className="text-sm text-muted-foreground">
             No calls yet. Mint an API key and start one from your app — they
             appear here as they happen.
           </p>
@@ -237,5 +244,5 @@ async function RecentActivity({
         )}
       </CardContent>
     </Card>
-  );
+  )
 }

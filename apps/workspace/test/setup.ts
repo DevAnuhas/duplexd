@@ -1,4 +1,4 @@
-import { loadTestEnvironment } from './helpers/environment.ts';
+import { loadTestEnvironment } from "./helpers/environment.ts"
 
 /**
  * Runs before each test file, in that file's worker.
@@ -6,4 +6,4 @@ import { loadTestEnvironment } from './helpers/environment.ts';
  * The global setup loads the environment in the runner process; workers are
  * separate processes and do not inherit that, so it is loaded again here.
  */
-loadTestEnvironment();
+loadTestEnvironment()

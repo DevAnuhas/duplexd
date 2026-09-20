@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from "zod"
 
 /**
  * The shapes every authentication form is validated against.
@@ -23,10 +23,10 @@ import { z } from 'zod';
  * a password an existing account already has — locking that customer out of
  * their own reset form.
  */
-export const PASSWORD_MIN_LENGTH = 8;
+export const PASSWORD_MIN_LENGTH = 8
 
 /** Better Auth's default `maxPasswordLength`. */
-export const PASSWORD_MAX_LENGTH = 128;
+export const PASSWORD_MAX_LENGTH = 128
 
 /**
  * The address, trimmed before it is judged.
@@ -56,13 +56,13 @@ export const PASSWORD_MAX_LENGTH = 128;
  * would actually be stored rather than to the whitespace around it.
  */
 const email = z
-  .string({ error: 'Enter a valid email address.' })
+  .string({ error: "Enter a valid email address." })
   .trim()
   .pipe(
     z
-      .email({ error: 'Enter a valid email address.' })
-      .max(320, { error: 'That email address is too long.' }),
-  );
+      .email({ error: "Enter a valid email address." })
+      .max(320, { error: "That email address is too long." })
+  )
 
 const password = z
   .string()
@@ -71,7 +71,7 @@ const password = z
   })
   .max(PASSWORD_MAX_LENGTH, {
     error: `Use at most ${PASSWORD_MAX_LENGTH} characters.`,
-  });
+  })
 
 export const signInSchema = z.object({
   email,
@@ -81,8 +81,8 @@ export const signInSchema = z.object({
    * which passwords are too short to be real before a single request is made,
    * and would lock out any existing account whose password predates the rule.
    */
-  password: z.string().min(1, { error: 'Enter your password.' }),
-});
+  password: z.string().min(1, { error: "Enter your password." }),
+})
 
 /**
  * The longest an organization name may be.
@@ -94,7 +94,7 @@ export const signInSchema = z.object({
  * accept back — and that name renders in the sidebar and breadcrumb of every
  * page.
  */
-export const WORKSPACE_NAME_MAX_LENGTH = 120;
+export const WORKSPACE_NAME_MAX_LENGTH = 120
 
 /**
  * Characters that render as nothing: whitespace, control codes, and the
@@ -105,7 +105,7 @@ export const WORKSPACE_NAME_MAX_LENGTH = 120;
  * not been whitespace since Unicode 4.0.1, so `'\u200B'.trim()` returns that
  * character unchanged and an emptiness check passes.
  */
-const INVISIBLE = /[\s\p{Cc}\p{Cf}]/gu;
+const INVISIBLE = /[\s\p{Cc}\p{Cf}]/gu
 
 /**
  * Whether a display name would render as nothing.
@@ -118,7 +118,7 @@ const INVISIBLE = /[\s\p{Cc}\p{Cf}]/gu;
  * drift.
  */
 export function rendersAsNothing(value: string): boolean {
-  return value.replace(INVISIBLE, '') === '';
+  return value.replace(INVISIBLE, "") === ""
 }
 
 /**
@@ -131,26 +131,26 @@ export function rendersAsNothing(value: string): boolean {
  */
 export function workspaceNameOrFallback(
   supplied: unknown,
-  fallback: string,
+  fallback: string
 ): string {
-  const trimmed = typeof supplied === 'string' ? supplied.trim() : '';
+  const trimmed = typeof supplied === "string" ? supplied.trim() : ""
 
   return rendersAsNothing(trimmed)
     ? fallback
-    : trimmed.slice(0, WORKSPACE_NAME_MAX_LENGTH);
+    : trimmed.slice(0, WORKSPACE_NAME_MAX_LENGTH)
 }
 
 /** The organization's display name, set at signup and editable in Settings. */
 const workspaceName = z
-  .string({ error: 'Name your workspace.' })
+  .string({ error: "Name your workspace." })
   .trim()
-  .min(1, { error: 'Name your workspace.' })
+  .min(1, { error: "Name your workspace." })
   .refine((value) => !rendersAsNothing(value), {
-    error: 'Name your workspace.',
+    error: "Name your workspace.",
   })
   .max(WORKSPACE_NAME_MAX_LENGTH, {
     error: `Keep the workspace name under ${WORKSPACE_NAME_MAX_LENGTH} characters.`,
-  });
+  })
 
 /**
  * The person's own name, shown in the user menu instead of their address.
@@ -161,13 +161,13 @@ const workspaceName = z
  * length 1.
  */
 const personName = z
-  .string({ error: 'Enter your name.' })
+  .string({ error: "Enter your name." })
   .trim()
-  .min(1, { error: 'Enter your name.' })
-  .refine((value) => !rendersAsNothing(value), { error: 'Enter your name.' })
+  .min(1, { error: "Enter your name." })
+  .refine((value) => !rendersAsNothing(value), { error: "Enter your name." })
   .max(WORKSPACE_NAME_MAX_LENGTH, {
     error: `Keep your name under ${WORKSPACE_NAME_MAX_LENGTH} characters.`,
-  });
+  })
 
 /**
  * Signing up.
@@ -194,7 +194,7 @@ export const signUpSchema = z
     name: personName,
     email,
     password,
-    confirmPassword: z.string().min(1, { error: 'Confirm your password.' }),
+    confirmPassword: z.string().min(1, { error: "Confirm your password." }),
   })
   /**
    * Reported **on the confirm field**, not at the form root: that is the field
@@ -202,9 +202,9 @@ export const signUpSchema = z
    * them guess which one is wrong.
    */
   .refine((values) => values.password === values.confirmPassword, {
-    error: 'Both passwords must match.',
-    path: ['confirmPassword'],
-  });
+    error: "Both passwords must match.",
+    path: ["confirmPassword"],
+  })
 
 /**
  * The fields step one collects, validated before the form advances.
@@ -214,24 +214,24 @@ export const signUpSchema = z
  * screens ago is the failure the split exists to avoid.
  */
 export const SIGN_UP_STEP_ONE_FIELDS = [
-  'email',
-  'password',
-  'confirmPassword',
-] as const;
+  "email",
+  "password",
+  "confirmPassword",
+] as const
 
-export const forgotPasswordSchema = z.object({ email });
+export const forgotPasswordSchema = z.object({ email })
 
 export const resetPasswordSchema = z
   .object({
     password,
-    confirmPassword: z.string().min(1, { error: 'Confirm your password.' }),
+    confirmPassword: z.string().min(1, { error: "Confirm your password." }),
   })
   .refine((values) => values.password === values.confirmPassword, {
-    error: 'Both passwords must match.',
-    path: ['confirmPassword'],
-  });
+    error: "Both passwords must match.",
+    path: ["confirmPassword"],
+  })
 
-export type SignInValues = z.infer<typeof signInSchema>;
-export type SignUpValues = z.infer<typeof signUpSchema>;
-export type ForgotPasswordValues = z.infer<typeof forgotPasswordSchema>;
-export type ResetPasswordValues = z.infer<typeof resetPasswordSchema>;
+export type SignInValues = z.infer<typeof signInSchema>
+export type SignUpValues = z.infer<typeof signUpSchema>
+export type ForgotPasswordValues = z.infer<typeof forgotPasswordSchema>
+export type ResetPasswordValues = z.infer<typeof resetPasswordSchema>

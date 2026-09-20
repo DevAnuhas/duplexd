@@ -1,5 +1,5 @@
-import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { existsSync } from "node:fs"
+import { fileURLToPath } from "node:url"
 
 /**
  * Test environment loading and the one rule that decides whether a
@@ -14,8 +14,8 @@ import { fileURLToPath } from 'node:url';
  */
 
 /** The repository root, four levels up from `apps/workspace/test/helpers/`. */
-const repositoryRoot = fileURLToPath(new URL('../../../../', import.meta.url));
-const workspaceRoot = fileURLToPath(new URL('../../', import.meta.url));
+const repositoryRoot = fileURLToPath(new URL("../../../../", import.meta.url))
+const workspaceRoot = fileURLToPath(new URL("../../", import.meta.url))
 
 /**
  * Obviously-fake defaults so the non-database tests run in a fresh clone with
@@ -27,13 +27,13 @@ const workspaceRoot = fileURLToPath(new URL('../../', import.meta.url));
  * run on a new machine.
  */
 const TEST_ONLY_DEFAULTS: Readonly<Record<string, string>> = {
-  BETTER_AUTH_SECRET: 'test-only-placeholder-not-a-real-better-auth-secret',
-  BETTER_AUTH_URL: 'http://localhost:3000',
+  BETTER_AUTH_SECRET: "test-only-placeholder-not-a-real-better-auth-secret",
+  BETTER_AUTH_URL: "http://localhost:3000",
   ASSISTANT_SECRET_KEY:
-    '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff',
-  PIPECAT_API_KEY: 'test-only-placeholder-not-a-real-pipecat-key',
-  CALL_SWEEP_TOKEN: 'test-only-placeholder-not-a-real-sweep-token',
-};
+    "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+  PIPECAT_API_KEY: "test-only-placeholder-not-a-real-pipecat-key",
+  CALL_SWEEP_TOKEN: "test-only-placeholder-not-a-real-sweep-token",
+}
 
 /**
  * Loads `.env.local` from the repository root when it exists, then fills in the
@@ -60,13 +60,13 @@ export function loadTestEnvironment(): void {
     `${repositoryRoot}.env.local`,
   ]) {
     if (existsSync(envLocal)) {
-      process.loadEnvFile(envLocal);
+      process.loadEnvFile(envLocal)
     }
   }
 
   for (const [name, value] of Object.entries(TEST_ONLY_DEFAULTS)) {
-    if ((process.env[name] ?? '') === '') {
-      process.env[name] = value;
+    if ((process.env[name] ?? "") === "") {
+      process.env[name] = value
     }
   }
 }
@@ -77,7 +77,7 @@ export function loadTestEnvironment(): void {
  * Narrower than `NodeJS.ProcessEnv` so a test can pass a literal `{}` to mean
  * "nothing is set" without also having to invent a `NODE_ENV`.
  */
-export type EnvironmentLike = Readonly<Record<string, string | undefined>>;
+export type EnvironmentLike = Readonly<Record<string, string | undefined>>
 
 /**
  * Whether a database is configured at all.
@@ -88,16 +88,16 @@ export type EnvironmentLike = Readonly<Record<string, string | undefined>>;
  * whole module exists to close reopens.
  */
 export function isDatabaseConfigured(
-  env: EnvironmentLike = process.env,
+  env: EnvironmentLike = process.env
 ): boolean {
-  return (env.DATABASE_URL ?? '').trim() !== '';
+  return (env.DATABASE_URL ?? "").trim() !== ""
 }
 
 /** Whether the suite is running in CI, where skipping is itself a failure. */
 export function isContinuousIntegration(
-  env: EnvironmentLike = process.env,
+  env: EnvironmentLike = process.env
 ): boolean {
-  return (env.CI ?? '') !== '';
+  return (env.CI ?? "") !== ""
 }
 
 /**
@@ -107,11 +107,11 @@ export function isContinuousIntegration(
  * quietly reporting fewer tests than the last one.
  */
 export function databaseSkipReason(
-  env: EnvironmentLike = process.env,
+  env: EnvironmentLike = process.env
 ): string | null {
   if (isDatabaseConfigured(env)) {
-    return null;
+    return null
   }
 
-  return 'DATABASE_URL is not set, so no database is configured.';
+  return "DATABASE_URL is not set, so no database is configured."
 }

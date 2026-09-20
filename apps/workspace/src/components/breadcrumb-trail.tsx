@@ -1,7 +1,7 @@
-'use client';
+"use client"
 
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import Link from "next/link"
+import { usePathname } from "next/navigation"
 
 import {
   Breadcrumb,
@@ -10,7 +10,7 @@ import {
   BreadcrumbList,
   BreadcrumbPage,
   BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
+} from "@/components/ui/breadcrumb"
 
 /**
  * `Boring Host / Assistants` — the tenant's name on every page, as both
@@ -25,16 +25,16 @@ import {
  */
 
 const SECTIONS: Record<string, string> = {
-  assistants: 'Assistants',
-  keys: 'API keys',
-  calls: 'Calls',
-  settings: 'Settings',
-};
+  assistants: "Assistants",
+  keys: "API keys",
+  calls: "Calls",
+  settings: "Settings",
+}
 
 export function BreadcrumbTrail({ accountName }: { accountName: string }) {
-  const pathname = usePathname();
-  const segment = pathname.split('/')[1] ?? '';
-  const section = SECTIONS[segment];
+  const pathname = usePathname()
+  const segment = pathname.split("/")[1] ?? ""
+  const section = SECTIONS[segment]
 
   return (
     <Breadcrumb>
@@ -59,5 +59,5 @@ export function BreadcrumbTrail({ accountName }: { accountName: string }) {
         )}
       </BreadcrumbList>
     </Breadcrumb>
-  );
+  )
 }

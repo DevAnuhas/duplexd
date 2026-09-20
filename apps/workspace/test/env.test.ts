@@ -1,9 +1,9 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { readFileSync } from "node:fs"
+import { fileURLToPath } from "node:url"
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
-import { validateServerUrl } from '@/lib/validate';
+import { validateServerUrl } from "@/lib/validate"
 
 import {
   requireAuthSecret,
@@ -13,7 +13,7 @@ import {
   requireEncryptionKey,
   requirePipecatApiKey,
   readCallSweepToken,
-} from '@/db/env';
+} from "@/db/env"
 
 /**
  * The fail-closed environment guards.
@@ -32,13 +32,13 @@ import {
  */
 
 const VARIABLES = [
-  'DATABASE_URL',
-  'ASSISTANT_SECRET_KEY',
-  'BETTER_AUTH_SECRET',
-  'BETTER_AUTH_URL',
-  'PIPECAT_API_KEY',
-  'CALL_SWEEP_TOKEN',
-] as const;
+  "DATABASE_URL",
+  "ASSISTANT_SECRET_KEY",
+  "BETTER_AUTH_SECRET",
+  "BETTER_AUTH_URL",
+  "PIPECAT_API_KEY",
+  "CALL_SWEEP_TOKEN",
+] as const
 
 /**
  * Documented in `.env.example`, read directly, and deliberately unguarded.
@@ -48,7 +48,7 @@ const VARIABLES = [
  * no `require…()` guard, and it is asserted rather than asserted about — see
  * the absent-safe test below.
  */
-const OPTIONAL_VARIABLES = ['ALLOW_LOOPBACK_SERVER_URL'] as const;
+const OPTIONAL_VARIABLES = ["ALLOW_LOOPBACK_SERVER_URL"] as const
 
 /**
  * Injected by Vercel, never by us, and deliberately **not** in `VARIABLES`.
@@ -65,170 +65,170 @@ const OPTIONAL_VARIABLES = ['ALLOW_LOOPBACK_SERVER_URL'] as const;
  * environment.
  */
 const PLATFORM_VARIABLES = [
-  'VERCEL_ENV',
-  'VERCEL_BRANCH_URL',
-  'VERCEL_URL',
-] as const;
+  "VERCEL_ENV",
+  "VERCEL_BRANCH_URL",
+  "VERCEL_URL",
+] as const
 
-describe('environment guards', () => {
+describe("environment guards", () => {
   let saved: Partial<
     Record<
       (typeof VARIABLES)[number] | (typeof PLATFORM_VARIABLES)[number],
       string | undefined
     >
-  > = {};
+  > = {}
 
   beforeEach(() => {
     saved = Object.fromEntries(
       [...VARIABLES, ...PLATFORM_VARIABLES].map((name) => [
         name,
         process.env[name],
-      ]),
-    );
+      ])
+    )
 
     for (const name of PLATFORM_VARIABLES) {
-      delete process.env[name];
+      delete process.env[name]
     }
-  });
+  })
 
   afterEach(() => {
     for (const name of [...VARIABLES, ...PLATFORM_VARIABLES]) {
-      const value = saved[name];
+      const value = saved[name]
 
       if (value === undefined) {
-        delete process.env[name];
+        delete process.env[name]
       } else {
-        process.env[name] = value;
+        process.env[name] = value
       }
     }
-  });
+  })
 
-  describe('requireDatabaseUrl', () => {
+  describe("requireDatabaseUrl", () => {
     it.each([
-      ['unset', undefined],
-      ['the empty string', ''],
-      ['only whitespace', '   '],
-    ])('throws when DATABASE_URL is %s', (_label, value) => {
+      ["unset", undefined],
+      ["the empty string", ""],
+      ["only whitespace", "   "],
+    ])("throws when DATABASE_URL is %s", (_label, value) => {
       if (value === undefined) {
-        delete process.env.DATABASE_URL;
+        delete process.env.DATABASE_URL
       } else {
-        process.env.DATABASE_URL = value;
+        process.env.DATABASE_URL = value
       }
 
-      expect(() => requireDatabaseUrl()).toThrow(/DATABASE_URL/);
-    });
+      expect(() => requireDatabaseUrl()).toThrow(/DATABASE_URL/)
+    })
 
-    it('names the variable and says it is never defaulted', () => {
-      delete process.env.DATABASE_URL;
+    it("names the variable and says it is never defaulted", () => {
+      delete process.env.DATABASE_URL
 
-      expect(() => requireDatabaseUrl()).toThrow(/DATABASE_URL/);
-      expect(() => requireDatabaseUrl()).toThrow(/unset or empty/i);
-    });
+      expect(() => requireDatabaseUrl()).toThrow(/DATABASE_URL/)
+      expect(() => requireDatabaseUrl()).toThrow(/unset or empty/i)
+    })
 
-    it('returns the value when it is set', () => {
-      process.env.DATABASE_URL = 'postgres://example.invalid:5432/db';
+    it("returns the value when it is set", () => {
+      process.env.DATABASE_URL = "postgres://example.invalid:5432/db"
 
-      expect(requireDatabaseUrl()).toBe('postgres://example.invalid:5432/db');
-    });
+      expect(requireDatabaseUrl()).toBe("postgres://example.invalid:5432/db")
+    })
 
     /**
      * A local server is a legitimate configuration, so this must not be
      * rejected. The Planner's ruling: any PostgreSQL 17+ works and nothing
      * special-cases Neon, which means nothing may special-case localhost either.
      */
-    it('accepts a local connection string rather than inspecting the host', () => {
-      process.env.DATABASE_URL = 'postgres://localhost:5432/anything';
+    it("accepts a local connection string rather than inspecting the host", () => {
+      process.env.DATABASE_URL = "postgres://localhost:5432/anything"
 
-      expect(requireDatabaseUrl()).toBe('postgres://localhost:5432/anything');
-    });
-  });
+      expect(requireDatabaseUrl()).toBe("postgres://localhost:5432/anything")
+    })
+  })
 
-  describe('readCallSweepToken', () => {
-    it.each([undefined, '', '   '])(
-      'reports an absent or blank value as unconfigured: %s',
+  describe("readCallSweepToken", () => {
+    it.each([undefined, "", "   "])(
+      "reports an absent or blank value as unconfigured: %s",
       (value) => {
-        if (value === undefined) delete process.env.CALL_SWEEP_TOKEN;
-        else process.env.CALL_SWEEP_TOKEN = value;
-        expect(readCallSweepToken()).toBeNull();
-      },
-    );
+        if (value === undefined) delete process.env.CALL_SWEEP_TOKEN
+        else process.env.CALL_SWEEP_TOKEN = value
+        expect(readCallSweepToken()).toBeNull()
+      }
+    )
 
-    it('returns a configured token without exposing a fallback', () => {
-      process.env.CALL_SWEEP_TOKEN = '  synthetic-sweep-token  ';
-      expect(readCallSweepToken()).toBe('synthetic-sweep-token');
-    });
-  });
+    it("returns a configured token without exposing a fallback", () => {
+      process.env.CALL_SWEEP_TOKEN = "  synthetic-sweep-token  "
+      expect(readCallSweepToken()).toBe("synthetic-sweep-token")
+    })
+  })
 
-  describe('requireEncryptionKey', () => {
+  describe("requireEncryptionKey", () => {
     it.each([
-      ['unset', undefined],
-      ['the empty string', ''],
-      ['only whitespace', '  '],
-    ])('throws when ASSISTANT_SECRET_KEY is %s', (_label, value) => {
+      ["unset", undefined],
+      ["the empty string", ""],
+      ["only whitespace", "  "],
+    ])("throws when ASSISTANT_SECRET_KEY is %s", (_label, value) => {
       if (value === undefined) {
-        delete process.env.ASSISTANT_SECRET_KEY;
+        delete process.env.ASSISTANT_SECRET_KEY
       } else {
-        process.env.ASSISTANT_SECRET_KEY = value;
+        process.env.ASSISTANT_SECRET_KEY = value
       }
 
-      expect(() => requireEncryptionKey()).toThrow(/ASSISTANT_SECRET_KEY/);
-    });
+      expect(() => requireEncryptionKey()).toThrow(/ASSISTANT_SECRET_KEY/)
+    })
 
     it.each([
-      ['63 hex characters', 'a'.repeat(63)],
-      ['65 hex characters', 'a'.repeat(65)],
-      ['32 raw bytes rather than hex', 'x'.repeat(32)],
-      ['non-hex characters', 'g'.repeat(64)],
-    ])('throws when the key is %s', (_label, value) => {
-      process.env.ASSISTANT_SECRET_KEY = value;
+      ["63 hex characters", "a".repeat(63)],
+      ["65 hex characters", "a".repeat(65)],
+      ["32 raw bytes rather than hex", "x".repeat(32)],
+      ["non-hex characters", "g".repeat(64)],
+    ])("throws when the key is %s", (_label, value) => {
+      process.env.ASSISTANT_SECRET_KEY = value
 
-      expect(() => requireEncryptionKey()).toThrow(/ASSISTANT_SECRET_KEY/);
-    });
+      expect(() => requireEncryptionKey()).toThrow(/ASSISTANT_SECRET_KEY/)
+    })
 
-    it('returns 32 bytes for a valid key', () => {
-      process.env.ASSISTANT_SECRET_KEY = 'ab'.repeat(32);
+    it("returns 32 bytes for a valid key", () => {
+      process.env.ASSISTANT_SECRET_KEY = "ab".repeat(32)
 
-      const key = requireEncryptionKey();
+      const key = requireEncryptionKey()
 
-      expect(key).toHaveLength(32);
-      expect(key.toString('hex')).toBe('ab'.repeat(32));
-    });
+      expect(key).toHaveLength(32)
+      expect(key.toString("hex")).toBe("ab".repeat(32))
+    })
 
-    it('accepts upper-case hex and surrounding whitespace', () => {
-      process.env.ASSISTANT_SECRET_KEY = `  ${'AB'.repeat(32)}  `;
+    it("accepts upper-case hex and surrounding whitespace", () => {
+      process.env.ASSISTANT_SECRET_KEY = `  ${"AB".repeat(32)}  `
 
-      expect(requireEncryptionKey().toString('hex')).toBe('ab'.repeat(32));
-    });
+      expect(requireEncryptionKey().toString("hex")).toBe("ab".repeat(32))
+    })
 
     /** A default key is the same as no encryption, and harder to notice. */
-    it('never falls back to a default key', () => {
-      delete process.env.ASSISTANT_SECRET_KEY;
+    it("never falls back to a default key", () => {
+      delete process.env.ASSISTANT_SECRET_KEY
 
-      expect(() => requireEncryptionKey()).toThrow();
-    });
-  });
+      expect(() => requireEncryptionKey()).toThrow()
+    })
+  })
 
-  describe('requireAuthSecret', () => {
+  describe("requireAuthSecret", () => {
     it.each([
-      ['unset', undefined],
-      ['the empty string', ''],
-      ['only whitespace', ' '],
-    ])('throws when BETTER_AUTH_SECRET is %s', (_label, value) => {
+      ["unset", undefined],
+      ["the empty string", ""],
+      ["only whitespace", " "],
+    ])("throws when BETTER_AUTH_SECRET is %s", (_label, value) => {
       if (value === undefined) {
-        delete process.env.BETTER_AUTH_SECRET;
+        delete process.env.BETTER_AUTH_SECRET
       } else {
-        process.env.BETTER_AUTH_SECRET = value;
+        process.env.BETTER_AUTH_SECRET = value
       }
 
-      expect(() => requireAuthSecret()).toThrow(/BETTER_AUTH_SECRET/);
-    });
+      expect(() => requireAuthSecret()).toThrow(/BETTER_AUTH_SECRET/)
+    })
 
-    it('returns the value when it is set', () => {
-      process.env.BETTER_AUTH_SECRET = 'placeholder-value-for-this-test';
+    it("returns the value when it is set", () => {
+      process.env.BETTER_AUTH_SECRET = "placeholder-value-for-this-test"
 
-      expect(requireAuthSecret()).toBe('placeholder-value-for-this-test');
-    });
-  });
+      expect(requireAuthSecret()).toBe("placeholder-value-for-this-test")
+    })
+  })
 
   /**
    * `BETTER_AUTH_URL` is required rather than optional, and the reason is worth
@@ -246,40 +246,40 @@ describe('environment guards', () => {
    * suggestions. A variable that is listed but optional makes the reader guess
    * which of the others are real.
    */
-  describe('requireAuthUrl', () => {
+  describe("requireAuthUrl", () => {
     it.each([
-      ['unset', undefined],
-      ['the empty string', ''],
-      ['only whitespace', '   '],
-    ])('throws when BETTER_AUTH_URL is %s', (_label, value) => {
+      ["unset", undefined],
+      ["the empty string", ""],
+      ["only whitespace", "   "],
+    ])("throws when BETTER_AUTH_URL is %s", (_label, value) => {
       if (value === undefined) {
-        delete process.env.BETTER_AUTH_URL;
+        delete process.env.BETTER_AUTH_URL
       } else {
-        process.env.BETTER_AUTH_URL = value;
+        process.env.BETTER_AUTH_URL = value
       }
 
-      expect(() => requireAuthUrl()).toThrow(/BETTER_AUTH_URL/);
-    });
+      expect(() => requireAuthUrl()).toThrow(/BETTER_AUTH_URL/)
+    })
 
-    it('names the variable and says it is not derived from the request', () => {
-      delete process.env.BETTER_AUTH_URL;
+    it("names the variable and says it is not derived from the request", () => {
+      delete process.env.BETTER_AUTH_URL
 
-      expect(() => requireAuthUrl()).toThrow(/BETTER_AUTH_URL/);
-      expect(() => requireAuthUrl()).toThrow(/unset or empty/i);
-      expect(() => requireAuthUrl()).toThrow(/not derived\s+from the request/i);
-    });
+      expect(() => requireAuthUrl()).toThrow(/BETTER_AUTH_URL/)
+      expect(() => requireAuthUrl()).toThrow(/unset or empty/i)
+      expect(() => requireAuthUrl()).toThrow(/not derived\s+from the request/i)
+    })
 
-    it('returns the value when it is set', () => {
-      process.env.BETTER_AUTH_URL = 'https://workspace.example.invalid';
+    it("returns the value when it is set", () => {
+      process.env.BETTER_AUTH_URL = "https://workspace.example.invalid"
 
-      expect(requireAuthUrl()).toBe('https://workspace.example.invalid');
-    });
+      expect(requireAuthUrl()).toBe("https://workspace.example.invalid")
+    })
 
-    it('trims surrounding whitespace', () => {
-      process.env.BETTER_AUTH_URL = '  http://localhost:3000  ';
+    it("trims surrounding whitespace", () => {
+      process.env.BETTER_AUTH_URL = "  http://localhost:3000  "
 
-      expect(requireAuthUrl()).toBe('http://localhost:3000');
-    });
+      expect(requireAuthUrl()).toBe("http://localhost:3000")
+    })
 
     /**
      * No fallback of any kind. A default of `http://localhost:3000` would be the
@@ -287,11 +287,11 @@ describe('environment guards', () => {
      * development and mint cookies for the wrong origin in production, which is
      * the failure that does not show up until it is live.
      */
-    it('never falls back to a default origin', () => {
-      delete process.env.BETTER_AUTH_URL;
+    it("never falls back to a default origin", () => {
+      delete process.env.BETTER_AUTH_URL
 
-      expect(() => requireAuthUrl()).toThrow();
-    });
+      expect(() => requireAuthUrl()).toThrow()
+    })
 
     /**
      * The one exception, and why it does not contradict the rule above.
@@ -316,79 +316,79 @@ describe('environment guards', () => {
      * `BETTER_AUTH_URL` must still fail loudly rather than quietly mint
      * cookies for a `vercel.app` domain instead of the real one.
      */
-    describe('the Vercel preview fallback', () => {
-      it('derives the origin from VERCEL_BRANCH_URL on a preview deployment', () => {
-        delete process.env.BETTER_AUTH_URL;
-        process.env.VERCEL_ENV = 'preview';
+    describe("the Vercel preview fallback", () => {
+      it("derives the origin from VERCEL_BRANCH_URL on a preview deployment", () => {
+        delete process.env.BETTER_AUTH_URL
+        process.env.VERCEL_ENV = "preview"
         process.env.VERCEL_BRANCH_URL =
-          'duplexd-git-fix-preview-auth-url-anuhas-projects.vercel.app';
+          "duplexd-git-fix-preview-auth-url-anuhas-projects.vercel.app"
 
         expect(requireAuthUrl()).toBe(
-          'https://duplexd-git-fix-preview-auth-url-anuhas-projects.vercel.app',
-        );
-      });
+          "https://duplexd-git-fix-preview-auth-url-anuhas-projects.vercel.app"
+        )
+      })
 
-      it('prefers an explicit BETTER_AUTH_URL over the preview fallback', () => {
-        process.env.BETTER_AUTH_URL = 'https://chosen.example.invalid';
-        process.env.VERCEL_ENV = 'preview';
-        process.env.VERCEL_BRANCH_URL = 'ignored.vercel.app';
+      it("prefers an explicit BETTER_AUTH_URL over the preview fallback", () => {
+        process.env.BETTER_AUTH_URL = "https://chosen.example.invalid"
+        process.env.VERCEL_ENV = "preview"
+        process.env.VERCEL_BRANCH_URL = "ignored.vercel.app"
 
-        expect(requireAuthUrl()).toBe('https://chosen.example.invalid');
-      });
+        expect(requireAuthUrl()).toBe("https://chosen.example.invalid")
+      })
 
-      it('still throws on production even when VERCEL_BRANCH_URL is present', () => {
-        delete process.env.BETTER_AUTH_URL;
-        process.env.VERCEL_ENV = 'production';
-        process.env.VERCEL_BRANCH_URL = 'duplexd-anuhas-projects.vercel.app';
+      it("still throws on production even when VERCEL_BRANCH_URL is present", () => {
+        delete process.env.BETTER_AUTH_URL
+        process.env.VERCEL_ENV = "production"
+        process.env.VERCEL_BRANCH_URL = "duplexd-anuhas-projects.vercel.app"
 
-        expect(() => requireAuthUrl()).toThrow(/BETTER_AUTH_URL/);
-      });
+        expect(() => requireAuthUrl()).toThrow(/BETTER_AUTH_URL/)
+      })
 
-      it('still throws when VERCEL_ENV is absent', () => {
-        delete process.env.BETTER_AUTH_URL;
-        process.env.VERCEL_BRANCH_URL = 'duplexd-git-branch.vercel.app';
+      it("still throws when VERCEL_ENV is absent", () => {
+        delete process.env.BETTER_AUTH_URL
+        process.env.VERCEL_BRANCH_URL = "duplexd-git-branch.vercel.app"
 
-        expect(() => requireAuthUrl()).toThrow(/BETTER_AUTH_URL/);
-      });
+        expect(() => requireAuthUrl()).toThrow(/BETTER_AUTH_URL/)
+      })
 
       it.each([
-        ['unset', undefined],
-        ['the empty string', ''],
-        ['only whitespace', '   '],
+        ["unset", undefined],
+        ["the empty string", ""],
+        ["only whitespace", "   "],
       ])(
-        'still throws on a preview when VERCEL_BRANCH_URL is %s',
+        "still throws on a preview when VERCEL_BRANCH_URL is %s",
         (_label, value) => {
-          delete process.env.BETTER_AUTH_URL;
-          process.env.VERCEL_ENV = 'preview';
+          delete process.env.BETTER_AUTH_URL
+          process.env.VERCEL_ENV = "preview"
 
           if (value === undefined) {
-            delete process.env.VERCEL_BRANCH_URL;
+            delete process.env.VERCEL_BRANCH_URL
           } else {
-            process.env.VERCEL_BRANCH_URL = value;
+            process.env.VERCEL_BRANCH_URL = value
           }
 
-          expect(() => requireAuthUrl()).toThrow(/BETTER_AUTH_URL/);
-        },
-      );
+          expect(() => requireAuthUrl()).toThrow(/BETTER_AUTH_URL/)
+        }
+      )
 
-      it('trims the branch host before building the origin', () => {
-        delete process.env.BETTER_AUTH_URL;
-        process.env.VERCEL_ENV = 'preview';
-        process.env.VERCEL_BRANCH_URL = '  duplexd-git-branch.vercel.app  ';
+      it("trims the branch host before building the origin", () => {
+        delete process.env.BETTER_AUTH_URL
+        process.env.VERCEL_ENV = "preview"
+        process.env.VERCEL_BRANCH_URL = "  duplexd-git-branch.vercel.app  "
 
-        expect(requireAuthUrl()).toBe('https://duplexd-git-branch.vercel.app');
-      });
+        expect(requireAuthUrl()).toBe("https://duplexd-git-branch.vercel.app")
+      })
 
-      it('falls back to the deployment host when only VERCEL_URL is present', () => {
-        delete process.env.BETTER_AUTH_URL;
-        process.env.VERCEL_ENV = 'preview';
-        delete process.env.VERCEL_BRANCH_URL;
-        process.env.VERCEL_URL = 'duplexd-abc123.vercel.app';
+      it("falls back to the deployment host when only VERCEL_URL is present", () => {
+        delete process.env.BETTER_AUTH_URL
+        process.env.VERCEL_ENV = "preview"
+        delete process.env.VERCEL_BRANCH_URL
+        process.env.VERCEL_URL = "duplexd-abc123.vercel.app"
 
-        expect(requireAuthUrl()).toBe('https://duplexd-abc123.vercel.app');
-      });
-    });
-  });
+        expect(requireAuthUrl()).toBe("https://duplexd-abc123.vercel.app")
+      })
+    })
+  })
 
   /**
    * Better Auth's origin check compares the request's `Origin` against the
@@ -414,130 +414,136 @@ describe('environment guards', () => {
    * per-request base URL would add a header to the auth decision for no
    * benefit.
    */
-  describe('resolveAuthBaseUrl', () => {
-    it('allows both preview hostnames, preferring the branch URL as fallback', () => {
-      delete process.env.BETTER_AUTH_URL;
-      process.env.VERCEL_ENV = 'preview';
-      process.env.VERCEL_BRANCH_URL = 'duplexd-git-branch.vercel.app';
-      process.env.VERCEL_URL = 'duplexd-abc123.vercel.app';
+  describe("resolveAuthBaseUrl", () => {
+    it("allows both preview hostnames, preferring the branch URL as fallback", () => {
+      delete process.env.BETTER_AUTH_URL
+      process.env.VERCEL_ENV = "preview"
+      process.env.VERCEL_BRANCH_URL = "duplexd-git-branch.vercel.app"
+      process.env.VERCEL_URL = "duplexd-abc123.vercel.app"
 
       expect(resolveAuthBaseUrl()).toStrictEqual({
-        allowedHosts: ['duplexd-git-branch.vercel.app', 'duplexd-abc123.vercel.app'],
-        protocol: 'https',
-        fallback: 'https://duplexd-git-branch.vercel.app',
-      });
-    });
+        allowedHosts: [
+          "duplexd-git-branch.vercel.app",
+          "duplexd-abc123.vercel.app",
+        ],
+        protocol: "https",
+        fallback: "https://duplexd-git-branch.vercel.app",
+      })
+    })
 
-    it('returns the explicit origin as a plain string, not a dynamic config', () => {
-      process.env.BETTER_AUTH_URL = 'https://workspace.example.invalid';
-      process.env.VERCEL_ENV = 'preview';
-      process.env.VERCEL_BRANCH_URL = 'duplexd-git-branch.vercel.app';
-      process.env.VERCEL_URL = 'duplexd-abc123.vercel.app';
+    it("returns the explicit origin as a plain string, not a dynamic config", () => {
+      process.env.BETTER_AUTH_URL = "https://workspace.example.invalid"
+      process.env.VERCEL_ENV = "preview"
+      process.env.VERCEL_BRANCH_URL = "duplexd-git-branch.vercel.app"
+      process.env.VERCEL_URL = "duplexd-abc123.vercel.app"
 
-      expect(resolveAuthBaseUrl()).toBe('https://workspace.example.invalid');
-    });
+      expect(resolveAuthBaseUrl()).toBe("https://workspace.example.invalid")
+    })
 
-    it('lists only the hosts that are actually present', () => {
-      delete process.env.BETTER_AUTH_URL;
-      process.env.VERCEL_ENV = 'preview';
-      delete process.env.VERCEL_BRANCH_URL;
-      process.env.VERCEL_URL = 'duplexd-abc123.vercel.app';
-
-      expect(resolveAuthBaseUrl()).toStrictEqual({
-        allowedHosts: ['duplexd-abc123.vercel.app'],
-        protocol: 'https',
-        fallback: 'https://duplexd-abc123.vercel.app',
-      });
-    });
-
-    it('never widens beyond the two platform hosts', () => {
-      delete process.env.BETTER_AUTH_URL;
-      process.env.VERCEL_ENV = 'preview';
-      process.env.VERCEL_BRANCH_URL = 'duplexd-git-branch.vercel.app';
-      process.env.VERCEL_URL = 'duplexd-abc123.vercel.app';
-
-      const resolved = resolveAuthBaseUrl();
-
-      expect(typeof resolved).toBe('object');
-      const hosts = (resolved as { allowedHosts: string[] }).allowedHosts;
-      expect(hosts).toHaveLength(2);
-      expect(hosts.some((host) => host.includes('*'))).toBe(false);
-    });
-
-    it('throws on production even with both platform hosts present', () => {
-      delete process.env.BETTER_AUTH_URL;
-      process.env.VERCEL_ENV = 'production';
-      process.env.VERCEL_BRANCH_URL = 'duplexd-git-branch.vercel.app';
-      process.env.VERCEL_URL = 'duplexd-abc123.vercel.app';
-
-      expect(() => resolveAuthBaseUrl()).toThrow(/BETTER_AUTH_URL/);
-    });
-
-    it('throws when VERCEL_ENV is absent', () => {
-      delete process.env.BETTER_AUTH_URL;
-      process.env.VERCEL_BRANCH_URL = 'duplexd-git-branch.vercel.app';
-      process.env.VERCEL_URL = 'duplexd-abc123.vercel.app';
-
-      expect(() => resolveAuthBaseUrl()).toThrow(/BETTER_AUTH_URL/);
-    });
-
-    it('throws on a preview with neither platform host', () => {
-      delete process.env.BETTER_AUTH_URL;
-      process.env.VERCEL_ENV = 'preview';
-      delete process.env.VERCEL_BRANCH_URL;
-      delete process.env.VERCEL_URL;
-
-      expect(() => resolveAuthBaseUrl()).toThrow(/BETTER_AUTH_URL/);
-    });
-
-    it('trims both hosts', () => {
-      delete process.env.BETTER_AUTH_URL;
-      process.env.VERCEL_ENV = 'preview';
-      process.env.VERCEL_BRANCH_URL = '  duplexd-git-branch.vercel.app  ';
-      process.env.VERCEL_URL = '  duplexd-abc123.vercel.app  ';
+    it("lists only the hosts that are actually present", () => {
+      delete process.env.BETTER_AUTH_URL
+      process.env.VERCEL_ENV = "preview"
+      delete process.env.VERCEL_BRANCH_URL
+      process.env.VERCEL_URL = "duplexd-abc123.vercel.app"
 
       expect(resolveAuthBaseUrl()).toStrictEqual({
-        allowedHosts: ['duplexd-git-branch.vercel.app', 'duplexd-abc123.vercel.app'],
-        protocol: 'https',
-        fallback: 'https://duplexd-git-branch.vercel.app',
-      });
-    });
+        allowedHosts: ["duplexd-abc123.vercel.app"],
+        protocol: "https",
+        fallback: "https://duplexd-abc123.vercel.app",
+      })
+    })
 
-    it('does not repeat a host when both variables name the same one', () => {
-      delete process.env.BETTER_AUTH_URL;
-      process.env.VERCEL_ENV = 'preview';
-      process.env.VERCEL_BRANCH_URL = 'duplexd-same.vercel.app';
-      process.env.VERCEL_URL = 'duplexd-same.vercel.app';
+    it("never widens beyond the two platform hosts", () => {
+      delete process.env.BETTER_AUTH_URL
+      process.env.VERCEL_ENV = "preview"
+      process.env.VERCEL_BRANCH_URL = "duplexd-git-branch.vercel.app"
+      process.env.VERCEL_URL = "duplexd-abc123.vercel.app"
+
+      const resolved = resolveAuthBaseUrl()
+
+      expect(typeof resolved).toBe("object")
+      const hosts = (resolved as { allowedHosts: string[] }).allowedHosts
+      expect(hosts).toHaveLength(2)
+      expect(hosts.some((host) => host.includes("*"))).toBe(false)
+    })
+
+    it("throws on production even with both platform hosts present", () => {
+      delete process.env.BETTER_AUTH_URL
+      process.env.VERCEL_ENV = "production"
+      process.env.VERCEL_BRANCH_URL = "duplexd-git-branch.vercel.app"
+      process.env.VERCEL_URL = "duplexd-abc123.vercel.app"
+
+      expect(() => resolveAuthBaseUrl()).toThrow(/BETTER_AUTH_URL/)
+    })
+
+    it("throws when VERCEL_ENV is absent", () => {
+      delete process.env.BETTER_AUTH_URL
+      process.env.VERCEL_BRANCH_URL = "duplexd-git-branch.vercel.app"
+      process.env.VERCEL_URL = "duplexd-abc123.vercel.app"
+
+      expect(() => resolveAuthBaseUrl()).toThrow(/BETTER_AUTH_URL/)
+    })
+
+    it("throws on a preview with neither platform host", () => {
+      delete process.env.BETTER_AUTH_URL
+      process.env.VERCEL_ENV = "preview"
+      delete process.env.VERCEL_BRANCH_URL
+      delete process.env.VERCEL_URL
+
+      expect(() => resolveAuthBaseUrl()).toThrow(/BETTER_AUTH_URL/)
+    })
+
+    it("trims both hosts", () => {
+      delete process.env.BETTER_AUTH_URL
+      process.env.VERCEL_ENV = "preview"
+      process.env.VERCEL_BRANCH_URL = "  duplexd-git-branch.vercel.app  "
+      process.env.VERCEL_URL = "  duplexd-abc123.vercel.app  "
 
       expect(resolveAuthBaseUrl()).toStrictEqual({
-        allowedHosts: ['duplexd-same.vercel.app'],
-        protocol: 'https',
-        fallback: 'https://duplexd-same.vercel.app',
-      });
-    });
-  });
+        allowedHosts: [
+          "duplexd-git-branch.vercel.app",
+          "duplexd-abc123.vercel.app",
+        ],
+        protocol: "https",
+        fallback: "https://duplexd-git-branch.vercel.app",
+      })
+    })
 
-  describe('requirePipecatApiKey', () => {
+    it("does not repeat a host when both variables name the same one", () => {
+      delete process.env.BETTER_AUTH_URL
+      process.env.VERCEL_ENV = "preview"
+      process.env.VERCEL_BRANCH_URL = "duplexd-same.vercel.app"
+      process.env.VERCEL_URL = "duplexd-same.vercel.app"
+
+      expect(resolveAuthBaseUrl()).toStrictEqual({
+        allowedHosts: ["duplexd-same.vercel.app"],
+        protocol: "https",
+        fallback: "https://duplexd-same.vercel.app",
+      })
+    })
+  })
+
+  describe("requirePipecatApiKey", () => {
     it.each([
-      ['unset', undefined],
-      ['the empty string', ''],
-      ['only whitespace', '   '],
-    ])('throws when PIPECAT_API_KEY is %s', (_label, value) => {
+      ["unset", undefined],
+      ["the empty string", ""],
+      ["only whitespace", "   "],
+    ])("throws when PIPECAT_API_KEY is %s", (_label, value) => {
       if (value === undefined) {
-        delete process.env.PIPECAT_API_KEY;
+        delete process.env.PIPECAT_API_KEY
       } else {
-        process.env.PIPECAT_API_KEY = value;
+        process.env.PIPECAT_API_KEY = value
       }
 
-      expect(() => requirePipecatApiKey()).toThrow(/PIPECAT_API_KEY/);
-    });
+      expect(() => requirePipecatApiKey()).toThrow(/PIPECAT_API_KEY/)
+    })
 
-    it('returns a configured key without exposing it elsewhere', () => {
-      process.env.PIPECAT_API_KEY = 'synthetic-pipecat-key-for-env-test';
+    it("returns a configured key without exposing it elsewhere", () => {
+      process.env.PIPECAT_API_KEY = "synthetic-pipecat-key-for-env-test"
 
-      expect(requirePipecatApiKey()).toBe('synthetic-pipecat-key-for-env-test');
-    });
-  });
+      expect(requirePipecatApiKey()).toBe("synthetic-pipecat-key-for-env-test")
+    })
+  })
 
   /**
    * Reading at call time rather than module import is what lets `next build`
@@ -545,31 +551,31 @@ describe('environment guards', () => {
    * production image build would need all three, and every deploy would depend
    * on the database being reachable from the builder.
    */
-  it('reads the environment on every call, not once at import', () => {
-    process.env.DATABASE_URL = 'postgres://first.invalid/db';
-    expect(requireDatabaseUrl()).toBe('postgres://first.invalid/db');
+  it("reads the environment on every call, not once at import", () => {
+    process.env.DATABASE_URL = "postgres://first.invalid/db"
+    expect(requireDatabaseUrl()).toBe("postgres://first.invalid/db")
 
-    process.env.DATABASE_URL = 'postgres://second.invalid/db';
-    expect(requireDatabaseUrl()).toBe('postgres://second.invalid/db');
-  });
+    process.env.DATABASE_URL = "postgres://second.invalid/db"
+    expect(requireDatabaseUrl()).toBe("postgres://second.invalid/db")
+  })
 
   /**
    * The same for every accessor, because importing this module is what
    * `next build` does. If any accessor read its variable at import rather than
    * at call time, the deployment build would need that variable.
    */
-  it('lets every getter be imported with nothing set at all', () => {
+  it("lets every getter be imported with nothing set at all", () => {
     for (const name of VARIABLES) {
-      delete process.env[name];
+      delete process.env[name]
     }
 
-    expect(() => requireDatabaseUrl()).toThrow(/DATABASE_URL/);
-    expect(() => requireEncryptionKey()).toThrow(/ASSISTANT_SECRET_KEY/);
-    expect(() => requireAuthSecret()).toThrow(/BETTER_AUTH_SECRET/);
-    expect(() => requireAuthUrl()).toThrow(/BETTER_AUTH_URL/);
-    expect(() => requirePipecatApiKey()).toThrow(/PIPECAT_API_KEY/);
-    expect(readCallSweepToken()).toBeNull();
-  });
+    expect(() => requireDatabaseUrl()).toThrow(/DATABASE_URL/)
+    expect(() => requireEncryptionKey()).toThrow(/ASSISTANT_SECRET_KEY/)
+    expect(() => requireAuthSecret()).toThrow(/BETTER_AUTH_SECRET/)
+    expect(() => requireAuthUrl()).toThrow(/BETTER_AUTH_URL/)
+    expect(() => requirePipecatApiKey()).toThrow(/PIPECAT_API_KEY/)
+    expect(readCallSweepToken()).toBeNull()
+  })
 
   /**
    * `.env.example` is the app's account of what it needs, and item 19 requires
@@ -589,19 +595,19 @@ describe('environment guards', () => {
    * fail closed at its owning surface, because it will not be in
    * `OPTIONAL_VARIABLES` and the set comparison will fail.
    */
-  it('lists exactly the required and declared-optional variables in .env.example', () => {
+  it("lists exactly the required and declared-optional variables in .env.example", () => {
     const example = readFileSync(
-      fileURLToPath(new URL('../../../.env.example', import.meta.url)),
-      'utf8',
-    );
+      fileURLToPath(new URL("../../../.env.example", import.meta.url)),
+      "utf8"
+    )
 
     const listed = [...example.matchAll(/^([A-Z][A-Z0-9_]*)=/gm)]
-      .map((match) => match[1] ?? '')
-      .sort();
+      .map((match) => match[1] ?? "")
+      .sort()
 
-    expect(listed).toStrictEqual([...VARIABLES, ...OPTIONAL_VARIABLES].sort());
-  });
-});
+    expect(listed).toStrictEqual([...VARIABLES, ...OPTIONAL_VARIABLES].sort())
+  })
+})
 
 /**
  * The obligation that comes with being optional.
@@ -612,46 +618,44 @@ describe('environment guards', () => {
  * waiting for someone not to set the variable, which is exactly what this flag
  * was introduced to close.
  */
-describe('declared-optional variables are absent-safe', () => {
-  const savedFlag = process.env.ALLOW_LOOPBACK_SERVER_URL;
+describe("declared-optional variables are absent-safe", () => {
+  const savedFlag = process.env.ALLOW_LOOPBACK_SERVER_URL
 
   afterEach(() => {
     if (savedFlag === undefined) {
-      delete process.env.ALLOW_LOOPBACK_SERVER_URL;
+      delete process.env.ALLOW_LOOPBACK_SERVER_URL
     } else {
-      process.env.ALLOW_LOOPBACK_SERVER_URL = savedFlag;
+      process.env.ALLOW_LOOPBACK_SERVER_URL = savedFlag
     }
-  });
+  })
 
   it.each([
-    ['unset', undefined],
-    ['the empty string', ''],
+    ["unset", undefined],
+    ["the empty string", ""],
   ])(
-    'refuses loopback when ALLOW_LOOPBACK_SERVER_URL is %s',
+    "refuses loopback when ALLOW_LOOPBACK_SERVER_URL is %s",
     (_label, value) => {
       if (value === undefined) {
-        delete process.env.ALLOW_LOOPBACK_SERVER_URL;
+        delete process.env.ALLOW_LOOPBACK_SERVER_URL
       } else {
-        process.env.ALLOW_LOOPBACK_SERVER_URL = value;
+        process.env.ALLOW_LOOPBACK_SERVER_URL = value
       }
 
       expect(
-        validateServerUrl('http://localhost:3000/hook'),
-        'loopback was accepted with the flag unset — the dev exception is on by default',
-      ).not.toBeNull();
-    },
-  );
+        validateServerUrl("http://localhost:3000/hook"),
+        "loopback was accepted with the flag unset — the dev exception is on by default"
+      ).not.toBeNull()
+    }
+  )
 
   it('accepts loopback only when it is exactly "true"', () => {
-    process.env.ALLOW_LOOPBACK_SERVER_URL = 'true';
+    process.env.ALLOW_LOOPBACK_SERVER_URL = "true"
 
-    expect(validateServerUrl('http://localhost:3000/hook')).toBeNull();
-  });
+    expect(validateServerUrl("http://localhost:3000/hook")).toBeNull()
+  })
 
   /** Every optional variable is covered above; this fails if one is added. */
-  it('has an absent-safe assertion for every declared-optional variable', () => {
-    expect([...OPTIONAL_VARIABLES]).toStrictEqual([
-      'ALLOW_LOOPBACK_SERVER_URL',
-    ]);
-  });
-});
+  it("has an absent-safe assertion for every declared-optional variable", () => {
+    expect([...OPTIONAL_VARIABLES]).toStrictEqual(["ALLOW_LOOPBACK_SERVER_URL"])
+  })
+})

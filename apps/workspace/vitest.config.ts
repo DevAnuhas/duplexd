@@ -1,6 +1,6 @@
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath } from "node:url"
 
-import { defineConfig } from 'vitest/config';
+import { defineConfig } from "vitest/config"
 
 /**
  * The workspace app's suite. Scoped to `test/` so it never picks up the root
@@ -19,16 +19,16 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   resolve: {
     alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url)),
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
   test: {
-    environment: 'node',
-    include: ['test/**/*.test.ts'],
-    globalSetup: ['test/global-setup.ts'],
-    setupFiles: ['test/setup.ts'],
+    environment: "node",
+    include: ["test/**/*.test.ts"],
+    globalSetup: ["test/global-setup.ts"],
+    setupFiles: ["test/setup.ts"],
     fileParallelism: false,
     testTimeout: 60_000,
     hookTimeout: 120_000,
   },
-});
+})

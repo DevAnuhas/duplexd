@@ -1,8 +1,16 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID } from "node:crypto"
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest"
 
-import type { SignedUpUser } from './helpers/auth.ts';
+import type { SignedUpUser } from "./helpers/auth.ts"
 
 /**
  * `renameAccountAction` — the account's only write surface, and the first one
@@ -31,28 +39,28 @@ import type { SignedUpUser } from './helpers/auth.ts';
  * told to return.
  */
 
-const requestHeaders = { current: new Headers() };
+const requestHeaders = { current: new Headers() }
 
-vi.mock('next/headers', () => ({
+vi.mock("next/headers", () => ({
   headers: async () => requestHeaders.current,
-}));
+}))
 
-const revalidatePath = vi.fn();
+const revalidatePath = vi.fn()
 
-vi.mock('next/cache', () => ({
+vi.mock("next/cache", () => ({
   revalidatePath: (path: string, type?: string) => revalidatePath(path, type),
-}));
+}))
 
-const { closeDb } = await import('@/db/client');
-const { renameAccountAction } = await import('@/app/(app)/settings/actions');
-const { signUpNewAccount } = await import('./helpers/auth.ts');
-const { withTestPool } = await import('./helpers/database.ts');
-const { isDatabaseConfigured } = await import('./helpers/environment.ts');
+const { closeDb } = await import("@/db/client")
+const { renameAccountAction } = await import("@/app/(app)/settings/actions")
+const { signUpNewAccount } = await import("./helpers/auth.ts")
+const { withTestPool } = await import("./helpers/database.ts")
+const { isDatabaseConfigured } = await import("./helpers/environment.ts")
 
-type Account = SignedUpUser;
+type Account = SignedUpUser
 
 /** Matches `MAX_NAME_LENGTH` in the action. Duplicated so a silent widening fails here. */
-const MAX_NAME_LENGTH = 120;
+const MAX_NAME_LENGTH = 120
 
 /**
  * The two distinct rejections, so every case can assert **which** rule caught
@@ -60,22 +68,22 @@ const MAX_NAME_LENGTH = 120;
  * and a name rejected for the wrong one are the same `ok: false`, and only the
  * first of those tells the customer what to change.
  */
-const NEEDS_A_NAME = /needs a name/i;
-const TOO_LONG = new RegExp(`under ${MAX_NAME_LENGTH} characters`, 'i');
+const NEEDS_A_NAME = /needs a name/i
+const TOO_LONG = new RegExp(`under ${MAX_NAME_LENGTH} characters`, "i")
 
 function actAs(account: Account | null): void {
   requestHeaders.current =
-    account === null ? new Headers() : new Headers({ cookie: account.cookie });
+    account === null ? new Headers() : new Headers({ cookie: account.cookie })
 }
 
 function formDataFor(fields: Record<string, string>): FormData {
-  const formData = new FormData();
+  const formData = new FormData()
 
   for (const [key, value] of Object.entries(fields)) {
-    formData.set(key, value);
+    formData.set(key, value)
   }
 
-  return formData;
+  return formData
 }
 
 /**
@@ -88,51 +96,51 @@ function formDataFor(fields: Record<string, string>): FormData {
 async function nameOf(accountId: string): Promise<string | null> {
   return withTestPool(async (pool) => {
     const { rows } = await pool.query<{ name: string }>(
-      'SELECT name FROM accounts WHERE id = $1',
-      [accountId],
-    );
+      "SELECT name FROM accounts WHERE id = $1",
+      [accountId]
+    )
 
-    return rows[0]?.name ?? null;
-  });
+    return rows[0]?.name ?? null
+  })
 }
 
 /** How many account rows carry this name, across the whole table. */
 async function countNamed(name: string): Promise<number> {
   return withTestPool(async (pool) => {
     const { rows } = await pool.query<{ hits: string }>(
-      'SELECT count(*)::text AS hits FROM accounts WHERE name = $1',
-      [name],
-    );
+      "SELECT count(*)::text AS hits FROM accounts WHERE name = $1",
+      [name]
+    )
 
-    return Number(rows[0]?.hits ?? 0);
-  });
+    return Number(rows[0]?.hits ?? 0)
+  })
 }
 
-const describeDatabase = describe.skipIf(!isDatabaseConfigured());
+const describeDatabase = describe.skipIf(!isDatabaseConfigured())
 
 afterAll(async () => {
-  await closeDb();
-});
+  await closeDb()
+})
 
-describeDatabase('renameAccountAction is scoped by the session', () => {
-  let first: Account;
-  let second: Account;
-  let secondNameBefore: string | null;
+describeDatabase("renameAccountAction is scoped by the session", () => {
+  let first: Account
+  let second: Account
+  let secondNameBefore: string | null
 
   beforeAll(async () => {
-    first = await signUpNewAccount();
-    second = await signUpNewAccount();
-  });
+    first = await signUpNewAccount()
+    second = await signUpNewAccount()
+  })
 
   beforeEach(async () => {
-    revalidatePath.mockClear();
-    secondNameBefore = await nameOf(second.accountId);
+    revalidatePath.mockClear()
+    secondNameBefore = await nameOf(second.accountId)
 
     expect(
       secondNameBefore,
-      'the second account must exist for its row to prove anything',
-    ).not.toBeNull();
-  });
+      "the second account must exist for its row to prove anything"
+    ).not.toBeNull()
+  })
 
   /**
    * The test this file exists for.
@@ -142,10 +150,10 @@ describeDatabase('renameAccountAction is scoped by the session', () => {
    * positive control — without it the second account's name being untouched
    * would also be satisfied by a rename that silently did nothing at all.
    */
-  it('ignores an account id in the form and renames only the session account', async () => {
-    actAs(first);
+  it("ignores an account id in the form and renames only the session account", async () => {
+    actAs(first)
 
-    const name = `session scoped ${randomUUID()}`;
+    const name = `session scoped ${randomUUID()}`
 
     const result = await renameAccountAction(
       formDataFor({
@@ -160,67 +168,67 @@ describeDatabase('renameAccountAction is scoped by the session', () => {
         organization_id: second.accountId,
         workspaceId: second.accountId,
         userId: second.userId,
-      }),
-    );
+      })
+    )
 
-    expect(result).toStrictEqual({ ok: true });
+    expect(result).toStrictEqual({ ok: true })
 
     expect(
       await nameOf(first.accountId),
-      'the signed-in account is the one that should have been renamed',
-    ).toBe(name);
+      "the signed-in account is the one that should have been renamed"
+    ).toBe(name)
 
     expect(
       await nameOf(second.accountId),
-      'a form field redirected the write at another tenant',
-    ).toBe(secondNameBefore);
+      "a form field redirected the write at another tenant"
+    ).toBe(secondNameBefore)
 
     // Catches the other shape of the same bug: a `where` clause dropped
     // entirely, which renames every account and would still leave the first
     // account looking correct.
     expect(
       await countNamed(name),
-      'more than one account ended up with this name',
-    ).toBe(1);
-  });
+      "more than one account ended up with this name"
+    ).toBe(1)
+  })
 
-  it('renames the other account when that account is the one signed in', async () => {
-    actAs(second);
+  it("renames the other account when that account is the one signed in", async () => {
+    actAs(second)
 
-    const name = `second account ${randomUUID()}`;
-    const firstNameBefore = await nameOf(first.accountId);
+    const name = `second account ${randomUUID()}`
+    const firstNameBefore = await nameOf(first.accountId)
 
     expect(await renameAccountAction(formDataFor({ name }))).toStrictEqual({
       ok: true,
-    });
+    })
 
-    expect(await nameOf(second.accountId)).toBe(name);
-    expect(await nameOf(first.accountId)).toBe(firstNameBefore);
-  });
+    expect(await nameOf(second.accountId)).toBe(name)
+    expect(await nameOf(first.accountId)).toBe(firstNameBefore)
+  })
 
-  it('trims the stored name', async () => {
-    actAs(first);
+  it("trims the stored name", async () => {
+    actAs(first)
 
-    const name = `trimmed ${randomUUID()}`;
+    const name = `trimmed ${randomUUID()}`
 
     expect(
-      await renameAccountAction(formDataFor({ name: `  \t${name}\n  ` })),
-    ).toStrictEqual({ ok: true });
+      await renameAccountAction(formDataFor({ name: `  \t${name}\n  ` }))
+    ).toStrictEqual({ ok: true })
 
-    expect(await nameOf(first.accountId)).toBe(name);
-  });
+    expect(await nameOf(first.accountId)).toBe(name)
+  })
 
-  it('accepts a name of exactly the maximum length', async () => {
-    actAs(first);
+  it("accepts a name of exactly the maximum length", async () => {
+    actAs(first)
 
-    const name = 'x'.repeat(MAX_NAME_LENGTH);
+    const name = "x".repeat(MAX_NAME_LENGTH)
 
     expect(await renameAccountAction(formDataFor({ name }))).toStrictEqual({
       ok: true,
-    });
+    })
 
-    expect(await nameOf(first.accountId)).toBe(name);
-  });
+    expect(await nameOf(first.accountId)).toBe(name)
+  })
 
   /**
    * The control the rejection list above needs.
@@ -236,33 +244,33 @@ describeDatabase('renameAccountAction is scoped by the session', () => {
    * would be a second, quieter bug wearing a passing test.
    */
   it.each([
-    ['an embedded zero-width space', 'Acme\u200BCorp'],
-    ['an embedded word joiner', 'Acme\u2060Corp'],
-    ['one visible character among zero-widths', '\u200Bx\u2060'],
-    ['a non-Latin script', '株式会社'],
-    ['an emoji', '🎉'],
-  ])('accepts a name with %s and stores it verbatim', async (_label, name) => {
-    actAs(first);
+    ["an embedded zero-width space", "Acme\u200BCorp"],
+    ["an embedded word joiner", "Acme\u2060Corp"],
+    ["one visible character among zero-widths", "\u200Bx\u2060"],
+    ["a non-Latin script", "株式会社"],
+    ["an emoji", "🎉"],
+  ])("accepts a name with %s and stores it verbatim", async (_label, name) => {
+    actAs(first)
 
     expect(await renameAccountAction(formDataFor({ name }))).toStrictEqual({
       ok: true,
-    });
+    })
 
     expect(
       await nameOf(first.accountId),
-      'accepted, but stored as something else — it sanitized silently',
-    ).toBe(name);
+      "accepted, but stored as something else — it sanitized silently"
+    ).toBe(name)
 
-    expect(revalidatePath).toHaveBeenCalledWith('/', 'layout');
-  });
+    expect(revalidatePath).toHaveBeenCalledWith("/", "layout")
+  })
 
-  it('revalidates the whole layout, because the name is in every page shell', async () => {
-    actAs(first);
+  it("revalidates the whole layout, because the name is in every page shell", async () => {
+    actAs(first)
 
-    await renameAccountAction(formDataFor({ name: `shell ${randomUUID()}` }));
+    await renameAccountAction(formDataFor({ name: `shell ${randomUUID()}` }))
 
-    expect(revalidatePath).toHaveBeenCalledWith('/', 'layout');
-  });
+    expect(revalidatePath).toHaveBeenCalledWith("/", "layout")
+  })
 
   /**
    * Rejections, each asserted as "the stored name did not move" **and** as the
@@ -280,130 +288,130 @@ describeDatabase('renameAccountAction is scoped by the session', () => {
    * into an ordinary space without anyone noticing.
    */
   it.each([
-    ['the empty string', '', NEEDS_A_NAME],
-    ['a single space', ' ', NEEDS_A_NAME],
-    ['only whitespace', '   \t\n  ', NEEDS_A_NAME],
-    ['a non-breaking space', '\u00A0', NEEDS_A_NAME],
-    ['a zero-width space', '\u200B', NEEDS_A_NAME],
-    ['a word joiner', '\u2060', NEEDS_A_NAME],
-    ['a byte-order mark', '\uFEFF', NEEDS_A_NAME],
-    ['a right-to-left override', '\u202E', NEEDS_A_NAME],
-    ['a control character', '\u0001', NEEDS_A_NAME],
+    ["the empty string", "", NEEDS_A_NAME],
+    ["a single space", " ", NEEDS_A_NAME],
+    ["only whitespace", "   \t\n  ", NEEDS_A_NAME],
+    ["a non-breaking space", "\u00A0", NEEDS_A_NAME],
+    ["a zero-width space", "\u200B", NEEDS_A_NAME],
+    ["a word joiner", "\u2060", NEEDS_A_NAME],
+    ["a byte-order mark", "\uFEFF", NEEDS_A_NAME],
+    ["a right-to-left override", "\u202E", NEEDS_A_NAME],
+    ["a control character", "\u0001", NEEDS_A_NAME],
     [
-      'zero-width characters mixed with ordinary spaces',
-      ' \u200B \u2060\uFEFF ',
+      "zero-width characters mixed with ordinary spaces",
+      " \u200B \u2060\uFEFF ",
       NEEDS_A_NAME,
     ],
-    ['one character over the limit', 'x'.repeat(MAX_NAME_LENGTH + 1), TOO_LONG],
+    ["one character over the limit", "x".repeat(MAX_NAME_LENGTH + 1), TOO_LONG],
     [
-      'whitespace padding a name that is still over the limit',
-      `  ${'x'.repeat(MAX_NAME_LENGTH + 1)}  `,
+      "whitespace padding a name that is still over the limit",
+      `  ${"x".repeat(MAX_NAME_LENGTH + 1)}  `,
       TOO_LONG,
     ],
     // Both rules match this one. The emptiness check runs first and the message
     // says so, because telling someone their invisible name is too long is
     // useless advice.
     [
-      'an over-length run of zero-width characters',
-      '\u200B'.repeat(MAX_NAME_LENGTH + 1),
+      "an over-length run of zero-width characters",
+      "\u200B".repeat(MAX_NAME_LENGTH + 1),
       NEEDS_A_NAME,
     ],
   ])(
-    'rejects %s without writing',
+    "rejects %s without writing",
     async (_label, submitted, expectedMessage) => {
-      actAs(first);
+      actAs(first)
 
-      const before = await nameOf(first.accountId);
-      const result = await renameAccountAction(formDataFor({ name: submitted }));
+      const before = await nameOf(first.accountId)
+      const result = await renameAccountAction(formDataFor({ name: submitted }))
 
-      expect(result.ok).toBe(false);
+      expect(result.ok).toBe(false)
       expect(
         result,
-        'rejected, but by the wrong rule — the message would misdirect the user',
-      ).toHaveProperty('message', expect.stringMatching(expectedMessage));
+        "rejected, but by the wrong rule — the message would misdirect the user"
+      ).toHaveProperty("message", expect.stringMatching(expectedMessage))
 
       expect(
         await nameOf(first.accountId),
-        'a rejected rename wrote anyway',
-      ).toBe(before);
+        "a rejected rename wrote anyway"
+      ).toBe(before)
 
       expect(
         revalidatePath,
-        'a rejected rename revalidated, which says it thought it had written',
-      ).not.toHaveBeenCalled();
-    },
-  );
+        "a rejected rename revalidated, which says it thought it had written"
+      ).not.toHaveBeenCalled()
+    }
+  )
 
-  it('rejects a form with no name field at all', async () => {
-    actAs(first);
+  it("rejects a form with no name field at all", async () => {
+    actAs(first)
 
-    const before = await nameOf(first.accountId);
+    const before = await nameOf(first.accountId)
 
-    expect((await renameAccountAction(new FormData())).ok).toBe(false);
-    expect(await nameOf(first.accountId)).toBe(before);
-    expect(revalidatePath).not.toHaveBeenCalled();
-  });
+    expect((await renameAccountAction(new FormData())).ok).toBe(false)
+    expect(await nameOf(first.accountId)).toBe(before)
+    expect(revalidatePath).not.toHaveBeenCalled()
+  })
 
   /**
    * `FormData.get` returns a `File` for a file part, not a string. The action
    * has to treat that as absent rather than stringify it into `[object File]`.
    */
-  it('rejects a name submitted as a file part', async () => {
-    actAs(first);
+  it("rejects a name submitted as a file part", async () => {
+    actAs(first)
 
-    const before = await nameOf(first.accountId);
-    const formData = new FormData();
-    formData.set('name', new File(['Attacker Co'], 'name.txt'));
+    const before = await nameOf(first.accountId)
+    const formData = new FormData()
+    formData.set("name", new File(["Attacker Co"], "name.txt"))
 
-    expect((await renameAccountAction(formData)).ok).toBe(false);
-    expect(await nameOf(first.accountId)).toBe(before);
-    expect(revalidatePath).not.toHaveBeenCalled();
-  });
+    expect((await renameAccountAction(formData)).ok).toBe(false)
+    expect(await nameOf(first.accountId)).toBe(before)
+    expect(revalidatePath).not.toHaveBeenCalled()
+  })
 
   /**
    * With no session there is no account to scope to, so the action must fail
    * closed. A form field naming a real account is present precisely so that a
    * version that fell back to `formData` would rename it and fail here.
    */
-  it('refuses to write at all without a session', async () => {
-    actAs(null);
+  it("refuses to write at all without a session", async () => {
+    actAs(null)
 
-    const firstNameBefore = await nameOf(first.accountId);
-    const name = `unauthenticated ${randomUUID()}`;
+    const firstNameBefore = await nameOf(first.accountId)
+    const name = `unauthenticated ${randomUUID()}`
 
     await expect(
       renameAccountAction(
-        formDataFor({ name, accountId: first.accountId, id: first.accountId }),
-      ),
-    ).rejects.toThrow(/not authenticated/i);
+        formDataFor({ name, accountId: first.accountId, id: first.accountId })
+      )
+    ).rejects.toThrow(/not authenticated/i)
 
-    expect(await nameOf(first.accountId)).toBe(firstNameBefore);
-    expect(await nameOf(second.accountId)).toBe(secondNameBefore);
-    expect(await countNamed(name)).toBe(0);
-  });
+    expect(await nameOf(first.accountId)).toBe(firstNameBefore)
+    expect(await nameOf(second.accountId)).toBe(secondNameBefore)
+    expect(await countNamed(name)).toBe(0)
+  })
 
   /**
    * A forged cookie is rejected the same way an absent one is. Without this,
    * "fails closed" would only be proven for the case where the caller supplies
    * nothing, which is not the case an attacker is in.
    */
-  it('refuses to write for a forged session token', async () => {
+  it("refuses to write for a forged session token", async () => {
     requestHeaders.current = new Headers({
-      cookie: 'better-auth.session_token=not-a-real-token',
-    });
+      cookie: "better-auth.session_token=not-a-real-token",
+    })
 
-    const firstNameBefore = await nameOf(first.accountId);
+    const firstNameBefore = await nameOf(first.accountId)
 
     await expect(
       renameAccountAction(
         formDataFor({
           name: `forged ${randomUUID()}`,
           accountId: first.accountId,
-        }),
-      ),
-    ).rejects.toThrow(/not authenticated/i);
+        })
+      )
+    ).rejects.toThrow(/not authenticated/i)
 
-    expect(await nameOf(first.accountId)).toBe(firstNameBefore);
-    expect(await nameOf(second.accountId)).toBe(secondNameBefore);
-  });
-});
+    expect(await nameOf(first.accountId)).toBe(firstNameBefore)
+    expect(await nameOf(second.accountId)).toBe(secondNameBefore)
+  })
+})

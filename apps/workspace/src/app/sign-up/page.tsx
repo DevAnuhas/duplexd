@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import Link from "next/link"
 
 import {
   Card,
@@ -6,9 +6,9 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
+} from "@/components/ui/card"
 
-import { SignUpForm } from './sign-up-form';
+import { SignUpForm } from "./sign-up-form"
 
 /** Create an account. Static, outside the `(app)` group — see `/sign-in`. */
 export default function SignUpPage() {
@@ -17,7 +17,7 @@ export default function SignUpPage() {
       <div className="w-full max-w-sm space-y-6">
         <div className="space-y-1 text-center">
           <h1 className="text-2xl font-semibold tracking-tight">duplexd</h1>
-          <p className="text-muted-foreground text-sm">
+          <p className="text-sm text-muted-foreground">
             Manage your voice assistants and the calls they take.
           </p>
         </div>
@@ -40,8 +40,8 @@ export default function SignUpPage() {
           </CardContent>
         </Card>
 
-        <p className="text-muted-foreground text-center text-sm">
-          Already have one?{' '}
+        <p className="text-center text-sm text-muted-foreground">
+          Already have one?{" "}
           <Link
             href="/sign-in"
             className="text-foreground underline underline-offset-4"
@@ -52,5 +52,5 @@ export default function SignUpPage() {
         </p>
       </div>
     </main>
-  );
+  )
 }

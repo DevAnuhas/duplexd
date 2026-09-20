@@ -1,8 +1,8 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID } from "node:crypto"
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
-import { closeDb } from '@/db/client';
+import { closeDb } from "@/db/client"
 
 import {
   CANARY_PASSWORD,
@@ -10,9 +10,9 @@ import {
   signIn,
   signUpNewAccount,
   type SignedUpUser,
-} from './helpers/auth.ts';
-import { withTestPool } from './helpers/database.ts';
-import { isDatabaseConfigured } from './helpers/environment.ts';
+} from "./helpers/auth.ts"
+import { withTestPool } from "./helpers/database.ts"
+import { isDatabaseConfigured } from "./helpers/environment.ts"
 
 /**
  * Signup through the real Better Auth handler: what it creates, and what it
@@ -25,131 +25,131 @@ import { isDatabaseConfigured } from './helpers/environment.ts';
  * and neither is visible from reading the configuration.
  */
 
-const describeDatabase = describe.skipIf(!isDatabaseConfigured());
+const describeDatabase = describe.skipIf(!isDatabaseConfigured())
 
 afterAll(async () => {
-  await closeDb();
-});
+  await closeDb()
+})
 
-describeDatabase('signup creates an account and a user in it', () => {
-  let signedUp: SignedUpUser;
+describeDatabase("signup creates an account and a user in it", () => {
+  let signedUp: SignedUpUser
 
   beforeAll(async () => {
-    signedUp = await signUpNewAccount();
-  });
+    signedUp = await signUpNewAccount()
+  })
 
-  it('writes a user row with a non-empty account_id', () => {
-    expect(signedUp.userId).not.toBe('');
-    expect(signedUp.accountId).not.toBe('');
-  });
+  it("writes a user row with a non-empty account_id", () => {
+    expect(signedUp.userId).not.toBe("")
+    expect(signedUp.accountId).not.toBe("")
+  })
 
-  it('writes the matching accounts row', async () => {
+  it("writes the matching accounts row", async () => {
     const exists = await withTestPool(async (pool) => {
       const { rows } = await pool.query<{ id: string }>(
-        'SELECT id FROM accounts WHERE id = $1',
-        [signedUp.accountId],
-      );
+        "SELECT id FROM accounts WHERE id = $1",
+        [signedUp.accountId]
+      )
 
-      return rows.length;
-    });
+      return rows.length
+    })
 
-    expect(exists).toBe(1);
-  });
+    expect(exists).toBe(1)
+  })
 
-  it('issues a session cookie', () => {
-    expect(signedUp.cookie).not.toBe('');
-  });
+  it("issues a session cookie", () => {
+    expect(signedUp.cookie).not.toBe("")
+  })
 
-  it('gives each signup its own account', async () => {
-    const other = await signUpNewAccount();
+  it("gives each signup its own account", async () => {
+    const other = await signUpNewAccount()
 
-    expect(other.accountId).not.toBe(signedUp.accountId);
-  });
+    expect(other.accountId).not.toBe(signedUp.accountId)
+  })
 
   /**
    * The password. Never stored in plaintext, and never echoed back — the
    * response body is checked as well as the row, because a signup that returns
    * what it was given puts the password in every proxy log on the way back.
    */
-  it('never stores the password in plaintext anywhere', async () => {
+  it("never stores the password in plaintext anywhere", async () => {
     const hits = await withTestPool(async (pool) => {
       const { rows: tables } = await pool.query<{ table_name: string }>(
         `SELECT table_name FROM information_schema.tables
-         WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`,
-      );
+         WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`
+      )
 
-      const found: string[] = [];
+      const found: string[] = []
 
       for (const { table_name } of tables) {
         const { rows } = await pool.query<{ hits: string }>(
           `SELECT count(*)::text AS hits FROM "${table_name}" t
            WHERE to_jsonb(t)::text LIKE $1`,
-          [`%${CANARY_PASSWORD}%`],
-        );
+          [`%${CANARY_PASSWORD}%`]
+        )
 
         if (Number(rows[0]?.hits ?? 0) > 0) {
-          found.push(table_name);
+          found.push(table_name)
         }
       }
 
-      return found;
-    });
+      return found
+    })
 
-    expect(hits).toStrictEqual([]);
-  });
+    expect(hits).toStrictEqual([])
+  })
 
-  it('stores a credential that is not the password', async () => {
+  it("stores a credential that is not the password", async () => {
     const stored = await withTestPool(async (pool) => {
       const { rows } = await pool.query<{ password: string | null }>(
-        'SELECT password FROM auth_accounts WHERE user_id = $1',
-        [signedUp.userId],
-      );
+        "SELECT password FROM auth_accounts WHERE user_id = $1",
+        [signedUp.userId]
+      )
 
-      return rows[0]?.password ?? null;
-    });
+      return rows[0]?.password ?? null
+    })
 
-    expect(stored).not.toBeNull();
-    expect(stored).not.toBe(CANARY_PASSWORD);
-    expect(stored ?? '').not.toContain(CANARY_PASSWORD);
-  });
-});
+    expect(stored).not.toBeNull()
+    expect(stored).not.toBe(CANARY_PASSWORD)
+    expect(stored ?? "").not.toContain(CANARY_PASSWORD)
+  })
+})
 
-describeDatabase('signing in', () => {
-  let signedUp: SignedUpUser;
+describeDatabase("signing in", () => {
+  let signedUp: SignedUpUser
 
   beforeAll(async () => {
-    signedUp = await signUpNewAccount();
-  });
+    signedUp = await signUpNewAccount()
+  })
 
-  it('succeeds with the right password', async () => {
-    const response = await signIn(signedUp.email, signedUp.password);
+  it("succeeds with the right password", async () => {
+    const response = await signIn(signedUp.email, signedUp.password)
 
-    expect(response.status).toBe(200);
-    expect(response.headers.getSetCookie().length).toBeGreaterThan(0);
-  });
+    expect(response.status).toBe(200)
+    expect(response.headers.getSetCookie().length).toBeGreaterThan(0)
+  })
 
-  it('fails with the wrong password and issues no session', async () => {
-    const response = await signIn(signedUp.email, 'definitely-not-the-password');
+  it("fails with the wrong password and issues no session", async () => {
+    const response = await signIn(signedUp.email, "definitely-not-the-password")
 
-    expect(response.ok).toBe(false);
-    expect(response.headers.getSetCookie()).toStrictEqual([]);
-  });
+    expect(response.ok).toBe(false)
+    expect(response.headers.getSetCookie()).toStrictEqual([])
+  })
 
   /**
    * The same answer for "no such user" and "wrong password". A response that
    * distinguishes them turns the sign-in form into an account-enumeration oracle.
    */
-  it('does not reveal whether an email exists', async () => {
-    const wrongPassword = await signIn(signedUp.email, 'wrong-password-here');
+  it("does not reveal whether an email exists", async () => {
+    const wrongPassword = await signIn(signedUp.email, "wrong-password-here")
     const noSuchUser = await signIn(
       `absent-${randomUUID()}@example.invalid`,
-      'wrong-password-here',
-    );
+      "wrong-password-here"
+    )
 
-    expect(noSuchUser.status).toBe(wrongPassword.status);
-    expect(await noSuchUser.text()).toBe(await wrongPassword.text());
-  });
-});
+    expect(noSuchUser.status).toBe(wrongPassword.status)
+    expect(await noSuchUser.text()).toBe(await wrongPassword.text())
+  })
+})
 
 /**
  * A duplicate signup.
@@ -166,8 +166,8 @@ describeDatabase('signing in', () => {
  * rejected, it creates no second user and no second account, and it leaves
  * nothing behind.
  */
-describeDatabase('a duplicate signup', () => {
-  let signedUp: SignedUpUser;
+describeDatabase("a duplicate signup", () => {
+  let signedUp: SignedUpUser
 
   /**
    * Accounts belonging to this email, scoped rather than counted globally.
@@ -177,8 +177,8 @@ describeDatabase('a duplicate signup', () => {
    * coupled to whatever other files happened to run first.
    */
   async function accountsFor(email: string): Promise<{
-    total: number;
-    orphans: number;
+    total: number
+    orphans: number
   }> {
     return withTestPool(async (pool) => {
       const { rows } = await pool.query<{ total: string; orphans: string }>(
@@ -189,51 +189,51 @@ describeDatabase('a duplicate signup', () => {
                   )
                 )::text AS orphans
          FROM accounts a WHERE a.name = $1`,
-        [email],
-      );
+        [email]
+      )
 
       return {
         total: Number(rows[0]?.total ?? 0),
         orphans: Number(rows[0]?.orphans ?? 0),
-      };
-    });
+      }
+    })
   }
 
   beforeAll(async () => {
-    signedUp = await signUpNewAccount();
+    signedUp = await signUpNewAccount()
 
     // Two attempts, so a leak that only happens on repeat is still visible.
-    await attemptSignUp(signedUp.email, CANARY_PASSWORD);
-    await attemptSignUp(signedUp.email, 'a-completely-different-password');
-  });
+    await attemptSignUp(signedUp.email, CANARY_PASSWORD)
+    await attemptSignUp(signedUp.email, "a-completely-different-password")
+  })
 
-  it('is rejected', async () => {
-    const response = await attemptSignUp(signedUp.email, CANARY_PASSWORD);
+  it("is rejected", async () => {
+    const response = await attemptSignUp(signedUp.email, CANARY_PASSWORD)
 
-    expect(response.ok).toBe(false);
-  });
+    expect(response.ok).toBe(false)
+  })
 
-  it('leaves exactly one user for that email', async () => {
+  it("leaves exactly one user for that email", async () => {
     const matching = await withTestPool(async (pool) => {
       const { rows } = await pool.query<{ count: string }>(
-        'SELECT count(*)::text AS count FROM users WHERE email = $1',
-        [signedUp.email],
-      );
+        "SELECT count(*)::text AS count FROM users WHERE email = $1",
+        [signedUp.email]
+      )
 
-      return Number(rows[0]?.count ?? 0);
-    });
+      return Number(rows[0]?.count ?? 0)
+    })
 
-    expect(matching).toBe(1);
-  });
+    expect(matching).toBe(1)
+  })
 
-  it('leaves no orphan account behind', async () => {
-    const { orphans } = await accountsFor(signedUp.email);
+  it("leaves no orphan account behind", async () => {
+    const { orphans } = await accountsFor(signedUp.email)
 
     expect(
       orphans,
-      'a rejected signup created an accounts row with no user in it',
-    ).toBe(0);
-  });
+      "a rejected signup created an accounts row with no user in it"
+    ).toBe(0)
+  })
 
   /**
    * The case the sequential tests above cannot reach.
@@ -250,12 +250,12 @@ describeDatabase('a duplicate signup', () => {
    * otherwise would be the same false comfort this file just removed. They are
    * inert: nothing resolves to an account except through a user's `account_id`.
    */
-  it('keeps one user and no account-less user under concurrency', async () => {
-    const email = `concurrent-${randomUUID()}@example.test`;
+  it("keeps one user and no account-less user under concurrency", async () => {
+    const email = `concurrent-${randomUUID()}@example.test`
 
     await Promise.all(
-      Array.from({ length: 6 }, () => attemptSignUp(email, CANARY_PASSWORD)),
-    );
+      Array.from({ length: 6 }, () => attemptSignUp(email, CANARY_PASSWORD))
+    )
 
     const { users, accountless } = await withTestPool(async (pool) => {
       const { rows } = await pool.query<{ users: string; accountless: string }>(
@@ -264,25 +264,25 @@ describeDatabase('a duplicate signup', () => {
                   WHERE NOT EXISTS (
                     SELECT 1 FROM accounts a WHERE a.id = u.account_id
                   )) AS accountless`,
-        [email],
-      );
+        [email]
+      )
 
       return {
         users: Number(rows[0]?.users ?? 0),
         accountless: Number(rows[0]?.accountless ?? 0),
-      };
-    });
+      }
+    })
 
-    expect(users, 'concurrent signups created more than one user').toBe(1);
+    expect(users, "concurrent signups created more than one user").toBe(1)
     expect(
       accountless,
-      'a user exists whose account_id points at no account',
-    ).toBe(0);
-  });
+      "a user exists whose account_id points at no account"
+    ).toBe(0)
+  })
 
-  it('creates no second account for the same person', async () => {
-    const { total } = await accountsFor(signedUp.email);
+  it("creates no second account for the same person", async () => {
+    const { total } = await accountsFor(signedUp.email)
 
-    expect(total).toBe(1);
-  });
-});
+    expect(total).toBe(1)
+  })
+})

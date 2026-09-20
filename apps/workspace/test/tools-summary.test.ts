@@ -1,13 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from "vitest"
 
-import { summarizeTools } from '@/lib/tools-summary';
+import { summarizeTools } from "@/lib/tools-summary"
 
 import {
   CANARY,
   expectAbsent,
   flatTool,
   wrappedTool,
-} from './helpers/assistant-form/tool-fixtures.ts';
+} from "./helpers/assistant-form/tool-fixtures.ts"
 
 /**
  * The tool summary that sits beside the editor's JSON textarea.
@@ -40,21 +40,21 @@ import {
  * illusion as a validation matrix that never checks *which* rule fired.
  */
 
-type Summary = ReturnType<typeof summarizeTools>;
-type Rows = Extract<Summary, { ok: true }>['rows'];
+type Summary = ReturnType<typeof summarizeTools>
+type Rows = Extract<Summary, { ok: true }>["rows"]
 
 /** Summarises a JavaScript value by way of the string the API actually takes. */
 function summarizeValue(value: unknown): Summary {
-  return summarizeTools(JSON.stringify(value));
+  return summarizeTools(JSON.stringify(value))
 }
 
 /** The rows, or a failure naming the error that came back instead. */
 function expectRows(result: Summary): Rows {
   if (!result.ok) {
-    throw new Error(`Expected a summary, got an error: ${result.error}`);
+    throw new Error(`Expected a summary, got an error: ${result.error}`)
   }
 
-  return result.rows;
+  return result.rows
 }
 
 /** The error message, or a failure naming the rows that came back instead. */
@@ -63,149 +63,150 @@ function expectError(result: Summary): string {
     throw new Error(
       `Expected an error, got ${result.rows.length} row(s): ${result.rows
         .map((row) => row.name)
-        .join(', ')}`,
-    );
+        .join(", ")}`
+    )
   }
 
-  expect(typeof result.error).toBe('string');
-  expect(result.error.trim()).not.toBe('');
+  expect(typeof result.error).toBe("string")
+  expect(result.error.trim()).not.toBe("")
 
-  return result.error;
+  return result.error
 }
 
-describe('the shapes a tool list may take', () => {
-  it('summarises a flat tool object', () => {
+describe("the shapes a tool list may take", () => {
+  it("summarises a flat tool object", () => {
     expect(expectRows(summarizeValue([flatTool()]))).toStrictEqual([
       {
-        name: 'lookup_order',
-        description: 'Looks up an order by its reference.',
+        name: "lookup_order",
+        description: "Looks up an order by its reference.",
         parameterCount: 1,
       },
-    ]);
-  });
+    ])
+  })
 
   /**
    * The wrapped shape is what a customer gets by copying from OpenAI's own
    * documentation, so it is the more likely of the two to arrive in the
    * textarea — not a legacy alias.
    */
-  it('summarises a wrapped OpenAI function object identically', () => {
+  it("summarises a wrapped OpenAI function object identically", () => {
     expect(expectRows(summarizeValue([wrappedTool()]))).toStrictEqual(
-      expectRows(summarizeValue([flatTool()])),
-    );
-  });
+      expectRows(summarizeValue([flatTool()]))
+    )
+  })
 
-  it('accepts both shapes in one list', () => {
+  it("accepts both shapes in one list", () => {
     const rows = expectRows(
       summarizeValue([
         flatTool(),
-        wrappedTool({ name: 'cancel_order', description: 'Cancels an order.' }),
-      ]),
-    );
+        wrappedTool({ name: "cancel_order", description: "Cancels an order." }),
+      ])
+    )
 
     expect(rows.map((row) => row.name)).toStrictEqual([
-      'lookup_order',
-      'cancel_order',
-    ]);
-  });
+      "lookup_order",
+      "cancel_order",
+    ])
+  })
 
-  it('summarises an empty list as no rows', () => {
-    expect(expectRows(summarizeTools('[]'))).toStrictEqual([]);
-  });
+  it("summarises an empty list as no rows", () => {
+    expect(expectRows(summarizeTools("[]"))).toStrictEqual([])
+  })
 
   /**
    * The summary sits next to the textarea and is read against it. Rows in a
    * different order than the JSON would make that comparison actively
    * misleading for the twelve-tool list this feature exists to serve.
    */
-  it('keeps the order of the list', () => {
+  it("keeps the order of the list", () => {
     const rows = expectRows(
       summarizeValue([
-        flatTool({ name: 'c' }),
-        flatTool({ name: 'a' }),
-        flatTool({ name: 'b' }),
-      ]),
-    );
+        flatTool({ name: "c" }),
+        flatTool({ name: "a" }),
+        flatTool({ name: "b" }),
+      ])
+    )
 
-    expect(rows.map((row) => row.name)).toStrictEqual(['c', 'a', 'b']);
-  });
+    expect(rows.map((row) => row.name)).toStrictEqual(["c", "a", "b"])
+  })
 
-  it('tolerates whitespace and newlines around the JSON', () => {
-    expect(expectRows(summarizeTools(`\n  ${JSON.stringify([flatTool()])}\n `)))
-      .toHaveLength(1);
-  });
-});
+  it("tolerates whitespace and newlines around the JSON", () => {
+    expect(
+      expectRows(summarizeTools(`\n  ${JSON.stringify([flatTool()])}\n `))
+    ).toHaveLength(1)
+  })
+})
 
-describe('counting parameters', () => {
+describe("counting parameters", () => {
   /** Builds a tool whose `parameters` is exactly the given object. */
   function withParameters(parameters: unknown): Record<string, unknown> {
-    return flatTool({ parameters });
+    return flatTool({ parameters })
   }
 
-  it('counts the top-level properties', () => {
+  it("counts the top-level properties", () => {
     const rows = expectRows(
       summarizeValue([
         withParameters({
-          type: 'object',
+          type: "object",
           properties: {
-            reference: { type: 'string' },
-            locale: { type: 'string' },
-            includeHistory: { type: 'boolean' },
+            reference: { type: "string" },
+            locale: { type: "string" },
+            includeHistory: { type: "boolean" },
           },
         }),
-      ]),
-    );
+      ])
+    )
 
-    expect(rows[0]?.parameterCount).toBe(3);
-  });
+    expect(rows[0]?.parameterCount).toBe(3)
+  })
 
   /**
    * A nested object schema is one parameter to a caller, not three. Counting
    * recursively would tell a customer their tool takes eight arguments when it
    * takes two, which is worse than showing nothing.
    */
-  it('does not count nested properties', () => {
+  it("does not count nested properties", () => {
     const rows = expectRows(
       summarizeValue([
         withParameters({
-          type: 'object',
+          type: "object",
           properties: {
-            reference: { type: 'string' },
+            reference: { type: "string" },
             address: {
-              type: 'object',
+              type: "object",
               properties: {
-                line1: { type: 'string' },
-                city: { type: 'string' },
-                postcode: { type: 'string' },
+                line1: { type: "string" },
+                city: { type: "string" },
+                postcode: { type: "string" },
               },
             },
           },
         }),
-      ]),
-    );
+      ])
+    )
 
-    expect(rows[0]?.parameterCount).toBe(2);
-  });
+    expect(rows[0]?.parameterCount).toBe(2)
+  })
 
   /**
    * A tool that takes no arguments is ordinary — "what time is it", "hang up" —
    * and both spellings of it occur in the wild. Neither is an error.
    */
-  it('counts a schema with no properties key as zero', () => {
+  it("counts a schema with no properties key as zero", () => {
     const rows = expectRows(
-      summarizeValue([withParameters({ type: 'object' })]),
-    );
+      summarizeValue([withParameters({ type: "object" })])
+    )
 
-    expect(rows[0]?.parameterCount).toBe(0);
-  });
+    expect(rows[0]?.parameterCount).toBe(0)
+  })
 
-  it('counts an empty properties object as zero', () => {
+  it("counts an empty properties object as zero", () => {
     const rows = expectRows(
-      summarizeValue([withParameters({ type: 'object', properties: {} })]),
-    );
+      summarizeValue([withParameters({ type: "object", properties: {} })])
+    )
 
-    expect(rows[0]?.parameterCount).toBe(0);
-  });
+    expect(rows[0]?.parameterCount).toBe(0)
+  })
 
   /**
    * `required`, `type` and `additionalProperties` are siblings of `properties`,
@@ -214,43 +215,43 @@ describe('counting parameters', () => {
    * to have as many schema keywords as properties, and this is the case that
    * separates them.
    */
-  it('counts properties rather than schema keywords', () => {
+  it("counts properties rather than schema keywords", () => {
     const rows = expectRows(
       summarizeValue([
         withParameters({
-          type: 'object',
+          type: "object",
           additionalProperties: false,
-          required: ['reference'],
-          description: 'The arguments.',
-          properties: { reference: { type: 'string' } },
+          required: ["reference"],
+          description: "The arguments.",
+          properties: { reference: { type: "string" } },
         }),
-      ]),
-    );
+      ])
+    )
 
-    expect(rows[0]?.parameterCount).toBe(1);
-  });
+    expect(rows[0]?.parameterCount).toBe(1)
+  })
 
   /**
    * A parameter may legitimately be called `type`, `required` or `length`.
    * Counting by anything other than the key set — filtering out names that look
    * like keywords, or reaching for `.length` on the object — drops these.
    */
-  it('counts properties whose names collide with schema keywords', () => {
+  it("counts properties whose names collide with schema keywords", () => {
     const rows = expectRows(
       summarizeValue([
         withParameters({
-          type: 'object',
+          type: "object",
           properties: {
-            type: { type: 'string' },
-            required: { type: 'boolean' },
-            length: { type: 'number' },
+            type: { type: "string" },
+            required: { type: "boolean" },
+            length: { type: "number" },
           },
         }),
-      ]),
-    );
+      ])
+    )
 
-    expect(rows[0]?.parameterCount).toBe(3);
-  });
+    expect(rows[0]?.parameterCount).toBe(3)
+  })
 
   /**
    * `__proto__` in parsed JSON is an ordinary own property — `JSON.parse` does
@@ -259,93 +260,93 @@ describe('counting parameters', () => {
    * back into one. The count must include it, and nothing may leak onto
    * `Object.prototype`.
    */
-  it('counts a property named __proto__ without polluting the prototype', () => {
+  it("counts a property named __proto__ without polluting the prototype", () => {
     const rows = expectRows(
       summarizeTools(
         '[{"name":"a","description":"d","parameters":{"type":"object",' +
-          '"properties":{"__proto__":{"type":"string"},"safe":{"type":"string"}}}}]',
-      ),
-    );
+          '"properties":{"__proto__":{"type":"string"},"safe":{"type":"string"}}}}]'
+      )
+    )
 
-    expect(rows[0]?.parameterCount).toBe(2);
-    expect(Object.prototype).not.toHaveProperty('type');
-    expect(({} as Record<string, unknown>).type).toBeUndefined();
-  });
+    expect(rows[0]?.parameterCount).toBe(2)
+    expect(Object.prototype).not.toHaveProperty("type")
+    expect(({} as Record<string, unknown>).type).toBeUndefined()
+  })
 
-  it('counts each tool independently', () => {
+  it("counts each tool independently", () => {
     const rows = expectRows(
       summarizeValue([
-        withParameters({ type: 'object', properties: { a: {}, b: {} } }),
-        flatTool({ name: 'second', parameters: { type: 'object' } }),
-      ]),
-    );
+        withParameters({ type: "object", properties: { a: {}, b: {} } }),
+        flatTool({ name: "second", parameters: { type: "object" } }),
+      ])
+    )
 
-    expect(rows.map((row) => row.parameterCount)).toStrictEqual([2, 0]);
-  });
-});
+    expect(rows.map((row) => row.parameterCount)).toStrictEqual([2, 0])
+  })
+})
 
-describe('rejecting input the summary cannot describe', () => {
-  it('rejects text that is not JSON', () => {
-    expectError(summarizeTools('{ not json'));
-  });
+describe("rejecting input the summary cannot describe", () => {
+  it("rejects text that is not JSON", () => {
+    expectError(summarizeTools("{ not json"))
+  })
 
-  it('rejects an empty string', () => {
-    expectError(summarizeTools(''));
-  });
+  it("rejects an empty string", () => {
+    expectError(summarizeTools(""))
+  })
 
-  it('rejects a lone object rather than a list', () => {
-    expectError(summarizeValue(flatTool()));
-  });
+  it("rejects a lone object rather than a list", () => {
+    expectError(summarizeValue(flatTool()))
+  })
 
-  it('rejects a JSON scalar', () => {
-    expectError(summarizeTools('"lookup_order"'));
-    expectError(summarizeTools('42'));
-    expectError(summarizeTools('null'));
-  });
+  it("rejects a JSON scalar", () => {
+    expectError(summarizeTools('"lookup_order"'))
+    expectError(summarizeTools("42"))
+    expectError(summarizeTools("null"))
+  })
 
-  it('rejects a list entry that is not an object', () => {
-    expectError(summarizeValue(['lookup_order']));
-    expectError(summarizeValue([null]));
-    expectError(summarizeValue([['lookup_order']]));
-  });
+  it("rejects a list entry that is not an object", () => {
+    expectError(summarizeValue(["lookup_order"]))
+    expectError(summarizeValue([null]))
+    expectError(summarizeValue([["lookup_order"]]))
+  })
 
-  it('rejects a tool with no name', () => {
-    const tool = flatTool();
+  it("rejects a tool with no name", () => {
+    const tool = flatTool()
 
-    delete tool.name;
+    delete tool.name
 
-    expectError(summarizeValue([tool]));
-  });
+    expectError(summarizeValue([tool]))
+  })
 
-  it('rejects a name that is not a string', () => {
-    expectError(summarizeValue([flatTool({ name: 7 })]));
-  });
+  it("rejects a name that is not a string", () => {
+    expectError(summarizeValue([flatTool({ name: 7 })]))
+  })
 
-  it('rejects a tool with no description', () => {
-    const tool = flatTool();
+  it("rejects a tool with no description", () => {
+    const tool = flatTool()
 
-    delete tool.description;
+    delete tool.description
 
-    expectError(summarizeValue([tool]));
-  });
+    expectError(summarizeValue([tool]))
+  })
 
-  it('rejects a description that is not a string', () => {
-    expectError(summarizeValue([flatTool({ description: ['a', 'b'] })]));
-  });
+  it("rejects a description that is not a string", () => {
+    expectError(summarizeValue([flatTool({ description: ["a", "b"] })]))
+  })
 
-  it('rejects a tool with no parameters', () => {
-    const tool = flatTool();
+  it("rejects a tool with no parameters", () => {
+    const tool = flatTool()
 
-    delete tool.parameters;
+    delete tool.parameters
 
-    expectError(summarizeValue([tool]));
-  });
+    expectError(summarizeValue([tool]))
+  })
 
-  it('rejects parameters that are not an object', () => {
-    expectError(summarizeValue([flatTool({ parameters: 'object' })]));
-    expectError(summarizeValue([flatTool({ parameters: null })]));
-    expectError(summarizeValue([flatTool({ parameters: [] })]));
-  });
+  it("rejects parameters that are not an object", () => {
+    expectError(summarizeValue([flatTool({ parameters: "object" })]))
+    expectError(summarizeValue([flatTool({ parameters: null })]))
+    expectError(summarizeValue([flatTool({ parameters: [] })]))
+  })
 
   /**
    * Absent `properties` is zero parameters; `properties` that is present and
@@ -353,32 +354,32 @@ describe('rejecting input the summary cannot describe', () => {
    * would report "0 parameters" for a tool whose arguments the customer has
    * written as an array — plausible-looking, wrong, and silent.
    */
-  it('rejects properties that are present but not an object', () => {
+  it("rejects properties that are present but not an object", () => {
     expectError(
       summarizeValue([
-        flatTool({ parameters: { type: 'object', properties: [] } }),
-      ]),
-    );
+        flatTool({ parameters: { type: "object", properties: [] } }),
+      ])
+    )
     expectError(
       summarizeValue([
-        flatTool({ parameters: { type: 'object', properties: 'reference' } }),
-      ]),
-    );
+        flatTool({ parameters: { type: "object", properties: "reference" } }),
+      ])
+    )
     expectError(
       summarizeValue([
-        flatTool({ parameters: { type: 'object', properties: null } }),
-      ]),
-    );
-  });
+        flatTool({ parameters: { type: "object", properties: null } }),
+      ])
+    )
+  })
 
-  it('rejects a function wrapper with no function object', () => {
-    expectError(summarizeValue([{ type: 'function' }]));
-  });
+  it("rejects a function wrapper with no function object", () => {
+    expectError(summarizeValue([{ type: "function" }]))
+  })
 
-  it('rejects a function wrapper whose function is not an object', () => {
-    expectError(summarizeValue([{ type: 'function', function: 'lookup' }]));
-    expectError(summarizeValue([{ type: 'function', function: null }]));
-  });
+  it("rejects a function wrapper whose function is not an object", () => {
+    expectError(summarizeValue([{ type: "function", function: "lookup" }]))
+    expectError(summarizeValue([{ type: "function", function: null }]))
+  })
 
   /**
    * One bad tool fails the whole summary rather than being dropped from it.
@@ -386,84 +387,83 @@ describe('rejecting input the summary cannot describe', () => {
    * as "I pasted eleven", and the customer would go looking for the wrong
    * mistake.
    */
-  it('rejects the whole list when a single tool is malformed', () => {
-    expectError(
-      summarizeValue([flatTool(), flatTool({ name: 7 }), flatTool()]),
-    );
-  });
-});
+  it("rejects the whole list when a single tool is malformed", () => {
+    expectError(summarizeValue([flatTool(), flatTool({ name: 7 }), flatTool()]))
+  })
+})
 
-describe('never throwing', () => {
+describe("never throwing", () => {
   /**
    * The summary runs over a textarea mid-edit, so every one of these is
    * something a customer produces on the way to valid JSON, not an attack.
    * They must come back as a result, not as an exception.
    */
   const hostile: Array<[label: string, input: string]> = [
-    ['an empty string', ''],
-    ['whitespace only', '   \n\t  '],
-    ['an open bracket', '['],
-    ['a half-typed tool', '[{"name": "look'],
-    ['a trailing comma', '[{"name":"a","description":"d","parameters":{}},]'],
-    ['single quotes', "[{'name':'a'}]"],
-    ['the word undefined', 'undefined'],
-    ['a byte order mark', '﻿[]'],
-    ['a lone surrogate escape', '["\\ud800"]'],
-    ['deep nesting', `[${'['.repeat(200)}${']'.repeat(200)}]`],
-    ['a prototype key at tool level', '[{"__proto__":{"name":"a"}}]'],
-    ['a very large integer', '[{"name":"a","description":"d","parameters":9007199254740993}]'],
-    ['NaN', '[NaN]'],
-    ['embedded null bytes', '[\\u0000]'],
-    ['a raw control character', '["a\0b"]'],
-  ];
+    ["an empty string", ""],
+    ["whitespace only", "   \n\t  "],
+    ["an open bracket", "["],
+    ["a half-typed tool", '[{"name": "look'],
+    ["a trailing comma", '[{"name":"a","description":"d","parameters":{}},]'],
+    ["single quotes", "[{'name':'a'}]"],
+    ["the word undefined", "undefined"],
+    ["a byte order mark", "﻿[]"],
+    ["a lone surrogate escape", '["\\ud800"]'],
+    ["deep nesting", `[${"[".repeat(200)}${"]".repeat(200)}]`],
+    ["a prototype key at tool level", '[{"__proto__":{"name":"a"}}]'],
+    [
+      "a very large integer",
+      '[{"name":"a","description":"d","parameters":9007199254740993}]',
+    ],
+    ["NaN", "[NaN]"],
+    ["embedded null bytes", "[\\u0000]"],
+    ["a raw control character", '["a\0b"]'],
+  ]
 
-  it.each(hostile)('returns a result for %s', (_label, input) => {
-    const result = summarizeTools(input);
+  it.each(hostile)("returns a result for %s", (_label, input) => {
+    const result = summarizeTools(input)
 
-    expect(result).toBeTypeOf('object');
-    expect(result).not.toBeNull();
-    expect(typeof result.ok).toBe('boolean');
-  });
-});
+    expect(result).toBeTypeOf("object")
+    expect(result).not.toBeNull()
+    expect(typeof result.ok).toBe("boolean")
+  })
+})
 
-describe('not echoing the input', () => {
+describe("not echoing the input", () => {
   /**
    * The control. `expectAbsent` is the detector every test below leans on, and
    * a detector that never fires would make all of them pass against an
    * implementation that echoes everything. This proves it fires.
    */
-  it('detects a canary when one is genuinely present', () => {
-    expect(() => expectAbsent(`parse failed near ${CANARY}`)).toThrow(CANARY);
-    expect(() => expectAbsent('parse failed')).not.toThrow();
-  });
+  it("detects a canary when one is genuinely present", () => {
+    expect(() => expectAbsent(`parse failed near ${CANARY}`)).toThrow(CANARY)
+    expect(() => expectAbsent("parse failed")).not.toThrow()
+  })
 
-  it('does not echo a malformed document', () => {
-    expectAbsent(expectError(summarizeTools(`[{"secret": "${CANARY}"`)));
-  });
+  it("does not echo a malformed document", () => {
+    expectAbsent(expectError(summarizeTools(`[{"secret": "${CANARY}"`)))
+  })
 
-  it('does not echo a rejected tool', () => {
+  it("does not echo a rejected tool", () => {
     expectAbsent(
-      expectError(
-        summarizeValue([flatTool({ name: 7, description: CANARY })]),
-      ),
-    );
-  });
+      expectError(summarizeValue([flatTool({ name: 7, description: CANARY })]))
+    )
+  })
 
-  it('does not echo a value that is the wrong type', () => {
-    expectAbsent(expectError(summarizeTools(`"${CANARY}"`)));
-  });
+  it("does not echo a value that is the wrong type", () => {
+    expectAbsent(expectError(summarizeTools(`"${CANARY}"`)))
+  })
 
-  it('does not echo a parameters object it rejected', () => {
+  it("does not echo a parameters object it rejected", () => {
     expectAbsent(
       expectError(
         summarizeValue([
           flatTool({
-            parameters: { type: 'object', properties: [CANARY] },
+            parameters: { type: "object", properties: [CANARY] },
           }),
-        ]),
-      ),
-    );
-  });
+        ])
+      )
+    )
+  })
 
   /**
    * The rule above must not be over-read into "errors may say nothing". A
@@ -472,20 +472,20 @@ describe('not echoing the input', () => {
    * not, since names can be absent, empty or duplicated in exactly the lists
    * that get rejected.
    */
-  it('still says which tool is at fault', () => {
+  it("still says which tool is at fault", () => {
     const third = expectError(
-      summarizeValue([flatTool(), flatTool(), flatTool({ name: 7 })]),
-    );
+      summarizeValue([flatTool(), flatTool(), flatTool({ name: 7 })])
+    )
 
-    expect(third).toContain('3');
+    expect(third).toContain("3")
 
     // Positional, not merely "a number appears": a message hard-coded to the
     // first tool would satisfy the assertion above for a fault at index 0.
-    expect(third).not.toBe(expectError(summarizeValue([flatTool({ name: 7 })])));
-  });
-});
+    expect(third).not.toBe(expectError(summarizeValue([flatTool({ name: 7 })])))
+  })
+})
 
-describe('each rejection is distinguishable', () => {
+describe("each rejection is distinguishable", () => {
   /**
    * The assertions that stop this file from being a long list of `ok === false`.
    *
@@ -505,33 +505,36 @@ describe('each rejection is distinguishable', () => {
    * `validateTools` remains the authority that names the exact field at save.
    */
   const categories: Array<[kind: string, input: string]> = [
-    ['not JSON at all', '{ not json'],
-    ['not a list', JSON.stringify(flatTool())],
-    ['a malformed tool', JSON.stringify([{ description: 'd', parameters: {} }])],
-  ];
+    ["not JSON at all", "{ not json"],
+    ["not a list", JSON.stringify(flatTool())],
+    [
+      "a malformed tool",
+      JSON.stringify([{ description: "d", parameters: {} }]),
+    ],
+  ]
 
-  it('tells the three kinds of failure apart', () => {
+  it("tells the three kinds of failure apart", () => {
     const messages = categories.map(([, input]) =>
-      expectError(summarizeTools(input)),
-    );
+      expectError(summarizeTools(input))
+    )
 
-    expect(new Set(messages).size).toBe(categories.length);
-  });
+    expect(new Set(messages).size).toBe(categories.length)
+  })
 
-  it('tells one malformed tool from another by position', () => {
+  it("tells one malformed tool from another by position", () => {
     const messages = [0, 1, 2].map((index) => {
-      const tools = [flatTool(), flatTool(), flatTool()];
+      const tools = [flatTool(), flatTool(), flatTool()]
 
-      tools[index] = flatTool({ description: 7 });
+      tools[index] = flatTool({ description: 7 })
 
-      return expectError(summarizeValue(tools));
-    });
+      return expectError(summarizeValue(tools))
+    })
 
-    expect(new Set(messages).size).toBe(3);
-  });
-});
+    expect(new Set(messages).size).toBe(3)
+  })
+})
 
-describe('leaving the raw JSON alone', () => {
+describe("leaving the raw JSON alone", () => {
   /**
    * The editor submits the exact bytes in the textarea. The summary must stay
    * incapable of becoming the thing that produces them, and the way to keep it
@@ -541,22 +544,22 @@ describe('leaving the raw JSON alone', () => {
    * because the field that causes this bug will be called something nobody
    * predicted.
    */
-  it('returns rows and nothing that could be saved as JSON', () => {
-    const result = summarizeValue([flatTool()]);
+  it("returns rows and nothing that could be saved as JSON", () => {
+    const result = summarizeValue([flatTool()])
 
-    expect(Object.keys(result).sort()).toStrictEqual(['ok', 'rows']);
+    expect(Object.keys(result).sort()).toStrictEqual(["ok", "rows"])
     expect(Object.keys(expectRows(result)[0] ?? {}).sort()).toStrictEqual([
-      'description',
-      'name',
-      'parameterCount',
-    ]);
-  });
+      "description",
+      "name",
+      "parameterCount",
+    ])
+  })
 
-  it('returns only ok and error when it rejects', () => {
-    const result = summarizeTools('{ not json');
+  it("returns only ok and error when it rejects", () => {
+    const result = summarizeTools("{ not json")
 
-    expect(Object.keys(result).sort()).toStrictEqual(['error', 'ok']);
-  });
+    expect(Object.keys(result).sort()).toStrictEqual(["error", "ok"])
+  })
 
   /**
    * The lossy round trip, made concrete. Every value here survives as text and
@@ -567,39 +570,39 @@ describe('leaving the raw JSON alone', () => {
    * customer's schema — so the test looks for the re-serialised text anywhere
    * in the result, not just in a field it thought to name.
    */
-  it('carries no re-serialised copy of the input', () => {
+  it("carries no re-serialised copy of the input", () => {
     const raw =
       '[{"name":"lookup_order","description":"Looks it up.",' +
       '"parameters":{"type":"object","properties":' +
       '{"ratio":{"default":2.0},"count":{"default":1e3},' +
-      '"id":{"default":9007199254740993},"tag":{"default":"\\u0041"}}}}]';
+      '"id":{"default":9007199254740993},"tag":{"default":"\\u0041"}}}}]'
 
-    const result = summarizeTools(raw);
-    const serialised = JSON.stringify(result);
+    const result = summarizeTools(raw)
+    const serialised = JSON.stringify(result)
 
-    expect(expectRows(result)[0]?.parameterCount).toBe(4);
-    expect(serialised).not.toContain('"type":"object"');
-    expect(serialised).not.toContain('9007199254740992');
-    expect(serialised).not.toContain('properties');
-  });
+    expect(expectRows(result)[0]?.parameterCount).toBe(4)
+    expect(serialised).not.toContain('"type":"object"')
+    expect(serialised).not.toContain("9007199254740992")
+    expect(serialised).not.toContain("properties")
+  })
 
-  it('does not change the string it was given', () => {
-    const raw = JSON.stringify([flatTool()]);
-    const copy = `${raw}`;
+  it("does not change the string it was given", () => {
+    const raw = JSON.stringify([flatTool()])
+    const copy = `${raw}`
 
-    summarizeTools(raw);
+    summarizeTools(raw)
 
-    expect(raw).toBe(copy);
-  });
+    expect(raw).toBe(copy)
+  })
 
   /**
    * The parsed tool list is the summary's own working copy, but a shared
    * mutable one would let a later caller see fields an earlier summary added.
    * Summarising the same text twice must give the same answer.
    */
-  it('is stable across repeated calls', () => {
-    const raw = JSON.stringify([flatTool(), wrappedTool({ name: 'second' })]);
+  it("is stable across repeated calls", () => {
+    const raw = JSON.stringify([flatTool(), wrappedTool({ name: "second" })])
 
-    expect(summarizeTools(raw)).toStrictEqual(summarizeTools(raw));
-  });
-});
+    expect(summarizeTools(raw)).toStrictEqual(summarizeTools(raw))
+  })
+})

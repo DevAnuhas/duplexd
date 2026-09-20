@@ -1,11 +1,11 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from "node:crypto"
 
-import { and, desc, eq, isNull, lt, or } from 'drizzle-orm';
+import { and, desc, eq, isNull, lt, or } from "drizzle-orm"
 
-import { getDb } from '@/db/client';
-import { apiKeys, calls } from '@/db/schema';
-import { hashCredential } from '@/lib/credentials';
-import { secretsMatch } from '@/lib/crypto';
+import { getDb } from "@/db/client"
+import { apiKeys, calls } from "@/db/schema"
+import { hashCredential } from "@/lib/credentials"
+import { secretsMatch } from "@/lib/crypto"
 
 /**
  * API keys — what a customer's backend actually holds.
@@ -23,12 +23,12 @@ import { secretsMatch } from '@/lib/crypto';
  */
 
 /** `dk_live_` plus 32 bytes rendered base62. */
-const KEY_PREFIX = 'dk_live_';
+const KEY_PREFIX = "dk_live_"
 
 /** How much of the rendered key is stored in the clear to identify it. */
-const PREFIX_LENGTH = KEY_PREFIX.length + 6;
+const PREFIX_LENGTH = KEY_PREFIX.length + 6
 
-const BASE62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 /**
  * 32 characters drawn uniformly from a 62-character alphabet, via the CSPRNG.
@@ -46,43 +46,43 @@ const BASE62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
  * multiple of 62 are discarded and redrawn.
  */
 function generateKey(): string {
-  const LIMIT = Math.floor(256 / BASE62.length) * BASE62.length; // 248
-  let rendered = '';
+  const LIMIT = Math.floor(256 / BASE62.length) * BASE62.length // 248
+  let rendered = ""
 
   while (rendered.length < 32) {
     for (const byte of randomBytes(32)) {
       if (byte >= LIMIT) {
-        continue;
+        continue
       }
 
-      rendered += BASE62[byte % BASE62.length];
+      rendered += BASE62[byte % BASE62.length]
 
       if (rendered.length === 32) {
-        break;
+        break
       }
     }
   }
 
-  return `${KEY_PREFIX}${rendered}`;
+  return `${KEY_PREFIX}${rendered}`
 }
 
 export type MintedKey = {
   /** The only time this is ever available. It is not stored and cannot be re-derived. */
-  raw: string;
-  id: string;
-  name: string;
-  prefix: string;
-  createdAt: Date;
-};
+  raw: string
+  id: string
+  name: string
+  prefix: string
+  createdAt: Date
+}
 
 export type ApiKeySummary = {
-  id: string;
-  name: string;
-  prefix: string;
-  createdAt: Date;
-  lastUsedAt: Date | null;
-  revokedAt: Date | null;
-};
+  id: string
+  name: string
+  prefix: string
+  createdAt: Date
+  lastUsedAt: Date | null
+  revokedAt: Date | null
+}
 
 /**
  * Mints a key for `accountId` and returns it once.
@@ -94,10 +94,10 @@ export type ApiKeySummary = {
 export async function mintApiKey(
   accountId: string,
   name: string,
-  createdBy: string,
+  createdBy: string
 ): Promise<MintedKey> {
-  const raw = generateKey();
-  const id = randomUUID();
+  const raw = generateKey()
+  const id = randomUUID()
 
   const rows = await getDb()
     .insert(apiKeys)
@@ -114,16 +114,16 @@ export async function mintApiKey(
       name: apiKeys.name,
       prefix: apiKeys.prefix,
       createdAt: apiKeys.createdAt,
-    });
+    })
 
-  const row = rows[0]!;
+  const row = rows[0]!
 
-  return { raw, ...row };
+  return { raw, ...row }
 }
 
 /** Every key belonging to `accountId`, revoked ones included. Never the key itself. */
 export async function listApiKeysForAccount(
-  accountId: string,
+  accountId: string
 ): Promise<ApiKeySummary[]> {
   return getDb()
     .select({
@@ -136,7 +136,7 @@ export async function listApiKeysForAccount(
     })
     .from(apiKeys)
     .where(eq(apiKeys.accountId, accountId))
-    .orderBy(desc(apiKeys.createdAt));
+    .orderBy(desc(apiKeys.createdAt))
 }
 
 /**
@@ -148,7 +148,7 @@ export async function listApiKeysForAccount(
  */
 export async function revokeApiKey(
   accountId: string,
-  keyId: string,
+  keyId: string
 ): Promise<boolean> {
   const rows = await getDb()
     .update(apiKeys)
@@ -157,15 +157,15 @@ export async function revokeApiKey(
       and(
         eq(apiKeys.id, keyId),
         eq(apiKeys.accountId, accountId),
-        isNull(apiKeys.revokedAt),
-      ),
+        isNull(apiKeys.revokedAt)
+      )
     )
-    .returning({ id: apiKeys.id });
+    .returning({ id: apiKeys.id })
 
-  return rows.length > 0;
+  return rows.length > 0
 }
 
-export type DeleteApiKeyResult = 'deleted' | 'has_calls' | 'not_found';
+export type DeleteApiKeyResult = "deleted" | "has_calls" | "not_found"
 
 /**
  * Permanently deletes an account's key only when no call points at it.
@@ -178,18 +178,18 @@ export type DeleteApiKeyResult = 'deleted' | 'has_calls' | 'not_found';
  */
 export async function deleteApiKey(
   accountId: string,
-  keyId: string,
+  keyId: string
 ): Promise<DeleteApiKeyResult> {
   return getDb().transaction(async (tx) => {
     const ownedKeys = await tx
       .select({ id: apiKeys.id })
       .from(apiKeys)
       .where(and(eq(apiKeys.id, keyId), eq(apiKeys.accountId, accountId)))
-      .for('update')
-      .limit(1);
+      .for("update")
+      .limit(1)
 
     if (ownedKeys.length === 0) {
-      return 'not_found';
+      return "not_found"
     }
 
     // Deliberately keyed only by the globally unique key id. A corrupt
@@ -199,19 +199,19 @@ export async function deleteApiKey(
       .select({ id: calls.id })
       .from(calls)
       .where(eq(calls.apiKeyId, keyId))
-      .limit(1);
+      .limit(1)
 
     if (attributedCalls.length > 0) {
-      return 'has_calls';
+      return "has_calls"
     }
 
     const deleted = await tx
       .delete(apiKeys)
       .where(and(eq(apiKeys.id, keyId), eq(apiKeys.accountId, accountId)))
-      .returning({ id: apiKeys.id });
+      .returning({ id: apiKeys.id })
 
-    return deleted.length > 0 ? 'deleted' : 'not_found';
-  });
+    return deleted.length > 0 ? "deleted" : "not_found"
+  })
 }
 
 /**
@@ -235,10 +235,10 @@ export async function deleteApiKey(
  *     recorded in the row for someone else to notice.
  */
 export async function verifyApiKey(
-  raw: string,
+  raw: string
 ): Promise<{ accountId: string; keyId: string } | null> {
   if (!raw.startsWith(KEY_PREFIX) || raw.length <= PREFIX_LENGTH) {
-    return null;
+    return null
   }
 
   const rows = await getDb()
@@ -250,25 +250,25 @@ export async function verifyApiKey(
     })
     .from(apiKeys)
     .where(eq(apiKeys.prefix, raw.slice(0, PREFIX_LENGTH)))
-    .limit(1);
+    .limit(1)
 
-  const row = rows[0];
+  const row = rows[0]
 
   if (row === undefined || row.revokedAt !== null) {
-    return null;
+    return null
   }
 
   if (!secretsMatch(row.keyHash, hashCredential(raw))) {
-    return null;
+    return null
   }
 
-  return { accountId: row.accountId, keyId: row.id };
+  return { accountId: row.accountId, keyId: row.id }
 }
 
 /** Best-effort attribution write, debounced to one update per minute. */
 export async function markApiKeyUsed(
   keyId: string,
-  now = new Date(),
+  now = new Date()
 ): Promise<void> {
   await getDb()
     .update(apiKeys)
@@ -278,8 +278,8 @@ export async function markApiKeyUsed(
         eq(apiKeys.id, keyId),
         or(
           isNull(apiKeys.lastUsedAt),
-          lt(apiKeys.lastUsedAt, new Date(now.getTime() - 60_000)),
-        ),
-      ),
-    );
+          lt(apiKeys.lastUsedAt, new Date(now.getTime() - 60_000))
+        )
+      )
+    )
 }

@@ -1,4 +1,4 @@
-import { isTest as betterAuthIsTest } from '@better-auth/core/env';
+import { isTest as betterAuthIsTest } from "@better-auth/core/env"
 
 import {
   requireAuthSecret,
@@ -6,7 +6,7 @@ import {
   requireDatabaseUrl,
   requireEncryptionKey,
   requirePipecatApiKey,
-} from '@/db/env';
+} from "@/db/env"
 
 /**
  * Validates the five app-wide runtime prerequisites at initialization.
@@ -38,21 +38,21 @@ import {
  * route class return 500 while naming only the variable in server logs.
  */
 export async function register(): Promise<void> {
-  requireDatabaseUrl();
-  requireAuthSecret();
-  requireAuthUrl();
-  requireEncryptionKey();
-  requirePipecatApiKey();
+  requireDatabaseUrl()
+  requireAuthSecret()
+  requireAuthUrl()
+  requireEncryptionKey()
+  requirePipecatApiKey()
 
-  if (process.env.NODE_ENV === 'production' && betterAuthIsTest()) {
+  if (process.env.NODE_ENV === "production" && betterAuthIsTest()) {
     throw new Error(
-      'Better Auth resolved production as test mode. Remove TEST and test-runner markers from the runtime environment.',
-    );
+      "Better Auth resolved production as test mode. Remove TEST and test-runner markers from the runtime environment."
+    )
   }
 
-  if (process.env.NODE_ENV === 'production') {
+  if (process.env.NODE_ENV === "production") {
     console.info(
-      '[startup] Better Auth production mode verified (isTest=false).',
-    );
+      "[startup] Better Auth production mode verified (isTest=false)."
+    )
   }
 }

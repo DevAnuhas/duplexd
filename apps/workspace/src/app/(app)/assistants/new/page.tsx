@@ -1,11 +1,11 @@
-import { createAssistantAction } from '@/app/actions';
-import { requireShell } from '../../shell-data';
-import { AssistantForm } from '../assistant-form';
+import { createAssistantAction } from "@/app/actions"
+import { requireShell } from "../../shell-data"
+import { AssistantForm } from "../assistant-form"
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic"
 
 export default async function NewAssistantPage() {
-  await requireShell();
+  await requireShell()
 
   return (
     <AssistantForm
@@ -13,5 +13,5 @@ export default async function NewAssistantPage() {
       action={createAssistantAction}
       submitLabel="Create assistant"
     />
-  );
+  )
 }

@@ -1,6 +1,6 @@
-import { headers } from 'next/headers';
+import { headers } from "next/headers"
 
-import { getAuth } from '@/lib/auth';
+import { getAuth } from "@/lib/auth"
 
 /**
  * The one place that answers "which account is this request acting as".
@@ -16,9 +16,9 @@ import { getAuth } from '@/lib/auth';
  * parameter, a header, or anything else the caller can set.
  */
 export type CurrentAccount = {
-  accountId: string;
-  userId: string;
-};
+  accountId: string
+  userId: string
+}
 
 /** Resolves the current account, or `null` when the request is unauthenticated. */
 export async function getCurrentAccount(): Promise<CurrentAccount | null> {
@@ -36,38 +36,38 @@ export async function getCurrentAccount(): Promise<CurrentAccount | null> {
    * Reading the dynamic API first lets Cache Components postpone at the
    * boundary, and nothing downstream of it is evaluated during the build.
    */
-  const requestHeaders = await headers();
+  const requestHeaders = await headers()
 
   const session = await getAuth().api.getSession({
     headers: requestHeaders,
-  });
+  })
 
   if (session === null) {
-    return null;
+    return null
   }
 
-  const accountId = (session.user as { accountId?: unknown }).accountId;
+  const accountId = (session.user as { accountId?: unknown }).accountId
 
   // A session whose user carries no account is a broken row, not an
   // unauthenticated request. Returning null here would silently downgrade it
   // to "signed out" and hide the breakage.
-  if (typeof accountId !== 'string' || accountId === '') {
+  if (typeof accountId !== "string" || accountId === "") {
     throw new Error(
       `Session user ${session.user.id} has no account_id. This should be ` +
-        'impossible: the column is NOT NULL and signup writes it.',
-    );
+        "impossible: the column is NOT NULL and signup writes it."
+    )
   }
 
-  return { accountId, userId: session.user.id };
+  return { accountId, userId: session.user.id }
 }
 
 /** Resolves the current account, or throws. For paths that require a session. */
 export async function requireCurrentAccount(): Promise<CurrentAccount> {
-  const account = await getCurrentAccount();
+  const account = await getCurrentAccount()
 
   if (account === null) {
-    throw new Error('Not authenticated.');
+    throw new Error("Not authenticated.")
   }
 
-  return account;
+  return account
 }

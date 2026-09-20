@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from "vitest"
 
-import { redactQueryParams, withRedactedQueryErrors } from '@/db/redact';
+import { redactQueryParams, withRedactedQueryErrors } from "@/db/redact"
 
 /**
  * What the redaction wrapper must preserve while it is busy redacting.
@@ -25,61 +25,61 @@ import { redactQueryParams, withRedactedQueryErrors } from '@/db/redact';
 
 /** A target with one of each kind of property the wrapper has to deal with. */
 function subject() {
-  const nested = { deep: { deeper: 1 } };
+  const nested = { deep: { deeper: 1 } }
 
   return {
     nested,
     list: [1, 2, 3],
     method() {
-      return nested;
+      return nested
     },
     scalar: 7,
-    text: 'unchanged',
+    text: "unchanged",
     nothing: null as unknown,
-  };
+  }
 }
 
-describe('reference equality through the wrapper', () => {
-  it('returns the same reference for repeated reads of an object property', () => {
-    const wrapped = withRedactedQueryErrors(subject());
+describe("reference equality through the wrapper", () => {
+  it("returns the same reference for repeated reads of an object property", () => {
+    const wrapped = withRedactedQueryErrors(subject())
 
-    expect(wrapped.nested).toBe(wrapped.nested);
-  });
+    expect(wrapped.nested).toBe(wrapped.nested)
+  })
 
-  it('returns the same reference for repeated reads of a function property', () => {
-    const wrapped = withRedactedQueryErrors(subject());
+  it("returns the same reference for repeated reads of a function property", () => {
+    const wrapped = withRedactedQueryErrors(subject())
 
-    expect(wrapped.method).toBe(wrapped.method);
-  });
+    expect(wrapped.method).toBe(wrapped.method)
+  })
 
-  it('returns the same reference for an array property', () => {
-    const wrapped = withRedactedQueryErrors(subject());
+  it("returns the same reference for an array property", () => {
+    const wrapped = withRedactedQueryErrors(subject())
 
-    expect(wrapped.list).toBe(wrapped.list);
-  });
+    expect(wrapped.list).toBe(wrapped.list)
+  })
 
   /**
    * The count, because `toBe` twice would pass on a cache that held exactly
    * one entry and thrashed. Five reads must produce one object — before the
    * memoisation they produced five.
    */
-  it('produces one wrapper across many reads, not one per read', () => {
-    const wrapped = withRedactedQueryErrors(subject());
-    const seen = new Set<unknown>();
+  it("produces one wrapper across many reads, not one per read", () => {
+    const wrapped = withRedactedQueryErrors(subject())
+    const seen = new Set<unknown>()
 
     for (let read = 0; read < 5; read += 1) {
-      seen.add(wrapped.nested);
+      seen.add(wrapped.nested)
     }
 
-    expect(seen.size).toBe(1);
-  });
+    expect(seen.size).toBe(1)
+  })
 
-  it('keeps nested reads stable too', () => {
-    const wrapped = withRedactedQueryErrors(subject());
+  it("keeps nested reads stable too", () => {
+    const wrapped = withRedactedQueryErrors(subject())
 
-    expect(wrapped.nested.deep).toBe(wrapped.nested.deep);
-  });
-});
+    expect(wrapped.nested.deep).toBe(wrapped.nested.deep)
+  })
+})
 
 /**
  * The consequence that made the defect matter rather than merely being untidy.
@@ -87,27 +87,27 @@ describe('reference equality through the wrapper', () => {
  * on the next read; with a fresh proxy per read the lookup silently missed and
  * the caller saw "not present" rather than an error.
  */
-describe('identity-keyed collections', () => {
-  it('round-trips a WeakMap keyed on a value read through the wrapper', () => {
-    const wrapped = withRedactedQueryErrors(subject());
-    const registry = new WeakMap<object, string>();
+describe("identity-keyed collections", () => {
+  it("round-trips a WeakMap keyed on a value read through the wrapper", () => {
+    const wrapped = withRedactedQueryErrors(subject())
+    const registry = new WeakMap<object, string>()
 
-    registry.set(wrapped.nested, 'registered');
+    registry.set(wrapped.nested, "registered")
 
-    expect(registry.get(wrapped.nested)).toBe('registered');
-    expect(registry.has(wrapped.nested)).toBe(true);
-  });
+    expect(registry.get(wrapped.nested)).toBe("registered")
+    expect(registry.has(wrapped.nested)).toBe(true)
+  })
 
-  it('round-trips a Set keyed on a function read through the wrapper', () => {
-    const wrapped = withRedactedQueryErrors(subject());
-    const seen = new Set<unknown>();
+  it("round-trips a Set keyed on a function read through the wrapper", () => {
+    const wrapped = withRedactedQueryErrors(subject())
+    const seen = new Set<unknown>()
 
-    seen.add(wrapped.method);
+    seen.add(wrapped.method)
 
-    expect(seen.has(wrapped.method)).toBe(true);
-    expect(seen.size).toBe(1);
-  });
-});
+    expect(seen.has(wrapped.method)).toBe(true)
+    expect(seen.size).toBe(1)
+  })
+})
 
 /**
  * Memoising introduces its own way to be wrong: a cache keyed on the property
@@ -115,70 +115,78 @@ describe('identity-keyed collections', () => {
  * there. The cache stores the raw value it wrapped, so a reassigned property
  * is rebuilt rather than served stale.
  */
-describe('a reassigned property', () => {
-  it('is rewrapped rather than served from the cache', () => {
-    const target = subject();
-    const wrapped = withRedactedQueryErrors(target);
+describe("a reassigned property", () => {
+  it("is rewrapped rather than served from the cache", () => {
+    const target = subject()
+    const wrapped = withRedactedQueryErrors(target)
 
-    const before = wrapped.nested;
-    const replacement = { deep: { deeper: 99 } };
+    const before = wrapped.nested
+    const replacement = { deep: { deeper: 99 } }
 
-    target.nested = replacement;
+    target.nested = replacement
 
-    const after = wrapped.nested;
+    const after = wrapped.nested
 
-    expect(after, 'the cache served a wrapper around the old value').not.toBe(before);
-    expect(after.deep.deeper).toBe(99);
-  });
+    expect(after, "the cache served a wrapper around the old value").not.toBe(
+      before
+    )
+    expect(after.deep.deeper).toBe(99)
+  })
 
-  it('is stable again once it has been rewrapped', () => {
-    const target = subject();
-    const wrapped = withRedactedQueryErrors(target);
+  it("is stable again once it has been rewrapped", () => {
+    const target = subject()
+    const wrapped = withRedactedQueryErrors(target)
 
-    target.nested = { deep: { deeper: 42 } };
+    target.nested = { deep: { deeper: 42 } }
 
-    expect(wrapped.nested).toBe(wrapped.nested);
-  });
-});
+    expect(wrapped.nested).toBe(wrapped.nested)
+  })
+})
 
 /**
  * Values that are not objects have no wrapper to memoise, and must come back
  * exactly as they are. A wrapper that boxed a primitive would break `===`
  * against a literal, which is how most of this codebase compares them.
  */
-describe('values that are not wrapped', () => {
+describe("values that are not wrapped", () => {
   it.each([
-    ['a number', 'scalar', 7],
-    ['a string', 'text', 'unchanged'],
-    ['null', 'nothing', null],
-  ])('passes %s through untouched', (_label, key, value) => {
-    const wrapped = withRedactedQueryErrors(subject()) as unknown as Record<string, unknown>;
+    ["a number", "scalar", 7],
+    ["a string", "text", "unchanged"],
+    ["null", "nothing", null],
+  ])("passes %s through untouched", (_label, key, value) => {
+    const wrapped = withRedactedQueryErrors(subject()) as unknown as Record<
+      string,
+      unknown
+    >
 
-    expect(wrapped[key]).toBe(value);
-  });
+    expect(wrapped[key]).toBe(value)
+  })
 
-  it('does not invent properties the target does not have', () => {
-    const wrapped = withRedactedQueryErrors(subject()) as unknown as Record<string, unknown>;
+  it("does not invent properties the target does not have", () => {
+    const wrapped = withRedactedQueryErrors(subject()) as unknown as Record<
+      string,
+      unknown
+    >
 
-    expect(wrapped.absent).toBeUndefined();
-  });
-});
+    expect(wrapped.absent).toBeUndefined()
+  })
+})
 
 /**
  * Two wrapped targets must not share a cache entry. The cache is keyed by
  * target first, so one object's `nested` can never be served for another's —
  * which a single property-keyed map would do.
  */
-describe('two wrapped targets', () => {
-  it('do not share wrappers', () => {
-    const first = withRedactedQueryErrors(subject());
-    const second = withRedactedQueryErrors(subject());
+describe("two wrapped targets", () => {
+  it("do not share wrappers", () => {
+    const first = withRedactedQueryErrors(subject())
+    const second = withRedactedQueryErrors(subject())
 
-    expect(first.nested).not.toBe(second.nested);
-    expect(first.nested).toBe(first.nested);
-    expect(second.nested).toBe(second.nested);
-  });
-});
+    expect(first.nested).not.toBe(second.nested)
+    expect(first.nested).toBe(first.nested)
+    expect(second.nested).toBe(second.nested)
+  })
+})
 
 /**
  * `finally`, compared against native rather than described.
@@ -207,11 +215,11 @@ function fakeQuery(settle: () => Promise<unknown>) {
     then(onFulfilled?: unknown, onRejected?: unknown) {
       return settle().then(
         onFulfilled as (v: unknown) => unknown,
-        onRejected as (e: unknown) => unknown,
-      );
+        onRejected as (e: unknown) => unknown
+      )
     },
     catch(onRejected?: unknown) {
-      return query.then(undefined, onRejected);
+      return query.then(undefined, onRejected)
     },
     // Present and a function so the wrapper's interception engages. The
     // wrapper never calls this one — it reimplements `finally` on top of
@@ -219,18 +227,18 @@ function fakeQuery(settle: () => Promise<unknown>) {
     finally(callback?: unknown) {
       return query.then(
         (value: unknown) => {
-          (callback as () => void)?.();
-          return value;
+          ;(callback as () => void)?.()
+          return value
         },
         (error: unknown) => {
-          (callback as () => void)?.();
-          throw error;
-        },
-      );
+          ;(callback as () => void)?.()
+          throw error
+        }
+      )
     },
-  };
+  }
 
-  return query;
+  return query
 }
 
 /**
@@ -238,123 +246,133 @@ function fakeQuery(settle: () => Promise<unknown>) {
  * and how it settled. Identical transcripts mean identical behaviour.
  */
 async function transcribe(
-  build: (settle: () => Promise<unknown>) => { finally: (cb: () => unknown) => PromiseLike<unknown> },
+  build: (settle: () => Promise<unknown>) => {
+    finally: (cb: () => unknown) => PromiseLike<unknown>
+  },
   settle: () => Promise<unknown>,
-  callback: (order: string[]) => () => unknown,
+  callback: (order: string[]) => () => unknown
 ): Promise<{ order: string[]; outcome: string }> {
-  const order: string[] = [];
-  let outcome: string;
+  const order: string[] = []
+  let outcome: string
 
   try {
-    const value = await build(settle).finally(callback(order));
-    outcome = `fulfilled:${String(value)}`;
+    const value = await build(settle).finally(callback(order))
+    outcome = `fulfilled:${String(value)}`
   } catch (error) {
-    outcome = `rejected:${(error as Error).message}`;
+    outcome = `rejected:${(error as Error).message}`
   }
 
-  order.push(`settled(${outcome})`);
+  order.push(`settled(${outcome})`)
 
-  return { order, outcome };
+  return { order, outcome }
 }
 
 /** Native `Promise` in the same shape as `fakeQuery`, for side-by-side runs. */
 const nativeQuery = (settle: () => Promise<unknown>) => ({
   finally: (callback: () => unknown) => settle().finally(callback),
-});
+})
 
 const wrappedQuery = (settle: () => Promise<unknown>) =>
   withRedactedQueryErrors(fakeQuery(settle)) as unknown as {
-    finally: (callback: () => unknown) => PromiseLike<unknown>;
-  };
+    finally: (callback: () => unknown) => PromiseLike<unknown>
+  }
 
-const resolves = () => Promise.resolve('value');
-const rejects = () => Promise.reject(new Error('query failed'));
+const resolves = () => Promise.resolve("value")
+const rejects = () => Promise.reject(new Error("query failed"))
 
 /** A callback that does asynchronous work, which native `finally` awaits. */
 const asyncCleanup = (order: string[]) => async () => {
-  order.push('cleanup-start');
-  await Promise.resolve();
-  await Promise.resolve();
-  order.push('cleanup-end');
-};
+  order.push("cleanup-start")
+  await Promise.resolve()
+  await Promise.resolve()
+  order.push("cleanup-end")
+}
 
 /** A callback that rejects. Native replaces the settlement with its reason. */
-const rejectingCleanup = () => () => Promise.reject(new Error('from-cleanup'));
+const rejectingCleanup = () => () => Promise.reject(new Error("from-cleanup"))
 
-describe('finally matches native', () => {
+describe("finally matches native", () => {
   it.each([
-    ['a resolving query', resolves],
-    ['a rejecting query', rejects],
-  ])('awaits an async callback before settling — %s', async (_label, settle) => {
-    const native = await transcribe(nativeQuery, settle, asyncCleanup);
-    const wrapped = await transcribe(wrappedQuery, settle, asyncCleanup);
+    ["a resolving query", resolves],
+    ["a rejecting query", rejects],
+  ])(
+    "awaits an async callback before settling — %s",
+    async (_label, settle) => {
+      const native = await transcribe(nativeQuery, settle, asyncCleanup)
+      const wrapped = await transcribe(wrappedQuery, settle, asyncCleanup)
 
-    // The ordering is the point: `cleanup-end` must come before `settled`, or
-    // the caller resumes while cleanup is still in flight.
-    expect(native.order).toStrictEqual([
-      'cleanup-start',
-      'cleanup-end',
-      `settled(${native.outcome})`,
-    ]);
-    expect(
-      wrapped.order,
-      'the wrapper settled before its async callback finished — a lock released ' +
-        'in that callback is still held when the caller resumes',
-    ).toStrictEqual(native.order);
-  });
+      // The ordering is the point: `cleanup-end` must come before `settled`, or
+      // the caller resumes while cleanup is still in flight.
+      expect(native.order).toStrictEqual([
+        "cleanup-start",
+        "cleanup-end",
+        `settled(${native.outcome})`,
+      ])
+      expect(
+        wrapped.order,
+        "the wrapper settled before its async callback finished — a lock released " +
+          "in that callback is still held when the caller resumes"
+      ).toStrictEqual(native.order)
+    }
+  )
 
   it.each([
-    ['a resolving query', resolves],
-    ['a rejecting query', rejects],
-  ])('settles with the callback’s rejection — %s', async (_label, settle) => {
-    const native = await transcribe(nativeQuery, settle, rejectingCleanup);
-    const wrapped = await transcribe(wrappedQuery, settle, rejectingCleanup);
+    ["a resolving query", resolves],
+    ["a rejecting query", rejects],
+  ])("settles with the callback’s rejection — %s", async (_label, settle) => {
+    const native = await transcribe(nativeQuery, settle, rejectingCleanup)
+    const wrapped = await transcribe(wrappedQuery, settle, rejectingCleanup)
 
-    expect(native.outcome).toBe('rejected:from-cleanup');
+    expect(native.outcome).toBe("rejected:from-cleanup")
     expect(
       wrapped.outcome,
-      'a callback returning a rejected promise was not adopted — under Node’s ' +
-        'default --unhandled-rejections=throw that orphaned rejection ends the ' +
-        'process',
-    ).toBe(native.outcome);
-  });
+      "a callback returning a rejected promise was not adopted — under Node’s " +
+        "default --unhandled-rejections=throw that orphaned rejection ends the " +
+        "process"
+    ).toBe(native.outcome)
+  })
 
   it.each([
-    ['a resolving query', resolves],
-    ['a rejecting query', rejects],
-  ])('passes the original settlement through a plain callback — %s', async (_label, settle) => {
-    const plain = () => () => undefined;
+    ["a resolving query", resolves],
+    ["a rejecting query", rejects],
+  ])(
+    "passes the original settlement through a plain callback — %s",
+    async (_label, settle) => {
+      const plain = () => () => undefined
 
-    const native = await transcribe(nativeQuery, settle, plain);
-    const wrapped = await transcribe(wrappedQuery, settle, plain);
+      const native = await transcribe(nativeQuery, settle, plain)
+      const wrapped = await transcribe(wrappedQuery, settle, plain)
 
-    expect(wrapped.outcome).toBe(native.outcome);
-    expect(wrapped.order).toStrictEqual(native.order);
-  });
+      expect(wrapped.outcome).toBe(native.outcome)
+      expect(wrapped.order).toStrictEqual(native.order)
+    }
+  )
 
   /**
    * The orphaned rejection is the one that kills the process, so it is checked
    * directly rather than only through the settlement above: nothing may reach
    * the `unhandledRejection` handler.
    */
-  it('produces no unhandled rejection when the callback rejects', async () => {
-    const orphaned: unknown[] = [];
-    const listener = (reason: unknown) => orphaned.push(reason);
+  it("produces no unhandled rejection when the callback rejects", async () => {
+    const orphaned: unknown[] = []
+    const listener = (reason: unknown) => orphaned.push(reason)
 
-    process.on('unhandledRejection', listener);
+    process.on("unhandledRejection", listener)
 
     try {
-      await transcribe(wrappedQuery, rejects, rejectingCleanup).catch(() => undefined);
+      await transcribe(wrappedQuery, rejects, rejectingCleanup).catch(
+        () => undefined
+      )
       // Two macrotask turns: an orphaned rejection is reported after the
       // microtask queue drains, so checking synchronously would always pass.
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 10))
     } finally {
-      process.off('unhandledRejection', listener);
+      process.off("unhandledRejection", listener)
     }
 
-    expect(orphaned).toStrictEqual([]);
-  });
-});
+    expect(orphaned).toStrictEqual([])
+  })
+})
 
 /**
  * A frozen error must not throw *out of* the redaction.
@@ -365,21 +383,23 @@ describe('finally matches native', () => {
  * something Drizzle does today; this is a guard against the redaction being
  * the thing that breaks, which is a worse outcome than not redacting.
  */
-describe('a frozen error', () => {
-  it('does not throw out of the redaction', () => {
+describe("a frozen error", () => {
+  it("does not throw out of the redaction", () => {
     const error = Object.freeze(
-      new Error('Failed query: insert into x\nparams: frozen-canary'),
-    );
+      new Error("Failed query: insert into x\nparams: frozen-canary")
+    )
 
-    expect(() => redactQueryParams(error)).not.toThrow();
-  });
+    expect(() => redactQueryParams(error)).not.toThrow()
+  })
 
-  it('is still returned to the caller rather than swallowed', () => {
-    const error = Object.freeze(new Error('Failed query: x\nparams: frozen-canary'));
+  it("is still returned to the caller rather than swallowed", () => {
+    const error = Object.freeze(
+      new Error("Failed query: x\nparams: frozen-canary")
+    )
 
-    expect(redactQueryParams(error)).toBe(error);
-  });
-});
+    expect(redactQueryParams(error)).toBe(error)
+  })
+})
 
 /**
  * **The sweep must not destroy the error it is cleaning.**
@@ -400,68 +420,70 @@ describe('a frozen error', () => {
  * These are unit-level and need no database, so they fire the moment such a
  * line is written rather than after a database-backed file gets that far.
  */
-describe('what the redaction must leave intact', () => {
+describe("what the redaction must leave intact", () => {
   /** Shaped like a `DrizzleQueryError`: query text, bound params, a cause. */
   function queryError() {
     const error = new Error(
       'Failed query: select "id" from "widgets" where "name" = $1\nparams: secret-value',
-      { cause: new Error('duplicate key value violates unique constraint') },
-    ) as Error & { query?: string; params?: unknown[] };
+      { cause: new Error("duplicate key value violates unique constraint") }
+    ) as Error & { query?: string; params?: unknown[] }
 
-    error.query = 'select "id" from "widgets" where "name" = $1';
-    error.params = ['secret-value'];
+    error.query = 'select "id" from "widgets" where "name" = $1'
+    error.params = ["secret-value"]
 
-    return error;
+    return error
   }
 
-  it('keeps the query text in the message', () => {
-    const redacted = redactQueryParams(queryError()) as Error;
+  it("keeps the query text in the message", () => {
+    const redacted = redactQueryParams(queryError()) as Error
 
-    expect(redacted.message).toContain('widgets');
-    expect(redacted.message).toContain('select');
-    expect(redacted.message).not.toBe('[redacted]');
-  });
+    expect(redacted.message).toContain("widgets")
+    expect(redacted.message).toContain("select")
+    expect(redacted.message).not.toBe("[redacted]")
+  })
 
-  it('keeps the stack’s frames and its header', () => {
-    const redacted = redactQueryParams(queryError()) as Error;
-    const stack = String(redacted.stack);
+  it("keeps the stack’s frames and its header", () => {
+    const redacted = redactQueryParams(queryError()) as Error
+    const stack = String(redacted.stack)
 
-    expect(stack, 'the stack was replaced wholesale').not.toBe('[redacted]');
-    expect(stack).toContain('widgets');
-    expect(stack, 'the stack has no frames left').toMatch(/\n\s+at /);
-  });
+    expect(stack, "the stack was replaced wholesale").not.toBe("[redacted]")
+    expect(stack).toContain("widgets")
+    expect(stack, "the stack has no frames left").toMatch(/\n\s+at /)
+  })
 
-  it('still removes the bound values from both', () => {
-    const redacted = redactQueryParams(queryError()) as Error;
+  it("still removes the bound values from both", () => {
+    const redacted = redactQueryParams(queryError()) as Error
 
-    expect(redacted.message).not.toContain('secret-value');
-    expect(String(redacted.stack)).not.toContain('secret-value');
+    expect(redacted.message).not.toContain("secret-value")
+    expect(String(redacted.stack)).not.toContain("secret-value")
     expect(
       (redacted as Error & { params?: unknown }).params,
-      'the params property kept its values',
-    ).toBe('[redacted]');
-  });
+      "the params property kept its values"
+    ).toBe("[redacted]")
+  })
 
-  it('keeps the query property, which carries placeholders and no values', () => {
-    const redacted = redactQueryParams(queryError()) as Error & { query?: string };
+  it("keeps the query property, which carries placeholders and no values", () => {
+    const redacted = redactQueryParams(queryError()) as Error & {
+      query?: string
+    }
 
-    expect(redacted.query).toContain('widgets');
-    expect(redacted.query).not.toBe('[redacted]');
-  });
+    expect(redacted.query).toContain("widgets")
+    expect(redacted.query).not.toBe("[redacted]")
+  })
 
   /**
    * The same property one level down. `cause` is recursed into rather than
    * blanked, so a sweep that flattened it would lose why the query failed
    * while still reporting no leak.
    */
-  it('keeps the cause’s own message', () => {
-    const redacted = redactQueryParams(queryError()) as Error;
-    const cause = redacted.cause as Error;
+  it("keeps the cause’s own message", () => {
+    const redacted = redactQueryParams(queryError()) as Error
+    const cause = redacted.cause as Error
 
-    expect(cause).toBeInstanceOf(Error);
-    expect(cause.message).toContain('unique constraint');
-    expect(cause.message).not.toBe('[redacted]');
-  });
+    expect(cause).toBeInstanceOf(Error)
+    expect(cause.message).toContain("unique constraint")
+    expect(cause.message).not.toBe("[redacted]")
+  })
 
   /**
    * An error with no parameters at all must come back untouched. A sweep that
@@ -469,14 +491,14 @@ describe('what the redaction must leave intact', () => {
    * value — a connection refusal, a timeout — and those are the ones read at
    * three in the morning.
    */
-  it('leaves an error that never carried parameters alone', () => {
-    const plain = new Error('connect ECONNREFUSED 127.0.0.1:5432');
-    const redacted = redactQueryParams(plain) as Error;
+  it("leaves an error that never carried parameters alone", () => {
+    const plain = new Error("connect ECONNREFUSED 127.0.0.1:5432")
+    const redacted = redactQueryParams(plain) as Error
 
-    expect(redacted.message).toBe('connect ECONNREFUSED 127.0.0.1:5432');
-    expect(String(redacted.stack)).toMatch(/\n\s+at /);
-  });
-});
+    expect(redacted.message).toBe("connect ECONNREFUSED 127.0.0.1:5432")
+    expect(String(redacted.stack)).toMatch(/\n\s+at /)
+  })
+})
 
 /**
  * The redaction's own sweep must reach non-enumerable properties.
@@ -489,46 +511,46 @@ describe('what the redaction must leave intact', () => {
  * sweep rather than the keep list, for the entirely reasonable reason that the
  * sweep is what broke things last time.
  */
-describe('the own-property sweep', () => {
+describe("the own-property sweep", () => {
   function errorWithHiddenParams(): Error {
-    const error = new Error('Failed query: select 1');
-    Object.defineProperty(error, 'params', {
-      value: ['SWEEP-CANARY'],
+    const error = new Error("Failed query: select 1")
+    Object.defineProperty(error, "params", {
+      value: ["SWEEP-CANARY"],
       enumerable: false,
       writable: true,
       configurable: true,
-    });
+    })
 
-    return error;
+    return error
   }
 
-  it('blanks a value hidden on a non-enumerable property', () => {
+  it("blanks a value hidden on a non-enumerable property", () => {
     const redacted = redactQueryParams(errorWithHiddenParams()) as Error & {
-      params?: unknown;
-    };
+      params?: unknown
+    }
 
     expect(
       redacted.params,
-      'a non-enumerable property kept its value — the sweep is using ' +
-        'Object.keys, which cannot see it',
-    ).toBe('[redacted]');
-  });
+      "a non-enumerable property kept its value — the sweep is using " +
+        "Object.keys, which cannot see it"
+    ).toBe("[redacted]")
+  })
 
-  it('still leaves message and stack intact while doing it', () => {
-    const redacted = redactQueryParams(errorWithHiddenParams()) as Error;
+  it("still leaves message and stack intact while doing it", () => {
+    const redacted = redactQueryParams(errorWithHiddenParams()) as Error
 
-    expect(redacted.message).toContain('select 1');
-    expect(String(redacted.stack)).toMatch(/\n\s+at /);
-  });
+    expect(redacted.message).toContain("select 1")
+    expect(String(redacted.stack)).toMatch(/\n\s+at /)
+  })
 
-  it('blanks a value hidden under a symbol key', () => {
-    const key = Symbol('params');
-    const error = new Error('Failed query: select 1') as Error &
-      Record<symbol, unknown>;
-    error[key] = ['SYMBOL-CANARY'];
+  it("blanks a value hidden under a symbol key", () => {
+    const key = Symbol("params")
+    const error = new Error("Failed query: select 1") as Error &
+      Record<symbol, unknown>
+    error[key] = ["SYMBOL-CANARY"]
 
-    const redacted = redactQueryParams(error) as Record<symbol, unknown>;
+    const redacted = redactQueryParams(error) as Record<symbol, unknown>
 
-    expect(redacted[key]).toBe('[redacted]');
-  });
-});
+    expect(redacted[key]).toBe("[redacted]")
+  })
+})

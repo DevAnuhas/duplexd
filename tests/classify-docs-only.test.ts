@@ -1,6 +1,6 @@
-import { accessSync, constants } from 'node:fs';
+import { accessSync, constants } from "node:fs"
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import {
   classifierPath,
@@ -9,10 +9,10 @@ import {
   GitFixture,
   ZERO_SHA,
   type ClassifierResult,
-} from './helpers/git-fixture.ts';
+} from "./helpers/git-fixture.ts"
 
-let repo: GitFixture;
-let initial: string;
+let repo: GitFixture
+let initial: string
 
 /**
  * Every assertion goes through here on purpose. Contract 39a requires that
@@ -23,10 +23,10 @@ let initial: string;
  */
 function expectClassification(
   result: ClassifierResult,
-  expected: 'true' | 'false',
+  expected: "true" | "false"
 ): void {
-  expect(result.status, `classifier exited nonzero: ${result.stderr}`).toBe(0);
-  expect(result.stdout).toBe(expected);
+  expect(result.status, `classifier exited nonzero: ${result.stderr}`).toBe(0)
+  expect(result.stdout).toBe(expected)
 }
 
 /**
@@ -36,253 +36,247 @@ function expectClassification(
  * revision ranges.
  */
 function classifyMutation(
-  mode: 'pull_request' | 'push',
+  mode: "pull_request" | "push",
   mutate: () => void,
-  message: string,
+  message: string
 ): ClassifierResult {
-  if (mode === 'pull_request') {
-    repo.git('checkout', '--quiet', '-b', 'feature');
-    mutate();
-    repo.commitAll(message);
+  if (mode === "pull_request") {
+    repo.git("checkout", "--quiet", "-b", "feature")
+    mutate()
+    repo.commitAll(message)
 
-    return repo.classify('pull_request', 'main', 'feature');
+    return repo.classify("pull_request", "main", "feature")
   }
 
-  mutate();
-  const after = repo.commitAll(message);
+  mutate()
+  const after = repo.commitAll(message)
 
-  return repo.classify('push', initial, after);
+  return repo.classify("push", initial, after)
 }
 
 beforeEach(() => {
-  repo = new GitFixture();
+  repo = new GitFixture()
   initial = repo.commit(
     {
-      'README.md': '# duplexd\n',
-      'src/app.ts': 'export const app = 1;\n',
-      'docs/index.md': '# docs\n',
+      "README.md": "# duplexd\n",
+      "src/app.ts": "export const app = 1;\n",
+      "docs/index.md": "# docs\n",
     },
-    'initial',
-  );
-});
+    "initial"
+  )
+})
 
 afterEach(() => {
-  repo.cleanup();
-});
+  repo.cleanup()
+})
 
-describe('classify-docs-only.sh', () => {
-  it('is committed as an executable script', () => {
-    expect(() => accessSync(classifierPath, constants.X_OK)).not.toThrow();
-  });
+describe("classify-docs-only.sh", () => {
+  it("is committed as an executable script", () => {
+    expect(() => accessSync(classifierPath, constants.X_OK)).not.toThrow()
+  })
 
-  describe('pull_request events', () => {
-    it('classifies a multi-commit docs-only PR as docs-only', () => {
-      repo.git('checkout', '--quiet', '-b', 'feature');
-      repo.commit({ 'docs/guide.md': '# guide\n' }, 'docs: add guide');
-      repo.commit(
-        { 'README.md': '# duplexd\n\nmore\n' },
-        'docs: expand readme',
-      );
+  describe("pull_request events", () => {
+    it("classifies a multi-commit docs-only PR as docs-only", () => {
+      repo.git("checkout", "--quiet", "-b", "feature")
+      repo.commit({ "docs/guide.md": "# guide\n" }, "docs: add guide")
+      repo.commit({ "README.md": "# duplexd\n\nmore\n" }, "docs: expand readme")
 
       // The base branch moves ahead with a *code* change after the branch
       // point. Diffing `main..feature` would surface that file as a reversal
       // and misclassify; diffing the merge base must not.
-      repo.git('checkout', '--quiet', 'main');
-      repo.commit(
-        { 'src/app.ts': 'export const app = 2;\n' },
-        'feat: bump app',
-      );
+      repo.git("checkout", "--quiet", "main")
+      repo.commit({ "src/app.ts": "export const app = 2;\n" }, "feat: bump app")
 
       expectClassification(
-        repo.classify('pull_request', 'main', 'feature'),
-        'true',
-      );
-    });
+        repo.classify("pull_request", "main", "feature"),
+        "true"
+      )
+    })
 
-    it('classifies a mixed docs-and-code PR as not docs-only', () => {
-      repo.git('checkout', '--quiet', '-b', 'feature');
-      repo.commit({ 'src/api.ts': 'export const api = 1;\n' }, 'feat: add api');
+    it("classifies a mixed docs-and-code PR as not docs-only", () => {
+      repo.git("checkout", "--quiet", "-b", "feature")
+      repo.commit({ "src/api.ts": "export const api = 1;\n" }, "feat: add api")
       // The tip commit alone is docs-only, so a `HEAD^..HEAD` implementation
       // would wrongly report true here.
-      repo.commit({ 'docs/api.md': '# api\n' }, 'docs: document api');
+      repo.commit({ "docs/api.md": "# api\n" }, "docs: document api")
 
       expectClassification(
-        repo.classify('pull_request', 'main', 'feature'),
-        'false',
-      );
-    });
+        repo.classify("pull_request", "main", "feature"),
+        "false"
+      )
+    })
 
-    it('classifies a PR that changed nothing as not docs-only', () => {
-      repo.git('checkout', '--quiet', '-b', 'feature');
-      repo.emptyCommit('chore: empty');
+    it("classifies a PR that changed nothing as not docs-only", () => {
+      repo.git("checkout", "--quiet", "-b", "feature")
+      repo.emptyCommit("chore: empty")
 
       expectClassification(
-        repo.classify('pull_request', 'main', 'feature'),
-        'false',
-      );
-    });
+        repo.classify("pull_request", "main", "feature"),
+        "false"
+      )
+    })
 
-    it('treats non-markdown files under docs/ as documentation', () => {
-      repo.git('checkout', '--quiet', '-b', 'feature');
+    it("treats non-markdown files under docs/ as documentation", () => {
+      repo.git("checkout", "--quiet", "-b", "feature")
       repo.commit(
-        { 'docs/assets/diagram.svg': '<svg />\n' },
-        'docs: add diagram',
-      );
+        { "docs/assets/diagram.svg": "<svg />\n" },
+        "docs: add diagram"
+      )
 
       expectClassification(
-        repo.classify('pull_request', 'main', 'feature'),
-        'true',
-      );
-    });
+        repo.classify("pull_request", "main", "feature"),
+        "true"
+      )
+    })
 
-    it('treats markdown outside docs/ as documentation', () => {
-      repo.git('checkout', '--quiet', '-b', 'feature');
+    it("treats markdown outside docs/ as documentation", () => {
+      repo.git("checkout", "--quiet", "-b", "feature")
       repo.commit(
-        { 'scripts/README.md': '# scripts\n' },
-        'docs: scripts readme',
-      );
+        { "scripts/README.md": "# scripts\n" },
+        "docs: scripts readme"
+      )
 
       expectClassification(
-        repo.classify('pull_request', 'main', 'feature'),
-        'true',
-      );
-    });
+        repo.classify("pull_request", "main", "feature"),
+        "true"
+      )
+    })
 
-    it('does not treat a docs-prefixed sibling directory as documentation', () => {
-      repo.git('checkout', '--quiet', '-b', 'feature');
+    it("does not treat a docs-prefixed sibling directory as documentation", () => {
+      repo.git("checkout", "--quiet", "-b", "feature")
       repo.commit(
-        { 'docsy/tool.ts': 'export const tool = 1;\n' },
-        'feat: docsy tool',
-      );
+        { "docsy/tool.ts": "export const tool = 1;\n" },
+        "feat: docsy tool"
+      )
 
       expectClassification(
-        repo.classify('pull_request', 'main', 'feature'),
-        'false',
-      );
-    });
+        repo.classify("pull_request", "main", "feature"),
+        "false"
+      )
+    })
 
-    it('classifies an unresolvable base ref as not docs-only', () => {
-      repo.git('checkout', '--quiet', '-b', 'feature');
-      repo.commit({ 'docs/guide.md': '# guide\n' }, 'docs: add guide');
+    it("classifies an unresolvable base ref as not docs-only", () => {
+      repo.git("checkout", "--quiet", "-b", "feature")
+      repo.commit({ "docs/guide.md": "# guide\n" }, "docs: add guide")
 
       expectClassification(
-        repo.classify('pull_request', 'refs/heads/does-not-exist', 'feature'),
-        'false',
-      );
-    });
+        repo.classify("pull_request", "refs/heads/does-not-exist", "feature"),
+        "false"
+      )
+    })
 
-    it('classifies an unresolvable head ref as not docs-only', () => {
+    it("classifies an unresolvable head ref as not docs-only", () => {
       expectClassification(
-        repo.classify('pull_request', 'main', 'refs/heads/does-not-exist'),
-        'false',
-      );
-    });
+        repo.classify("pull_request", "main", "refs/heads/does-not-exist"),
+        "false"
+      )
+    })
 
-    it('classifies a missing base argument as not docs-only', () => {
-      expectClassification(repo.classify('pull_request', '', 'main'), 'false');
-    });
+    it("classifies a missing base argument as not docs-only", () => {
+      expectClassification(repo.classify("pull_request", "", "main"), "false")
+    })
 
-    it('classifies a missing head argument as not docs-only', () => {
-      expectClassification(repo.classify('pull_request', 'main'), 'false');
-    });
-  });
+    it("classifies a missing head argument as not docs-only", () => {
+      expectClassification(repo.classify("pull_request", "main"), "false")
+    })
+  })
 
-  describe('push events', () => {
-    it('classifies a normal docs-only push as docs-only', () => {
+  describe("push events", () => {
+    it("classifies a normal docs-only push as docs-only", () => {
       const after = repo.commit(
-        { 'docs/notes.md': '# notes\n' },
-        'docs: add notes',
-      );
+        { "docs/notes.md": "# notes\n" },
+        "docs: add notes"
+      )
 
-      expectClassification(repo.classify('push', initial, after), 'true');
-    });
+      expectClassification(repo.classify("push", initial, after), "true")
+    })
 
-    it('classifies a multi-commit mixed push as not docs-only', () => {
-      repo.commit({ 'docs/notes.md': '# notes\n' }, 'docs: add notes');
+    it("classifies a multi-commit mixed push as not docs-only", () => {
+      repo.commit({ "docs/notes.md": "# notes\n" }, "docs: add notes")
       const after = repo.commit(
-        { 'src/lib.ts': 'export const lib = 1;\n' },
-        'feat: lib',
-      );
+        { "src/lib.ts": "export const lib = 1;\n" },
+        "feat: lib"
+      )
 
-      expectClassification(repo.classify('push', initial, after), 'false');
-    });
+      expectClassification(repo.classify("push", initial, after), "false")
+    })
 
-    it('classifies a multi-commit docs-only push as docs-only', () => {
-      repo.commit({ 'docs/notes.md': '# notes\n' }, 'docs: add notes');
+    it("classifies a multi-commit docs-only push as docs-only", () => {
+      repo.commit({ "docs/notes.md": "# notes\n" }, "docs: add notes")
       const after = repo.commit(
-        { 'CHANGELOG.md': '# changelog\n' },
-        'docs: changelog',
-      );
+        { "CHANGELOG.md": "# changelog\n" },
+        "docs: changelog"
+      )
 
-      expectClassification(repo.classify('push', initial, after), 'true');
-    });
+      expectClassification(repo.classify("push", initial, after), "true")
+    })
 
-    it('classifies an all-zero first-push base as not docs-only', () => {
+    it("classifies an all-zero first-push base as not docs-only", () => {
       const after = repo.commit(
-        { 'docs/notes.md': '# notes\n' },
-        'docs: add notes',
-      );
+        { "docs/notes.md": "# notes\n" },
+        "docs: add notes"
+      )
 
-      expectClassification(repo.classify('push', ZERO_SHA, after), 'false');
-    });
+      expectClassification(repo.classify("push", ZERO_SHA, after), "false")
+    })
 
-    it('classifies a non-ancestor force-push base as not docs-only', () => {
+    it("classifies a non-ancestor force-push base as not docs-only", () => {
       // Both branches are docs-only, so only the ancestry check can catch
       // this. A naive `base..head` diff would report true.
-      repo.git('checkout', '--quiet', '-b', 'forced-a');
-      const tipA = repo.commit({ 'docs/a.md': '# a\n' }, 'docs: a');
+      repo.git("checkout", "--quiet", "-b", "forced-a")
+      const tipA = repo.commit({ "docs/a.md": "# a\n" }, "docs: a")
 
-      repo.git('checkout', '--quiet', '-b', 'forced-b', initial);
-      const tipB = repo.commit({ 'docs/b.md': '# b\n' }, 'docs: b');
+      repo.git("checkout", "--quiet", "-b", "forced-b", initial)
+      const tipB = repo.commit({ "docs/b.md": "# b\n" }, "docs: b")
 
-      expectClassification(repo.classify('push', tipA, tipB), 'false');
-    });
+      expectClassification(repo.classify("push", tipA, tipB), "false")
+    })
 
-    it('classifies an empty diff as not docs-only', () => {
-      expectClassification(repo.classify('push', initial, initial), 'false');
-    });
+    it("classifies an empty diff as not docs-only", () => {
+      expectClassification(repo.classify("push", initial, initial), "false")
+    })
 
-    it('classifies a push of only empty commits as not docs-only', () => {
-      const after = repo.emptyCommit('chore: empty');
+    it("classifies a push of only empty commits as not docs-only", () => {
+      const after = repo.emptyCommit("chore: empty")
 
-      expectClassification(repo.classify('push', initial, after), 'false');
-    });
+      expectClassification(repo.classify("push", initial, after), "false")
+    })
 
-    it('classifies an unresolvable base SHA as not docs-only', () => {
+    it("classifies an unresolvable base SHA as not docs-only", () => {
       const after = repo.commit(
-        { 'docs/notes.md': '# notes\n' },
-        'docs: add notes',
-      );
+        { "docs/notes.md": "# notes\n" },
+        "docs: add notes"
+      )
 
       expectClassification(
         repo.classify(
-          'push',
-          'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
-          after,
+          "push",
+          "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+          after
         ),
-        'false',
-      );
-    });
+        "false"
+      )
+    })
 
-    it('classifies an unresolvable head SHA as not docs-only', () => {
+    it("classifies an unresolvable head SHA as not docs-only", () => {
       expectClassification(
         repo.classify(
-          'push',
+          "push",
           initial,
-          'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+          "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
         ),
-        'false',
-      );
-    });
+        "false"
+      )
+    })
 
-    it('classifies a missing base argument as not docs-only', () => {
-      expectClassification(repo.classify('push', '', initial), 'false');
-    });
+    it("classifies a missing base argument as not docs-only", () => {
+      expectClassification(repo.classify("push", "", initial), "false")
+    })
 
-    it('classifies a missing head argument as not docs-only', () => {
-      expectClassification(repo.classify('push', initial), 'false');
-    });
-  });
+    it("classifies a missing head argument as not docs-only", () => {
+      expectClassification(repo.classify("push", initial), "false")
+    })
+  })
 
   /**
    * Deletions and renames are the cases a `--name-only --diff-filter=ACMRT`
@@ -295,50 +289,50 @@ describe('classify-docs-only.sh', () => {
    * paths in the classifier compute their revision range differently and can
    * regress independently.
    */
-  describe.each(['pull_request', 'push'] as const)(
-    'deletions and renames (%s events)',
+  describe.each(["pull_request", "push"] as const)(
+    "deletions and renames (%s events)",
     (mode) => {
-      it('classifies deleting a source file alongside a docs edit as not docs-only', () => {
+      it("classifies deleting a source file alongside a docs edit as not docs-only", () => {
         expectClassification(
           classifyMutation(
             mode,
             () => {
-              repo.git('rm', '--quiet', 'src/app.ts');
-              repo.write({ 'README.md': '# duplexd\n\nupdated\n' });
+              repo.git("rm", "--quiet", "src/app.ts")
+              repo.write({ "README.md": "# duplexd\n\nupdated\n" })
             },
-            'chore: drop app and touch readme',
+            "chore: drop app and touch readme"
           ),
-          'false',
-        );
-      });
+          "false"
+        )
+      })
 
-      it('classifies deleting only a source file as not docs-only', () => {
+      it("classifies deleting only a source file as not docs-only", () => {
         expectClassification(
           classifyMutation(
             mode,
             () => {
-              repo.git('rm', '--quiet', 'src/app.ts');
+              repo.git("rm", "--quiet", "src/app.ts")
             },
-            'chore: drop app',
+            "chore: drop app"
           ),
-          'false',
-        );
-      });
+          "false"
+        )
+      })
 
-      it('classifies deleting only a documentation file as docs-only', () => {
+      it("classifies deleting only a documentation file as docs-only", () => {
         expectClassification(
           classifyMutation(
             mode,
             () => {
-              repo.git('rm', '--quiet', 'docs/index.md');
+              repo.git("rm", "--quiet", "docs/index.md")
             },
-            'docs: drop index',
+            "docs: drop index"
           ),
-          'true',
-        );
-      });
+          "true"
+        )
+      })
 
-      it('classifies moving a source file into docs/ as not docs-only', () => {
+      it("classifies moving a source file into docs/ as not docs-only", () => {
         // Rename detection reports only `docs/app.ts` unless the source side
         // is considered too — the deleted `src/app.ts` is what makes this a
         // code change.
@@ -346,75 +340,75 @@ describe('classify-docs-only.sh', () => {
           classifyMutation(
             mode,
             () => {
-              repo.git('mv', 'src/app.ts', 'docs/app.ts');
+              repo.git("mv", "src/app.ts", "docs/app.ts")
             },
-            'chore: move app into docs',
+            "chore: move app into docs"
           ),
-          'false',
-        );
-      });
+          "false"
+        )
+      })
 
-      it('classifies moving a documentation file out of docs/ into src/ as not docs-only', () => {
+      it("classifies moving a documentation file out of docs/ into src/ as not docs-only", () => {
         expectClassification(
           classifyMutation(
             mode,
             () => {
-              repo.git('mv', 'docs/index.md', 'src/index.ts');
+              repo.git("mv", "docs/index.md", "src/index.ts")
             },
-            'chore: move index into src',
+            "chore: move index into src"
           ),
-          'false',
-        );
-      });
+          "false"
+        )
+      })
 
-      it('preserves a docs-to-docs rename as docs-only', () => {
+      it("preserves a docs-to-docs rename as docs-only", () => {
         expectClassification(
           classifyMutation(
             mode,
             () => {
-              repo.git('mv', 'docs/index.md', 'docs/overview.md');
+              repo.git("mv", "docs/index.md", "docs/overview.md")
             },
-            'docs: rename index',
+            "docs: rename index"
           ),
-          'true',
-        );
-      });
-    },
-  );
+          "true"
+        )
+      })
+    }
+  )
 
-  describe('unsupported and malformed invocations', () => {
+  describe("unsupported and malformed invocations", () => {
     it.each([
-      ['workflow_dispatch'],
-      ['schedule'],
-      ['pull_request_target'],
-      ['merge_group'],
-    ])('classifies the %s event as not docs-only', (event) => {
-      expectClassification(repo.classify(event, 'main', 'main'), 'false');
-    });
+      ["workflow_dispatch"],
+      ["schedule"],
+      ["pull_request_target"],
+      ["merge_group"],
+    ])("classifies the %s event as not docs-only", (event) => {
+      expectClassification(repo.classify(event, "main", "main"), "false")
+    })
 
-    it('classifies an invocation with no arguments as not docs-only', () => {
-      expectClassification(repo.classify(), 'false');
-    });
+    it("classifies an invocation with no arguments as not docs-only", () => {
+      expectClassification(repo.classify(), "false")
+    })
 
-    it('classifies an empty event name as not docs-only', () => {
-      expectClassification(repo.classify('', initial, initial), 'false');
-    });
+    it("classifies an empty event name as not docs-only", () => {
+      expectClassification(repo.classify("", initial, initial), "false")
+    })
 
-    it('classifies a supported event outside a Git repository as not docs-only', () => {
-      const outside = createNonRepoDir();
+    it("classifies a supported event outside a Git repository as not docs-only", () => {
+      const outside = createNonRepoDir()
 
       try {
         expectClassification(
-          classifyIn(outside.dir, 'push', initial, initial),
-          'false',
-        );
+          classifyIn(outside.dir, "push", initial, initial),
+          "false"
+        )
         expectClassification(
-          classifyIn(outside.dir, 'pull_request', 'main', 'feature'),
-          'false',
-        );
+          classifyIn(outside.dir, "pull_request", "main", "feature"),
+          "false"
+        )
       } finally {
-        outside.cleanup();
+        outside.cleanup()
       }
-    });
-  });
-});
+    })
+  })
+})

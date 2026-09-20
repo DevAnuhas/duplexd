@@ -1,17 +1,17 @@
-'use client';
+"use client"
 
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useState } from 'react';
-import { Controller, useForm } from 'react-hook-form';
+import { zodResolver } from "@hookform/resolvers/zod"
+import { useState } from "react"
+import { Controller, useForm } from "react-hook-form"
 
-import { Button } from '@/components/ui/button';
-import { Field, FieldError, FieldLabel } from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
-import { authClient } from '@/lib/auth-client';
+import { Button } from "@/components/ui/button"
+import { Field, FieldError, FieldLabel } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
+import { authClient } from "@/lib/auth-client"
 import {
   forgotPasswordSchema,
   type ForgotPasswordValues,
-} from '@/lib/auth-schemas';
+} from "@/lib/auth-schemas"
 
 /**
  * The copy shown after a request, whatever happened.
@@ -20,10 +20,10 @@ import {
  * two outcomes different words.
  */
 const SENT_MESSAGE =
-  "If an account exists for that address, we've sent a reset link.";
+  "If an account exists for that address, we've sent a reset link."
 
 export function ForgotPasswordForm() {
-  const [sent, setSent] = useState(false);
+  const [sent, setSent] = useState(false)
 
   const {
     control,
@@ -31,8 +31,8 @@ export function ForgotPasswordForm() {
     formState: { isSubmitting },
   } = useForm<ForgotPasswordValues>({
     resolver: zodResolver(forgotPasswordSchema),
-    defaultValues: { email: '' },
-  });
+    defaultValues: { email: "" },
+  })
 
   /**
    * **One outcome, always.**
@@ -54,12 +54,12 @@ export function ForgotPasswordForm() {
     try {
       await authClient.requestPasswordReset({
         email: values.email,
-        redirectTo: '/reset-password',
-      });
+        redirectTo: "/reset-password",
+      })
     } catch {
       // Intentionally empty. See above.
     } finally {
-      setSent(true);
+      setSent(true)
     }
   }
 
@@ -69,12 +69,12 @@ export function ForgotPasswordForm() {
         <p role="status" className="text-sm">
           {SENT_MESSAGE}
         </p>
-        <p className="text-muted-foreground text-sm">
+        <p className="text-sm text-muted-foreground">
           The link expires in one hour and can be used once. Check your spam
           folder before asking for another.
         </p>
       </div>
-    );
+    )
   }
 
   return (
@@ -106,8 +106,8 @@ export function ForgotPasswordForm() {
       />
 
       <Button type="submit" className="h-11 w-full" disabled={isSubmitting}>
-        {isSubmitting ? 'Sending…' : 'Send reset link'}
+        {isSubmitting ? "Sending…" : "Send reset link"}
       </Button>
     </form>
-  );
+  )
 }

@@ -9,18 +9,18 @@
 
 /** A tool in the flat shape, valid in every respect. */
 export function flatTool(
-  overrides: Record<string, unknown> = {},
+  overrides: Record<string, unknown> = {}
 ): Record<string, unknown> {
   return {
-    name: 'lookup_order',
-    description: 'Looks up an order by its reference.',
+    name: "lookup_order",
+    description: "Looks up an order by its reference.",
     parameters: {
-      type: 'object',
-      properties: { reference: { type: 'string' } },
-      required: ['reference'],
+      type: "object",
+      properties: { reference: { type: "string" } },
+      required: ["reference"],
     },
     ...overrides,
-  };
+  }
 }
 
 /**
@@ -32,9 +32,9 @@ export function flatTool(
  * rejects, and read as coverage.
  */
 export function wrappedTool(
-  overrides: Record<string, unknown> = {},
+  overrides: Record<string, unknown> = {}
 ): Record<string, unknown> {
-  return { type: 'function', function: flatTool(overrides) };
+  return { type: "function", function: flatTool(overrides) }
 }
 
 /**
@@ -48,7 +48,7 @@ export function wrappedTool(
  * that genuinely leaks. Absence of a canary is only evidence when the detector
  * has been shown to find one.
  */
-export const CANARY = 'zzQ-canary-8f3a1c-do-not-echo-zzQ';
+export const CANARY = "zzQ-canary-8f3a1c-do-not-echo-zzQ"
 
 /**
  * Fails if `haystack` carries the canary.
@@ -59,7 +59,7 @@ export const CANARY = 'zzQ-canary-8f3a1c-do-not-echo-zzQ';
 export function expectAbsent(haystack: string, canary: string = CANARY): void {
   if (haystack.includes(canary)) {
     throw new Error(
-      `Expected the text not to echo its input, but it contained ${canary}.`,
-    );
+      `Expected the text not to echo its input, but it contained ${canary}.`
+    )
   }
 }

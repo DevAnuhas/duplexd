@@ -1,24 +1,24 @@
-import { ACTIVE_STALE_AFTER_MS, STARTING_STALE_AFTER_MS } from './constants.ts';
+import { ACTIVE_STALE_AFTER_MS, STARTING_STALE_AFTER_MS } from "./constants.ts"
 
 export type StalenessInput = {
-  state: string;
-  createdAt: Date;
-  lastHeartbeatAt: Date | null;
-};
+  state: string
+  createdAt: Date
+  lastHeartbeatAt: Date | null
+}
 
 export type StaleTransition = {
-  state: 'incomplete' | 'failed';
-  endedReason: 'agent_lost' | 'agent_never_started';
-};
+  state: "incomplete" | "failed"
+  endedReason: "agent_lost" | "agent_never_started"
+}
 
 export function staleCutoffs(now = new Date()): {
-  active: Date;
-  starting: Date;
+  active: Date
+  starting: Date
 } {
   return {
     active: new Date(now.getTime() - ACTIVE_STALE_AFTER_MS),
     starting: new Date(now.getTime() - STARTING_STALE_AFTER_MS),
-  };
+  }
 }
 
 /**
@@ -32,23 +32,23 @@ export function staleCutoffs(now = new Date()): {
  */
 export function deriveStaleTransition(
   call: StalenessInput,
-  now = new Date(),
+  now = new Date()
 ): StaleTransition | null {
-  const cutoffs = staleCutoffs(now);
+  const cutoffs = staleCutoffs(now)
   if (
-    call.state === 'active' &&
+    call.state === "active" &&
     call.lastHeartbeatAt !== null &&
     call.lastHeartbeatAt < cutoffs.active
   ) {
-    return { state: 'incomplete', endedReason: 'agent_lost' };
+    return { state: "incomplete", endedReason: "agent_lost" }
   }
 
-  if (call.state === 'starting' && call.createdAt < cutoffs.starting) {
+  if (call.state === "starting" && call.createdAt < cutoffs.starting) {
     return {
-      state: 'failed',
-      endedReason: 'agent_never_started',
-    };
+      state: "failed",
+      endedReason: "agent_never_started",
+    }
   }
 
-  return null;
+  return null
 }

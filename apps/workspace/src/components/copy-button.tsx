@@ -1,21 +1,21 @@
-'use client';
+"use client"
 
-import { Copy } from '@phosphor-icons/react';
-import { toast } from 'sonner';
+import { Copy } from "@phosphor-icons/react"
+import { toast } from "sonner"
 
-import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 
 export function CopyButton({
   value,
-  label = 'Copy',
-  successLabel = 'Copied',
+  label = "Copy",
+  successLabel = "Copied",
   compact = false,
 }: {
-  value: string;
-  label?: string;
-  successLabel?: string;
-  compact?: boolean;
+  value: string
+  label?: string
+  successLabel?: string
+  compact?: boolean
 }) {
   /**
    * `navigator.clipboard` is not always there, and `writeText` can reject.
@@ -33,15 +33,16 @@ export function CopyButton({
   async function copy() {
     try {
       if (navigator.clipboard === undefined) {
-        throw new Error('The clipboard is unavailable in this context.');
+        throw new Error("The clipboard is unavailable in this context.")
       }
 
-      await navigator.clipboard.writeText(value);
-      toast.success(successLabel);
+      await navigator.clipboard.writeText(value)
+      toast.success(successLabel)
     } catch {
-      toast.error('Could not copy', {
-        description: 'Your browser blocked clipboard access — select the value and copy it by hand.',
-      });
+      toast.error("Could not copy", {
+        description:
+          "Your browser blocked clipboard access — select the value and copy it by hand.",
+      })
     }
   }
 
@@ -49,13 +50,13 @@ export function CopyButton({
     <Button
       type="button"
       variant="ghost"
-      size={compact ? 'icon' : 'default'}
-      className={cn('h-11', compact && 'w-11')}
+      size={compact ? "icon" : "default"}
+      className={cn("h-11", compact && "w-11")}
       onClick={copy}
       aria-label={label}
     >
       <Copy aria-hidden="true" data-icon="inline-start" />
       {!compact && <span>{label}</span>}
     </Button>
-  );
+  )
 }

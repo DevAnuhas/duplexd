@@ -1,8 +1,8 @@
-import Link from 'next/link';
-import { redirect } from 'next/navigation';
+import Link from "next/link"
+import { redirect } from "next/navigation"
 
-import { CopyButton } from '@/components/copy-button';
-import { Button } from '@/components/ui/button';
+import { CopyButton } from "@/components/copy-button"
+import { Button } from "@/components/ui/button"
 import {
   Table,
   TableBody,
@@ -10,59 +10,59 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table';
-import { listWorkspaceCallsForAccount } from '@/data/calls';
-import { requireShell } from '../shell-data';
-import { CallStateBadge } from './call-state-badge';
+} from "@/components/ui/table"
+import { listWorkspaceCallsForAccount } from "@/data/calls"
+import { requireShell } from "../shell-data"
+import { CallStateBadge } from "./call-state-badge"
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic"
 
-const dateTime = new Intl.DateTimeFormat('en', {
-  year: 'numeric',
-  month: 'short',
-  day: 'numeric',
-  hour: 'numeric',
-  minute: '2-digit',
-  timeZone: 'UTC',
-  timeZoneName: 'short',
-});
+const dateTime = new Intl.DateTimeFormat("en", {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  timeZone: "UTC",
+  timeZoneName: "short",
+})
 
 function formatTimestamp(value: string | null): string {
-  return value === null ? 'Not reported' : dateTime.format(new Date(value));
+  return value === null ? "Not reported" : dateTime.format(new Date(value))
 }
 
 function formatDuration(value: number | null): string {
   if (value === null) {
-    return 'Not reported';
+    return "Not reported"
   }
   if (value < 60) {
-    return `${value.toFixed(value < 10 ? 1 : 0)} sec`;
+    return `${value.toFixed(value < 10 ? 1 : 0)} sec`
   }
 
-  const minutes = Math.floor(value / 60);
-  const seconds = Math.round(value % 60);
-  return `${minutes} min ${seconds} sec`;
+  const minutes = Math.floor(value / 60)
+  const seconds = Math.round(value % 60)
+  return `${minutes} min ${seconds} sec`
 }
 
 function shortId(id: string): string {
-  return id.length <= 16 ? id : `${id.slice(0, 8)}…${id.slice(-4)}`;
+  return id.length <= 16 ? id : `${id.slice(0, 8)}…${id.slice(-4)}`
 }
 
 export default async function CallsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ cursor?: string | string[] }>;
+  searchParams: Promise<{ cursor?: string | string[] }>
 }) {
-  const { account } = await requireShell();
+  const { account } = await requireShell()
 
-  const value = (await searchParams).cursor;
-  const cursor = typeof value === 'string' ? value : null;
+  const value = (await searchParams).cursor
+  const cursor = typeof value === "string" ? value : null
   const result = await listWorkspaceCallsForAccount(account.id, {
     cursor,
-  });
+  })
 
-  if (result.kind === 'invalid_cursor') {
-    redirect('/calls');
+  if (result.kind === "invalid_cursor") {
+    redirect("/calls")
   }
 
   return (
@@ -109,14 +109,14 @@ export default async function CallsPage({
                       {formatTimestamp(call.startedAt)}
                     </Link>
                   </TableCell>
-                  <TableCell>{call.assistantName ?? 'Unavailable'}</TableCell>
+                  <TableCell>{call.assistantName ?? "Unavailable"}</TableCell>
                   <TableCell>
                     <CallStateBadge state={call.state} />
                   </TableCell>
                   <TableCell>{formatDuration(call.durationSecs)}</TableCell>
                   <TableCell>
                     {call.apiKey === null ? (
-                      'Unavailable'
+                      "Unavailable"
                     ) : (
                       <div>
                         <div>{call.apiKey.name}</div>
@@ -152,5 +152,5 @@ export default async function CallsPage({
         </Button>
       )}
     </main>
-  );
+  )
 }
