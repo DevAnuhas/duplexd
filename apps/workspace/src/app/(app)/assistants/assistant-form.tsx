@@ -100,7 +100,7 @@ function AssistantTextField({
   description?: string;
   rows?: number;
   type?: 'text' | 'password';
-  placeholder?: string;
+  placeholder: string;
 }) {
   return (
     <Controller
@@ -137,6 +137,7 @@ function AssistantTextField({
               {...field}
               id={field.name}
               rows={rows}
+              placeholder={placeholder}
               className={
                 rows >= 6
                   ? 'min-h-40 leading-relaxed'
@@ -370,6 +371,7 @@ export function AssistantForm({
               control={form.control}
               name="name"
               label="Assistant name"
+              placeholder="Support line"
             />
           </CardContent>
         </Card>
@@ -388,6 +390,8 @@ export function AssistantForm({
                 control={form.control}
                 name="instructions"
                 label="Conversation instructions"
+                placeholder="You are a support assistant. Ask what the caller needs and answer clearly."
+                description="Describe the assistant's role, what it should help with, and any limits. These guide the spoken conversation."
                 rows={8}
               />
               <FieldGroup className="grid gap-6 sm:grid-cols-2">
@@ -395,12 +399,14 @@ export function AssistantForm({
                   control={form.control}
                   name="voice"
                   label="Voice"
-                  description="The voice identifier used for your calls."
+                  placeholder="marin"
+                  description="Enter a provider voice ID, such as marin. Describe tone and accent in the next field."
                 />
                 <AssistantTextField
                   control={form.control}
                   name="accentStyle"
                   label="Accent & speaking style"
+                  placeholder="Calm, concise, friendly; US English"
                   description="Describe the accent, tone, and pace."
                 />
               </FieldGroup>
@@ -421,6 +427,8 @@ export function AssistantForm({
               control={form.control}
               name="waitingBehavior"
               label="Waiting behavior"
+              placeholder="One moment while I check that."
+              description="Give a brief phrase or instruction for pauses while your backend handles a request."
               rows={3}
             />
           </CardContent>
@@ -440,11 +448,14 @@ export function AssistantForm({
                 control={form.control}
                 name="backendModel"
                 label="Backend model"
+                placeholder="gpt-5.6-luna"
+                description="The model ID for choosing tools and processing their results, separate from the speaking voice."
               />
               <AssistantTextField
                 control={form.control}
                 name="backendInstructions"
                 label="Backend instructions"
+                placeholder="Pick the tool that matches the caller's request. Report only confirmed results."
                 rows={6}
                 description="Guide how tools are chosen. Your backend still controls permissions and confirms actions."
               />
@@ -452,8 +463,8 @@ export function AssistantForm({
                 control={form.control}
                 name="serverUrl"
                 label="Server URL"
-                placeholder="https://api.example.com/voice"
-                description="Tool requests are sent to this endpoint."
+                placeholder="https://api.yourcompany.com/voice"
+                description="The HTTPS webhook endpoint on your backend that receives signed tool requests."
               />
               <Separator />
               <FieldSet className="gap-4">
@@ -473,7 +484,8 @@ export function AssistantForm({
                   name="serverSecret"
                   label={hasSecret ? 'Replace secret' : 'New secret'}
                   type="password"
-                  description="Leave blank to keep the current secret."
+                  placeholder="Enter a new webhook signing secret"
+                  description="Your backend uses this shared secret to verify tool requests. Leave blank to keep the current secret."
                 />
                 {hasSecret && (
                   <Controller
@@ -599,12 +611,19 @@ export function AssistantForm({
                       </FieldLabel>
                       <FieldDescription id="tools-help">
                         A JSON array of tools. Each entry has a name,
-                        description, and parameters schema.
+                        description, and parameters schema. Keep [] if no tools
+                        are needed. Example tool:
+                        <span className="mt-1 block break-words">
+                          {'{"name":"check_status","description":"Check a request status","parameters":{"type":"object","properties":{"reference":{"type":"string"}}}}'}
+                        </span>
+                        Place tool objects inside the array; JSON cannot contain
+                        comments.
                       </FieldDescription>
                       <Textarea
                         {...field}
                         id={field.name}
                         rows={14}
+                        placeholder='[{"name":"check_status","description":"Check a request status","parameters":{"type":"object","properties":{}}}]'
                         className="min-h-64 leading-relaxed"
                         spellCheck={false}
                         onBlur={() => {
