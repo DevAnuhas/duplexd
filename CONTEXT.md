@@ -21,7 +21,7 @@ The first customers are the user's own products, Boring Host and Dorian. They ar
 ## Direction
 
 - **The workspace is the product surface.** A human configuring an assistant is the point, not a side observation panel. This is the sharpest reversal from the retired milestone, which explicitly disclaimed being a dashboard product.
-- **Two toolchains, one repository.** TypeScript for the workspace and control API; Python with `uv` for the agent. `spikes/pipecat-gate/` already proves a `uv` project lives inside this repo with CI green.
+- **Two toolchains, one repository.** TypeScript for the workspace and control API; Python with `uv` for the agent. `agent/` proves a `uv` project lives inside this repo with CI green.
 - **Both auth boundaries are load-bearing.** Human sessions can mint API keys and change the webhook destination that receives credentials, while API keys authorize integrating projects. Workspace auth therefore needs the same fail-closed treatment as the API-key boundary. Keys are hashed, scoped, rotatable and revocable.
 - **Honest states over tidy ones.** A call that stopped reporting is recorded as incomplete, not as finished. Nothing claims a clean ending it did not observe.
 
@@ -62,6 +62,6 @@ Recording retention, outbound calling compliance, and provider region placement 
 
 The engine milestone is retired. Its packages, specs, and wire-contract documentation have been removed from the tree — `docs/decisions/` keeps every superseded ADR, and git history keeps the code.
 
-What exists at this commit: the documentation and decision trail, the CI workflow with its path classifier, `spikes/pipecat-gate/` — the passing gate, kept as the regression test for a future Pipecat upgrade rather than as dead weight — and `apps/workspace`, the Next.js app.
+What exists at this commit: the documentation and decision trail, the CI workflow with its path classifier, and `apps/workspace`, the Next.js app. The Pipecat gate spike that proved the runtime end to end has served its purpose and been removed; git history keeps it.
 
 The workspace, assistants, API keys, `/v1` control API, call history, and Python Pipecat agent are implemented and proven locally against the real database/provider seams available to the repository. Vercel/Neon configuration and an external sweep now exist in the tree, but dashboard setup and the first deployed preview/production run are still blocked owner actions. No production deployment or first-customer acceptance call has been claimed. The current build target and its acceptance evidence are in [the milestone](docs/MILESTONE.md).

@@ -39,7 +39,7 @@ They are one deploy because the control API checks a key, loads a record, calls 
 
 One data-driven agent image, not one image per assistant. Per call it loads the assistant record and builds the pipeline: the voice model in client delegation, a backend text model through OpenAI's Responses API holding the assistant's tools, and each tool a signed webhook call to the assistant's server URL.
 
-A Python `uv` project outside the pnpm workspace, following the layout `spikes/pipecat-gate/` already proves. Pipecat is a pinned dependency, never vendored or forked: every upstream fix for providers, turn detection, and transports would otherwise become a manual merge.
+A Python `uv` project outside the pnpm workspace. Pipecat is a pinned dependency, never vendored or forked: every upstream fix for providers, turn detection, and transports would otherwise become a manual merge.
 
 The backend model is called through the **Responses API**, not chat completions. Current reasoning models reject function tools on chat completions with a 400, and Pipecat's backend worker turns that error into an empty answer — the gate spike failed exactly this way before the fix.
 

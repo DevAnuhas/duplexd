@@ -7,7 +7,7 @@ Setup, verification, CI, and releases. This file owns supported commands and act
 - Node `24.21.0` (`.node-version`) and pnpm `12.4.2` (including its Corepack integrity hash in `package.json`). Use `corepack enable` or install that exact pnpm version.
 - TypeScript `6.0.3`, ESLint `10.10.0`, typescript-eslint `8.70.0`, Prettier `3.9.6`, and Vitest `5.0.1`.
 - Markdown links are checked by `markdown-link-check` `3.15.0` through `pnpm lint:links`.
-- Python 3.12 and `uv` for `agent/` and `spikes/pipecat-gate/`.
+- Python 3.12 and `uv` for `agent/`.
 - `pnpm install --frozen-lockfile` locally and in CI. Exact pins, one committed lockfile.
 
 ## Layout
@@ -17,7 +17,6 @@ apps/workspace/   the Next.js app: workspace UI now, /v1 control API in P05
 agent/             the deployable, data-driven Pipecat runtime
 scripts/          classify-docs-only.sh, the CI path classifier
 tests/            the classifier's suite, run by the root Vitest runner
-spikes/pipecat-gate/   the passing Pipecat gate (Python, uv), kept as a regression test
 docs/             documentation and the decision trail
 ```
 
