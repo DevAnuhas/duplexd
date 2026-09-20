@@ -45,9 +45,13 @@ Writing these steps does not prove the dashboards are configured. The first prev
 
 A preview origin cannot be configured ahead of time: every pull request gets a generated domain, so no value in the Preview scope matches the origin a reviewer opens. Setting one is worse than leaving it blank, because this variable decides the cookie domain and the `__Secure-` prefix — a wrong origin signs in and then silently fails to keep the session.
 
-Left unset on a preview, `requireAuthUrl()` builds the origin from `VERCEL_BRANCH_URL`, which Vercel injects per deployment. That is not the request's `Host` header, so the deployment still states its own identity rather than inferring it from traffic; the branch URL is used rather than the per-deployment `VERCEL_URL` because it survives a redeploy of the same pull request, and because `VERCEL_URL` does not work under Standard Deployment Protection.
+A preview answers on **two** hostnames that both legitimately serve it: the stable branch URL (`VERCEL_BRANCH_URL`) and the per-deployment URL (`VERCEL_URL`). Vercel's dashboard and pull-request comments link the per-deployment one, so that is the host a reviewer actually opens.
 
-The fallback is **preview-only**. Production missing `BETTER_AUTH_URL` still fails closed rather than minting cookies for a `vercel.app` domain instead of the real one. Both halves are mutation-proven in `apps/workspace/test/env.test.ts`.
+Better Auth compares the request's `Origin` against its base URL, so pinning either host rejects the other with `403 Invalid origin`. Left unset on a preview, `resolveAuthBaseUrl()` therefore returns Better Auth's `DynamicBaseURLConfig` — `protocol: 'https'`, `allowedHosts` listing both hosts exactly, `fallback` the branch URL. The base URL is resolved per request but **allowlisted**: the request may pick between origins this deployment already knows about, and cannot name one. `allowedHosts` never contains a wildcard; `*.vercel.app` would match every deployment on the platform.
+
+`requireAuthUrl()` still returns a single origin, preferring the branch URL because it survives a redeploy. It is for callers that must hand one address to something else — the agent's `apiBase` is the only one.
+
+Both are **preview-only**. Production missing `BETTER_AUTH_URL` fails closed rather than minting cookies for a `vercel.app` domain instead of the real one, and keeps a plain string base URL so no request header participates in the auth decision. Both halves are mutation-proven in `apps/workspace/test/env.test.ts`: dropping the preview guard turns the production tests red, and narrowing to the branch host alone turns the two-host tests red.
 
 ### Sweep-only environment
 
