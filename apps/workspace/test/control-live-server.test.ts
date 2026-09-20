@@ -668,18 +668,30 @@ describeDatabase('real standalone server behavior', () => {
    * walks straight past it, and this test forges one deliberately rather than
    * pretending the proxy is a gate.
    *
-   * What the forged request must then meet is the real boundary — the page
-   * resolves the session server-side, finds nothing, and renders the
-   * prerendered shell. The shell is built with no database and no session, so
-   * it cannot carry tenant data; this asserts that rather than assuming it,
-   * against the account whose rows are seeded two hundred lines above and whose
-   * name, email and id would be the things to leak.
+   * What the forged request must then meet is the real boundary —
+   * `requireShell()` resolves the session server-side, finds nothing, and
+   * redirects. **That now produces a 307 rather than a 200, and this assertion
+   * was rewritten rather than widened.** It was written under
+   * `cacheComponents: true`, where the shell was prerendered, flushed with 200,
+   * and the redirect arrived as a meta tag in the streamed body — so the
+   * property worth proving was "that 200 body carries no tenant data". With
+   * `cacheComponents: false` the layout awaits the session before returning any
+   * JSX, so `redirect()` is no longer in a streaming context and emits a real
+   * HTTP redirect. The prerendered shell it was guarding does not exist.
    *
-   * Both assertions matter and they fail for different reasons. If the proxy
-   * regresses, the first goes. If a page ever reads the session outside its
-   * Suspense boundary and bakes an account into the shell, the second goes.
+   * Loosening this to `expect([200, 307]).toContain(...)` would have been the
+   * cheap fix and the wrong one: the canary loop below would then run against a
+   * redirect body that contains almost nothing, and pass for that reason rather
+   * than because anything is scoped correctly. So the canaries are kept and
+   * pointed at the redirect response — a redirect that leaked an account id in
+   * its body would still be a leak — and the status is asserted as what the
+   * server actually does.
+   *
+   * The two failures stay distinguishable. If the proxy regresses, the
+   * no-cookie assertion goes. If a page ever renders an account for a request
+   * whose session does not resolve, the canaries go.
    */
-  it('redirects a visitor with no cookie and leaks nothing to one with a forged cookie', async () => {
+  it('redirects a visitor with no cookie, and one with a forged cookie, leaking nothing', async () => {
     const origin = `http://127.0.0.1:${port}`;
 
     const noCookie = await fetch(`${origin}/`, { redirect: 'manual' });
@@ -687,19 +699,20 @@ describeDatabase('real standalone server behavior', () => {
     expect(noCookie.headers.get('location')).toContain('/sign-in');
 
     // A cookie of the right name carrying a value that was never issued. The
-    // proxy sees a cookie and steps aside; nothing else does.
+    // proxy sees a cookie and steps aside; `requireShell()` is what stops it.
     const forged = await fetch(`${origin}/`, {
       headers: {
         cookie: `better-auth.session_token=${randomUUID()}.forged-not-a-real-signature`,
       },
       redirect: 'manual',
     });
-    const forgedHtml = await forged.text();
+    const forgedBody = await forged.text();
 
     expect(
       forged.status,
-      'the forged cookie was rejected by the proxy, so this proves nothing about the shell',
-    ).toBe(200);
+      'a forged cookie reached a rendered page instead of the session check',
+    ).toBe(307);
+    expect(forged.headers.get('location')).toContain('/sign-in');
 
     // `accounts.name` is the signup email, so the email canary covers the
     // organization name the sidebar renders as well as the address itself.
@@ -710,9 +723,10 @@ describeDatabase('real standalone server behavior', () => {
       otherAccount.accountId,
       otherAccount.email,
     ]) {
-      expect(forgedHtml, `the shell served a signed-out request leaked ${canary}`).not.toContain(
-        canary,
-      );
+      expect(
+        forgedBody.includes(canary),
+        'the response to an unresolved session carried tenant data',
+      ).toBe(false);
     }
   });
 

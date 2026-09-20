@@ -19,19 +19,24 @@ import type { NextRequest } from 'next/server';
  * changes when that redirect happens, never whether it happens: delete it and
  * the pages are exactly as safe, just slower to bounce.
  *
- * ## Why it exists at all
+ * ## Why it exists, and what changed under it
  *
- * Under `cacheComponents` the prerendered shell is served with **200** and the
- * page's own redirect arrives in the streamed body. That is correct and it
- * leaks nothing — the shell is built with no database and no session, so it
- * carries no account id, no email and no organization name — but it costs two
- * things worth keeping. A client with no JavaScript never runs the streamed
- * redirect and simply sits on an empty frame; and `GET /` stopped answering
- * `307`, which is the contract `test/control-live-server.test.ts` asserts
- * against a real production server.
+ * It was written under `cacheComponents: true`, where the prerendered shell was
+ * flushed with **200** and the page's redirect arrived as a meta tag in the
+ * streamed body. A client with no JavaScript never ran that redirect and sat on
+ * an empty frame, so this file restored the JavaScript-free bounce.
  *
- * So the cookie check restores the fast, JavaScript-free bounce, and the real
- * check stays where it always was.
+ * **That is no longer the reason it earns its place.** `cacheComponents` is now
+ * `false` and `(app)/layout.tsx` awaits `requireShell()` before returning any
+ * JSX, so `redirect()` is outside a streaming context and Next emits a real 307
+ * on its own — see `next/dist/docs/01-app/03-api-reference/04-functions/
+ * redirect.md`, which is explicit that the meta-tag form is the streaming case.
+ * A signed-out visitor is correctly redirected with this file deleted.
+ *
+ * What it buys today is narrower and worth stating plainly: the bounce happens
+ * before the route renders, so a signed-out request costs no session lookup and
+ * no database round trip. It is a latency and load optimization in front of a
+ * boundary that already holds — not a correctness restoration, and not a gate.
  *
  * ## Two things not to change without reading this
  *
@@ -41,10 +46,14 @@ import type { NextRequest } from 'next/server';
  * `cookieName` nor `cookiePrefix` — if it ever does, the same values have to be
  * passed here, because this helper does not read the auth config.
  *
- * Nothing in this module reads `process.env`, at module scope or inside the
- * function. Proxy code is bundled separately and may be deployed to a CDN edge,
- * so it cannot rely on the server's environment, and `next build` has to keep
- * succeeding with no database URL and no auth secret present.
+ * Nothing here reads an environment **value that has to be present**. This
+ * module reads `process.env` nowhere itself; its import graph does touch it —
+ * `better-auth/cookies` pulls in `@better-auth/core/env`, which reads
+ * `NODE_ENV` at module scope behind a `typeof process !== 'undefined'` guard —
+ * but no secret and no database URL, and nothing that throws when unset. Proxy
+ * code is bundled separately and may be deployed to a CDN edge, so it cannot
+ * rely on the server's environment, and `next build` has to keep succeeding
+ * with no database URL and no auth secret present.
  */
 export function proxy(request: NextRequest): NextResponse {
   if (getSessionCookie(request) !== null) {
@@ -73,9 +82,9 @@ export function proxy(request: NextRequest): NextResponse {
  *
  *  - **Denylist** — a new *public* page starts redirecting signed-out visitors
  *    to `/sign-in`. The flow is broken for exactly the people it exists for.
- *  - **Allowlist** — a new *protected* page is not listed here, so it serves
- *    its prerendered shell and redirects from inside its own Suspense boundary,
- *    which is what every page did before this file existed. Slower, not weaker.
+ *  - **Allowlist** — a new *protected* page is not listed here, so it redirects
+ *    from `requireShell()` in the layout instead, which is what every page does
+ *    with this file deleted. One session lookup slower, not weaker.
  *
  * The second is the failure worth having, so the protected set is spelled out.
  * Each route is listed twice because `:path*` covers the children and it is not
