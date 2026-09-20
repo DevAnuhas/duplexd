@@ -49,18 +49,45 @@ const VARIABLES = [
  */
 const OPTIONAL_VARIABLES = ['ALLOW_LOOPBACK_SERVER_URL'] as const;
 
+/**
+ * Injected by Vercel, never by us, and deliberately **not** in `VARIABLES`.
+ *
+ * They belong to no `.env.example` line because nobody sets them: the platform
+ * supplies them per deployment. Adding them to `VARIABLES` would fail the
+ * `.env.example` contract test below, which is the correct outcome — that test
+ * exists to catch a required variable the file forgot, and these are not
+ * required variables.
+ *
+ * They are cleared before every test rather than only saved. A machine with
+ * `VERCEL_ENV` already exported would otherwise change what the guards below
+ * do, and the failure would look like a flaky test rather than a leaked
+ * environment.
+ */
+const PLATFORM_VARIABLES = ['VERCEL_ENV', 'VERCEL_BRANCH_URL'] as const;
+
 describe('environment guards', () => {
-  let saved: Partial<Record<(typeof VARIABLES)[number], string | undefined>> =
-    {};
+  let saved: Partial<
+    Record<
+      (typeof VARIABLES)[number] | (typeof PLATFORM_VARIABLES)[number],
+      string | undefined
+    >
+  > = {};
 
   beforeEach(() => {
     saved = Object.fromEntries(
-      VARIABLES.map((name) => [name, process.env[name]]),
+      [...VARIABLES, ...PLATFORM_VARIABLES].map((name) => [
+        name,
+        process.env[name],
+      ]),
     );
+
+    for (const name of PLATFORM_VARIABLES) {
+      delete process.env[name];
+    }
   });
 
   afterEach(() => {
-    for (const name of VARIABLES) {
+    for (const name of [...VARIABLES, ...PLATFORM_VARIABLES]) {
       const value = saved[name];
 
       if (value === undefined) {
@@ -259,6 +286,93 @@ describe('environment guards', () => {
       delete process.env.BETTER_AUTH_URL;
 
       expect(() => requireAuthUrl()).toThrow();
+    });
+
+    /**
+     * The one exception, and why it does not contradict the rule above.
+     *
+     * A Vercel preview origin cannot be configured in advance: every pull
+     * request gets a different generated domain, so there is no value to put
+     * in the Preview scope that matches the origin the reviewer opens. Leaving
+     * it unset makes every preview 500 at the instrumentation hook; pasting a
+     * guess is worse, because `BETTER_AUTH_URL` decides the cookie domain and
+     * the `__Secure-` prefix, so a wrong origin signs in and then silently
+     * fails to keep the session.
+     *
+     * `VERCEL_BRANCH_URL` is **not** the request's `Host` header. It is a
+     * platform-injected variable naming this deployment, which is exactly the
+     * distinction the rule above is drawing: the deployment still states its
+     * own identity, it just reads that identity from the platform instead of a
+     * dashboard field. The branch URL is chosen over the per-deployment
+     * `VERCEL_URL` because it is stable across redeploys of the same pull
+     * request, so a session survives a push.
+     *
+     * Production is deliberately excluded. A production deployment missing
+     * `BETTER_AUTH_URL` must still fail loudly rather than quietly mint
+     * cookies for a `vercel.app` domain instead of the real one.
+     */
+    describe('the Vercel preview fallback', () => {
+      it('derives the origin from VERCEL_BRANCH_URL on a preview deployment', () => {
+        delete process.env.BETTER_AUTH_URL;
+        process.env.VERCEL_ENV = 'preview';
+        process.env.VERCEL_BRANCH_URL =
+          'duplexd-git-fix-preview-auth-url-anuhas-projects.vercel.app';
+
+        expect(requireAuthUrl()).toBe(
+          'https://duplexd-git-fix-preview-auth-url-anuhas-projects.vercel.app',
+        );
+      });
+
+      it('prefers an explicit BETTER_AUTH_URL over the preview fallback', () => {
+        process.env.BETTER_AUTH_URL = 'https://chosen.example.invalid';
+        process.env.VERCEL_ENV = 'preview';
+        process.env.VERCEL_BRANCH_URL = 'ignored.vercel.app';
+
+        expect(requireAuthUrl()).toBe('https://chosen.example.invalid');
+      });
+
+      it('still throws on production even when VERCEL_BRANCH_URL is present', () => {
+        delete process.env.BETTER_AUTH_URL;
+        process.env.VERCEL_ENV = 'production';
+        process.env.VERCEL_BRANCH_URL = 'duplexd-anuhas-projects.vercel.app';
+
+        expect(() => requireAuthUrl()).toThrow(/BETTER_AUTH_URL/);
+      });
+
+      it('still throws when VERCEL_ENV is absent', () => {
+        delete process.env.BETTER_AUTH_URL;
+        process.env.VERCEL_BRANCH_URL = 'duplexd-git-branch.vercel.app';
+
+        expect(() => requireAuthUrl()).toThrow(/BETTER_AUTH_URL/);
+      });
+
+      it.each([
+        ['unset', undefined],
+        ['the empty string', ''],
+        ['only whitespace', '   '],
+      ])(
+        'still throws on a preview when VERCEL_BRANCH_URL is %s',
+        (_label, value) => {
+          delete process.env.BETTER_AUTH_URL;
+          process.env.VERCEL_ENV = 'preview';
+
+          if (value === undefined) {
+            delete process.env.VERCEL_BRANCH_URL;
+          } else {
+            process.env.VERCEL_BRANCH_URL = value;
+          }
+
+          expect(() => requireAuthUrl()).toThrow(/BETTER_AUTH_URL/);
+        },
+      );
+
+      it('trims the branch host before building the origin', () => {
+        delete process.env.BETTER_AUTH_URL;
+        process.env.VERCEL_ENV = 'preview';
+        process.env.VERCEL_BRANCH_URL = '  duplexd-git-branch.vercel.app  ';
+
+        expect(requireAuthUrl()).toBe('https://duplexd-git-branch.vercel.app');
+      });
     });
   });
 

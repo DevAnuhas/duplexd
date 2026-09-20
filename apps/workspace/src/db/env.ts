@@ -88,20 +88,48 @@ export function requireAuthSecret(): string {
  * that are route-required or optional. This belongs to the app-wide set:
  * every request needs one stable public origin, not an origin inferred from
  * whichever `Host` header happened to arrive.
+ *
+ * **Vercel previews are the one case where no value can be configured**, and
+ * the fallback below does not weaken the rule above. Every pull request gets a
+ * generated domain, so the Preview scope has nothing to hold that matches the
+ * origin a reviewer opens: leaving it unset fails every preview at the
+ * instrumentation hook, and pasting a guess is worse, because this value
+ * decides the cookie domain and the `__Secure-` prefix, so a wrong origin
+ * signs in and then silently fails to keep the session.
+ *
+ * `VERCEL_BRANCH_URL` is not the request's `Host` header. It is injected by
+ * the platform and names this deployment, so the deployment still states its
+ * own identity rather than inferring it from traffic — it reads that identity
+ * from the platform instead of a dashboard field. It is preferred over the
+ * per-deployment `VERCEL_URL` because it is stable across redeploys of the
+ * same pull request, so a session survives a push; `VERCEL_URL` also does not
+ * work under Standard Deployment Protection.
+ *
+ * **Only previews.** A production deployment missing this must still fail
+ * loudly, rather than quietly minting cookies for a `vercel.app` domain
+ * instead of the real one — which is the failure that does not surface until
+ * someone cannot stay signed in.
  */
 export function requireAuthUrl(): string {
   const url = process.env.BETTER_AUTH_URL;
 
-  if (url === undefined || url.trim() === '') {
-    throw new Error(
-      'BETTER_AUTH_URL is unset or empty. Set it to the origin the app is ' +
-        'served from, for example http://localhost:3000. It is not derived ' +
-        'from the request, because behind a proxy the request does not decide ' +
-        'what this deployment is.',
-    );
+  if (url !== undefined && url.trim() !== '') {
+    return url.trim();
   }
 
-  return url.trim();
+  const branchHost = process.env.VERCEL_BRANCH_URL?.trim();
+
+  if (process.env.VERCEL_ENV === 'preview' && branchHost) {
+    return `https://${branchHost}`;
+  }
+
+  throw new Error(
+    'BETTER_AUTH_URL is unset or empty. Set it to the origin the app is ' +
+      'served from, for example http://localhost:3000. It is not derived ' +
+      'from the request, because behind a proxy the request does not decide ' +
+      'what this deployment is. Vercel preview deployments may instead leave ' +
+      'it unset and let VERCEL_BRANCH_URL supply the origin.',
+  );
 }
 
 /** Pipecat Cloud API key used only by the server-side start request. */
