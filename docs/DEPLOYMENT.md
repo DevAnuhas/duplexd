@@ -16,9 +16,9 @@ Each active implementation worktree uses its assigned Neon development branch; n
 
 Before a migration fixture drops schemas, connect read-only and inspect Neon's `project_id`, `branch_id`, and `endpoint_id` settings. Proceed only when all three identify the assigned project and branch. Never print or paste the connection string into a command result, PR, artifact, or issue.
 
-## Owner dashboard actions — not represented or completed in this repository
+## Owner dashboard state and actions
 
-1. In Vercel, set the project framework to Next.js and its Root Directory to `apps/workspace`. Clear the stale `outputDirectory=public` override.
+1. The Vercel project already has Root Directory `apps/workspace`. Keep the framework set to Next.js and clear the stale `outputDirectory=public` override.
 2. In Neon Console, open Integrations → Vercel and install the Marketplace **Neon-Managed Integration** using **Link Existing Neon Account**. Do not install the Vercel-Managed/Native integration alongside it.
 3. Connect the `duplexd` Vercel project to `duplexd-platform`, selecting the intended database and role. One Neon project maps to one Vercel project.
 4. Enable **Automatically delete obsolete Neon branches**. Renaming a Git or Neon branch breaks the name matching used for cleanup.
@@ -46,6 +46,12 @@ Writing these steps does not prove the dashboards are configured. The first prev
 `CALL_SWEEP_TOKEN` is required for `POST /v1/internal/sweep` in Preview and Production, with different values. It is deliberately not one of the five app-wide startup prerequisites. If omitted, the sweep endpoint refuses every request and logs that the variable is missing; stale rows are not persisted, but workspace and customer routes continue serving and read-time projection still presents stale calls correctly.
 
 The preview migration preflight runs on `DATABASE_URL_UNPOOLED`, the same connection it migrates. It refuses missing/blank variables, `main` or a missing Git ref, mismatched pooled and unpooled endpoints, non-Neon targets, the wrong Neon project, and a branch ID equal to `NEON_PRODUCTION_BRANCH_ID`. This proves a preview cannot migrate the production branch. It does not prove the integration injected the URL; only a real preview deployment can settle that.
+
+CI covers the preflight's identity decision with injected branch identities. Its local PostgreSQL service cannot expose Neon's `neon.project_id` and `neon.branch_id`, so the real-Neon proof names itself as **NOT RUN** rather than disappearing into a green count. With the approved per-worktree `.env.local` present, run the live proof from the repository root:
+
+```sh
+node --env-file=apps/workspace/.env.local apps/workspace/node_modules/vitest/vitest.mjs run --root apps/workspace test/vercel-deployment.test.ts -t "real Neon preview identity gate"
+```
 
 ## GitHub secrets
 
