@@ -39,10 +39,10 @@ const MAX_NAME_LENGTH = 120;
  * JOINER, U+FEFF and the bidirectional overrides live.
  *
  * `String.trim()` is not enough on its own. It strips U+00A0, but U+200B has
- * not been whitespace since Unicode 4.0.1, so `'​'.trim()` is unchanged
- * and non-empty. Without this, a name made only of zero-width characters
- * passes "an organization needs a name" and then renders as a blank sidebar
- * and a blank breadcrumb on every page.
+ * not been whitespace since Unicode 4.0.1, so `'\u200B'.trim()` returns that
+ * character unchanged and the emptiness check passes. Without this, a name
+ * made only of zero-width characters satisfies "an organization needs a name"
+ * and then renders as a blank sidebar and a blank breadcrumb on every page.
  */
 const INVISIBLE = /[\s\p{Cc}\p{Cf}]/gu;
 
