@@ -62,7 +62,12 @@ export async function renameAccount(
 export type ShellContext = {
   account: AccountProfile;
   userEmail: string;
-  counts: { assistants: number; apiKeys: number; calls: number };
+  counts: {
+    assistants: number;
+    apiKeys: number;
+    calls: number;
+    incompleteCalls: number;
+  };
 };
 
 /**
@@ -107,6 +112,19 @@ export async function getShellContext(
         select count(*) from ${calls}
         where ${calls.accountId} = ${accounts.id}
       )`.mapWith(Number),
+      /**
+       * Calls the platform closed because the agent stopped reporting.
+       *
+       * Counted from the stored state, so a call that has gone stale but has
+       * not been swept yet is still `active` here — the same thing the calls
+       * list says. A number that disagrees with the page it links to is the
+       * one lie a tenant can check instantly.
+       */
+      incompleteCalls: sql<number>`(
+        select count(*) from ${calls}
+        where ${calls.accountId} = ${accounts.id}
+          and ${calls.state} = 'incomplete'
+      )`.mapWith(Number),
     })
     .from(accounts)
     .innerJoin(
@@ -129,6 +147,7 @@ export async function getShellContext(
       assistants: row.assistants,
       apiKeys: row.apiKeys,
       calls: row.calls,
+      incompleteCalls: row.incompleteCalls,
     },
   };
 }

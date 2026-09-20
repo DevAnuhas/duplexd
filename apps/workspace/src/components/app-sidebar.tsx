@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Bot, KeyRound, PhoneCall, Settings } from 'lucide-react';
+import { Bot, KeyRound, LayoutGrid, PhoneCall, Settings } from 'lucide-react';
 import { Suspense, type ComponentProps, type ReactNode } from 'react';
 
 import {
@@ -55,6 +55,7 @@ export function AppSidebar({
   callsBadge: ReactNode;
 } & ComponentProps<typeof Sidebar>) {
   const build: NavItem[] = [
+    { href: '/', label: 'Overview', icon: LayoutGrid },
     { href: '/assistants', label: 'Assistants', icon: Bot, badge: assistantsBadge },
   ];
   const configure: NavItem[] = [
@@ -153,8 +154,16 @@ function ActiveNavButton({
   const pathname = usePathname();
 
   /**
-   * `/assistants/new` must light up `Assistants`, so this is a prefix match —
-   * but an exact check first, or a bare `/` would match everything.
+   * `/assistants/new` must light up `Assistants`, so this is a prefix match.
+   *
+   * `/` is the exception and needs the explicit guard: every path starts with
+   * a slash, so a prefix test would light up Overview on every page in the
+   * product.
    */
-  return children(pathname === href || pathname.startsWith(`${href}/`));
+  const isActive =
+    href === '/'
+      ? pathname === '/'
+      : pathname === href || pathname.startsWith(`${href}/`);
+
+  return children(isActive);
 }
