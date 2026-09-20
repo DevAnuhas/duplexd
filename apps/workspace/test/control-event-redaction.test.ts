@@ -30,7 +30,7 @@ describeDatabase('transcript parameter redaction on the P05 event path', () => {
       id: callId,
       accountId,
       assistantSnapshot: { assistantId: 'redaction-control' },
-      agentTokenHash: 'a'.repeat(64),
+      agentTokenHash: randomUUID().replaceAll('-', '').repeat(2),
       state: 'active',
     });
     await getDb().insert(callEvents).values({
