@@ -1,6 +1,6 @@
 'use client';
 
-import { Archive } from 'lucide-react';
+import { Archive } from '@phosphor-icons/react';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
@@ -73,7 +73,7 @@ export function ArchiveButton({
           className="size-11"
           aria-label={`Archive ${assistantName}`}
         >
-          <Archive aria-hidden="true" />
+          <Archive weight="regular" className="size-4" aria-hidden="true" />
         </Button>
       </AlertDialogTrigger>
       <AlertDialogContent>

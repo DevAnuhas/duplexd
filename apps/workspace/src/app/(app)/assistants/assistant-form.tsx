@@ -1,7 +1,7 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { ChevronDown, Copy, LoaderCircle } from 'lucide-react';
+import { CaretDown, Copy, SpinnerGap } from '@phosphor-icons/react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
@@ -316,7 +316,7 @@ export function AssistantForm({
                 onClick={copyId}
                 aria-label="Copy assistant ID"
               >
-                <Copy aria-hidden="true" />
+                <Copy weight="regular" className="size-4" aria-hidden="true" />
               </Button>
             </div>
           ) : (
@@ -331,9 +331,10 @@ export function AssistantForm({
           </span>
           <Button type="submit" disabled={isSubmitting} className="min-h-11">
             {isSubmitting && (
-              <LoaderCircle
+              <SpinnerGap
+                weight="regular"
                 data-icon="inline-start"
-                className="animate-spin motion-reduce:animate-none"
+                className="size-4 animate-spin motion-reduce:animate-none"
                 aria-hidden="true"
               />
             )}
@@ -576,9 +577,10 @@ export function AssistantForm({
                   className="group min-h-11"
                 >
                   Edit as JSON{' '}
-                  <ChevronDown
+                  <CaretDown
+                    weight="regular"
                     data-icon="inline-end"
-                    className="group-data-[state=open]:rotate-180"
+                    className="size-4 group-data-[state=open]:rotate-180"
                     aria-hidden="true"
                   />
                 </Button>

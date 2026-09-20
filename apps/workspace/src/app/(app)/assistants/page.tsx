@@ -1,6 +1,4 @@
-import { Suspense } from 'react';
-import { Skeleton } from '@/components/ui/skeleton';
-import { ArrowUpRight, Plus } from 'lucide-react';
+import { ArrowUpRight, Plus } from '@phosphor-icons/react/ssr';
 import Link from 'next/link';
 
 import { Button } from '@/components/ui/button';
@@ -29,7 +27,11 @@ const updatedFormat = new Intl.DateTimeFormat('en', {
   timeZone: 'UTC',
 });
 
-export default function AssistantsPage() {
+export const dynamic = 'force-dynamic';
+
+export default async function AssistantsPage() {
+  const { account } = await requireShell();
+  const assistants = await listAssistantsForAccount(account.id);
   return (
     <div className="flex flex-col gap-8">
       <header className="flex flex-wrap items-start justify-between gap-4">
@@ -41,24 +43,27 @@ export default function AssistantsPage() {
         </div>
         <Button asChild className="min-h-11">
           <Link href="/assistants/new">
-            <Plus data-icon="inline-start" aria-hidden="true" /> Create
-            assistant
+            <Plus
+              weight="regular"
+              className="size-4"
+              data-icon="inline-start"
+              aria-hidden="true"
+            />{' '}
+            Create assistant
           </Link>
         </Button>
       </header>
 
-      <Suspense fallback={<Skeleton className="h-64 w-full rounded-lg" />}>
-        <AssistantList />
-      </Suspense>
+      <AssistantList assistants={assistants} />
     </div>
   );
 }
 
-async function AssistantList() {
-  const { account } = await requireShell();
-
-  const assistants = await listAssistantsForAccount(account.id);
-
+function AssistantList({
+  assistants,
+}: {
+  assistants: Awaited<ReturnType<typeof listAssistantsForAccount>>;
+}) {
   return (
     <>
       {assistants.length === 0 ? (
@@ -75,14 +80,24 @@ async function AssistantList() {
           <EmptyContent className="flex flex-wrap gap-3 pb-4">
             <Button asChild className="min-h-11">
               <Link href="/assistants/new">
-                <Plus data-icon="inline-start" aria-hidden="true" /> Create
-                assistant
+                <Plus
+                  weight="regular"
+                  className="size-4"
+                  data-icon="inline-start"
+                  aria-hidden="true"
+                />{' '}
+                Create assistant
               </Link>
             </Button>
             <Button asChild variant="outline" className="min-h-11">
               <Link href="/keys">
                 API keys{' '}
-                <ArrowUpRight data-icon="inline-end" aria-hidden="true" />
+                <ArrowUpRight
+                  weight="regular"
+                  className="size-4"
+                  data-icon="inline-end"
+                  aria-hidden="true"
+                />
               </Link>
             </Button>
           </EmptyContent>
@@ -128,6 +143,8 @@ async function AssistantList() {
                         >
                           Open{' '}
                           <ArrowUpRight
+                            weight="regular"
+                            className="size-4"
                             data-icon="inline-end"
                             aria-hidden="true"
                           />
