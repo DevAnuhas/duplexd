@@ -2,6 +2,12 @@ name: CI
 
 on:
   pull_request:
+    # A normal opened PR is already ready for review. Draft creations and
+    # draft updates still reach this workflow on `opened`/`synchronize`, but
+    # every job below skips them. GitHub Actions has no trigger-level draft
+    # filter, and keeping `synchronize` means a ready PR is checked at its
+    # current head after later pushes.
+    types: [opened, ready_for_review, synchronize, reopened]
   push:
     branches: [main]
 
@@ -11,6 +17,7 @@ permissions:
 jobs:
   changes:
     name: changes
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
@@ -33,7 +40,7 @@ jobs:
   checks:
     name: checks
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     # The database-backed tests — cross-account isolation, migrate-from-empty,
     # and encryption at rest — must RUN here, not skip. This job is the only
@@ -101,7 +108,7 @@ jobs:
   agent:
     name: agent
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -129,7 +136,7 @@ jobs:
   docs:
     name: docs
     needs: changes
-    if: needs.changes.outputs.docs_only == 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.docs_only == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
