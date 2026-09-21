@@ -12,6 +12,7 @@ import {
   deployFailureDiagnostic,
   isNotFoundStop,
   manifestFacts,
+  reconcileProbeDeployment,
   safeRef,
   stableUsageMarker,
   verifyBaseline,
@@ -101,6 +102,58 @@ test("deploy failures retain only an allowlisted category, exit code, and safe b
     }),
     { category: "deploy_cli_timeout", exitCode: null }
   )
+})
+
+test("a nonzero deploy exit reconciles once against the authoritative manifest", async () => {
+  let deploys = 0
+  let reads = 0
+  const diagnostic = { category: "deployment_degraded", exitCode: 1 }
+  const buildId = "11111111-2222-4333-8444-555555555555"
+  const state = { manifest: { buildId: "matched-probe-build" } }
+  const result = await reconcileProbeDeployment({
+    deploy: async () => {
+      deploys += 1
+      return { buildId, diagnostic }
+    },
+    readManifest: async (expectedBuildId) => {
+      reads += 1
+      assert.equal(expectedBuildId, buildId)
+      return state
+    },
+  })
+  assert.equal(deploys, 1)
+  assert.equal(reads, 1)
+  assert.equal(result.state, state)
+  assert.deepEqual(result.diagnostic, { ...diagnostic, reconciled: true })
+})
+
+test("a nonzero deploy exit blocks after one deploy when no matching manifest appears", async () => {
+  let deploys = 0
+  const diagnostic = { category: "deployment_unavailable", exitCode: 1 }
+  await assert.rejects(
+    reconcileProbeDeployment({
+      deploy: async () => {
+        deploys += 1
+        return {
+          buildId: "11111111-2222-4333-8444-555555555555",
+          diagnostic,
+        }
+      },
+      readManifest: async () => {
+        throw new Error("provider-values-must-not-survive")
+      },
+    }),
+    (error) => {
+      assert.equal(error.message, "probe_manifest_readback_failed")
+      assert.deepEqual(error.deployDiagnostic, {
+        ...diagnostic,
+        reconciled: false,
+      })
+      assert.doesNotMatch(JSON.stringify(error), /provider-values/u)
+      return true
+    }
+  )
+  assert.equal(deploys, 1)
 })
 
 test("callback authentication binds run, case, boot, and exact session", () => {

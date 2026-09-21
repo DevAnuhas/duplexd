@@ -70,14 +70,19 @@ export function safeRef(salt, value) {
     .slice(0, 24)
 }
 
+function deployBuildId(output) {
+  const plain = output.replace(/\x1b\[[0-?]*[ -/]*[@-~]/gu, "")
+  return plain.match(
+    /\bBuild (?:ID|started):\s*([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})\b/iu
+  )?.[1]
+}
+
 export function deployFailureDiagnostic(
   output,
   { code, timedOut = false, salt }
 ) {
   const plain = output.replace(/\x1b\[[0-?]*[ -/]*[@-~]/gu, "")
-  const buildId = plain.match(
-    /\bBuild (?:ID|started):\s*([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})\b/iu
-  )?.[1]
+  const buildId = deployBuildId(output)
   let category = "deploy_cli_exit"
   if (timedOut) category = "deploy_cli_timeout"
   else if (/Build failed:/iu.test(plain)) category = "cloud_build_failed"
@@ -95,6 +100,20 @@ export function deployFailureDiagnostic(
     category,
     exitCode: Number.isInteger(code) ? code : null,
     ...(buildId ? { buildRef: safeRef(salt, buildId) } : {}),
+  }
+}
+
+export async function reconcileProbeDeployment({ deploy, readManifest }) {
+  const attempt = await deploy()
+  try {
+    return {
+      state: await readManifest(attempt.buildId),
+      diagnostic: { ...attempt.diagnostic, reconciled: true },
+    }
+  } catch {
+    const error = new Error("probe_manifest_readback_failed")
+    error.deployDiagnostic = { ...attempt.diagnostic, reconciled: false }
+    throw error
   }
 }
 
@@ -595,13 +614,18 @@ async function deployProbe(organization, salt) {
     { allowFailure: true }
   )
   if (result.code !== 0) {
-    const error = new Error("probe_deploy_failed")
-    error.deployDiagnostic = deployFailureDiagnostic(result.output, {
-      code: result.code,
-      timedOut: result.timedOut,
-      salt,
-    })
-    throw error
+    return {
+      buildId: deployBuildId(result.output),
+      diagnostic: deployFailureDiagnostic(result.output, {
+        code: result.code,
+        timedOut: result.timedOut,
+        salt,
+      }),
+    }
+  }
+  return {
+    buildId: deployBuildId(result.output),
+    diagnostic: { category: "deploy_cli_success", exitCode: 0 },
   }
 }
 
@@ -796,27 +820,34 @@ async function main() {
     stage = "probe_deploy"
     // Restore even when the CLI deploy succeeds but its response is lost.
     probeDeployed = true
-    await deployProbe(organization, salt)
-
-    stage = "probe_manifest_readback"
-    let probeState = await waitForManifest(
-      operatorToken,
-      organization,
-      (manifest) =>
-        /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(
-          manifest.buildId
-        ) &&
-        manifest.buildId !== BASELINE.buildId &&
-        /^sha256:[a-f0-9]{64}$/u.test(manifest.imageDigest) &&
-        manifest.imageDigest !== BASELINE.imageDigest &&
-        manifest.minAgents === 0 &&
-        manifest.maxAgents === 1 &&
-        manifest.secretSets.length === 0 &&
-        /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(
-          manifest.deploymentId
-        ),
-      Date.now() + 120_000
-    )
+    const reconciledDeploy = await reconcileProbeDeployment({
+      deploy: () => deployProbe(organization, salt),
+      readManifest: (probeBuildId) => {
+        stage = "probe_manifest_readback"
+        return waitForManifest(
+          operatorToken,
+          organization,
+          (manifest) =>
+            /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(
+              manifest.buildId
+            ) &&
+            manifest.buildId === probeBuildId &&
+            /^sha256:[a-f0-9]{64}$/u.test(manifest.imageDigest) &&
+            manifest.imageDigest !== BASELINE.imageDigest &&
+            manifest.minAgents === 0 &&
+            manifest.maxAgents === 1 &&
+            manifest.secretSets.length === 0 &&
+            /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(
+              manifest.deploymentId
+            ),
+          Date.now() + 120_000
+        )
+      },
+    })
+    let probeState = reconciledDeploy.state
+    if (reconciledDeploy.diagnostic.exitCode !== 0) {
+      failureDiagnostic = reconciledDeploy.diagnostic
+    }
     stage = "provider_ceiling_set"
     await requestJson(`${ORIGIN}/v1/agents/${AGENT}`, {
       token: operatorToken,
@@ -1052,7 +1083,7 @@ async function main() {
   } catch (error) {
     finalStatus = "blocked"
     finalReason = stage
-    if (stage === "probe_deploy" && error?.deployDiagnostic) {
+    if (error?.deployDiagnostic) {
       failureDiagnostic = error.deployDiagnostic
     }
   }

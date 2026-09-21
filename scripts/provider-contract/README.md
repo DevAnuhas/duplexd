@@ -111,9 +111,11 @@ node scripts/provider-contract/run.mjs live
 ```
 
 The runner fails closed unless the baseline is exact and no session is active.
-If probe deployment fails, evidence retains only the CLI exit code, an
-allowlisted failure category, and a salted build reference. Raw CLI output and
-provider identifiers are never written.
+A nonzero deploy CLI exit is reconciled against bounded authoritative manifest
+readback for that exact build; it is never retried. Evidence retains only the
+CLI exit code, an allowlisted failure category, a salted build reference, and
+whether readback reconciled the outcome. Raw CLI output and provider
+identifiers are never written.
 It deploys the probe with min/max 0/1 and no secret set, applies and reads back
 the 600-second provider ceiling before case 1, performs at most six serial
 starts, never retries an ambiguous start, and caps the operator envelope at 720
