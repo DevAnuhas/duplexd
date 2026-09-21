@@ -22,9 +22,11 @@ import { Button } from "@/components/ui/button"
 export function ArchiveButton({
   assistantId,
   assistantName,
+  assistantRevision,
 }: {
   assistantId: string
   assistantName: string
+  assistantRevision: number
 }) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
@@ -37,11 +39,14 @@ export function ArchiveButton({
     // server tree is committed, not only the subsequent router.refresh().
     startTransition(async () => {
       try {
-        const result = await archiveAssistantAction(assistantId)
+        const result = await archiveAssistantAction(
+          assistantId,
+          assistantRevision
+        )
         if (!result.ok) {
-          toast.error(
-            "Could not confirm the archive. Try again or refresh to check its status."
-          )
+          toast.error("Assistant was not archived.", {
+            description: result.issues.map((issue) => issue.message).join(" "),
+          })
           return
         }
         setOpen(false)

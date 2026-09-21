@@ -163,6 +163,7 @@ export const assistants = pgTable(
     serverUrl: text("server_url"),
     serverSecrets: jsonb("server_secrets").notNull().default([]),
     tools: jsonb("tools").notNull().default([]),
+    revision: integer("revision").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -202,6 +203,16 @@ export const calls = pgTable(
       onDelete: "set null",
     }),
     assistantSnapshot: jsonb("assistant_snapshot").notNull(),
+    source: text("source").notNull().default("integration"),
+    testMode: text("test_mode"),
+    configSource: text("config_source"),
+    baseAssistantRevision: integer("base_assistant_revision"),
+    configDigest: text("config_digest"),
+    practiceCompilerVersion: text("practice_compiler_version"),
+    practiceSnapshot: jsonb("practice_snapshot"),
+    practiceSecretCiphertext: text("practice_secret_ciphertext"),
+    executionDeadline: timestamp("execution_deadline", { withTimezone: true }),
+    stopRequestedAt: timestamp("stop_requested_at", { withTimezone: true }),
     agentTokenHash: text("agent_token_hash").notNull(),
     configClaimedAt: timestamp("config_claimed_at", { withTimezone: true }),
     pipecatSessionId: text("pipecat_session_id"),
@@ -235,6 +246,49 @@ export const calls = pgTable(
       .on(table.state)
       .where(sql`${table.state} = 'starting'`),
   ]
+)
+
+/** Authored, revisioned sample mappings for one assistant. */
+export const assistantSamples = pgTable(
+  "assistant_samples",
+  {
+    assistantId: text("assistant_id")
+      .primaryKey()
+      .references(() => assistants.id, { onDelete: "cascade" }),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull().default(1),
+    definitions: jsonb("definitions").notNull().default([]),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index("assistant_samples_account_idx").on(table.accountId)]
+)
+
+/** Deterministic response selected for one signed Practice invocation. */
+export const practiceInvocations = pgTable(
+  "practice_invocations",
+  {
+    callId: text("call_id")
+      .notNull()
+      .references(() => calls.id, { onDelete: "cascade" }),
+    invocationId: text("invocation_id").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    toolName: text("tool_name").notNull(),
+    scenario: text("scenario").notNull(),
+    statusCode: integer("status_code").notNull(),
+    responseBody: jsonb("response_body"),
+    readyAt: timestamp("ready_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.callId, table.invocationId] })]
 )
 
 /** Append-only call events, keyed so gaps and reordering are detectable. */
