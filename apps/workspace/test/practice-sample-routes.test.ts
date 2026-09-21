@@ -13,9 +13,11 @@ vi.mock("next/headers", () => ({
 const { GET: getCsrf } = await import("@/app/api/workspace/sandbox/csrf/route")
 const { GET: getSamples, PUT: putSamples } =
   await import("@/app/api/workspace/sandbox/assistants/[id]/samples/route")
-const { createAssistant } = await import("@/data/assistants")
+const { createAssistant, getAssistantForAccount, updateAssistantForAccount } =
+  await import("@/data/assistants")
 const { closeDb } = await import("@/db/client")
-const { fingerprintToolInputSchema } = await import("@/practice/configuration")
+const { compilePracticeConfiguration, fingerprintToolInputSchema } =
+  await import("@/practice/configuration")
 const { signUpNewAccount } = await import("./helpers/auth.ts")
 const { isDatabaseConfigured } = await import("./helpers/environment.ts")
 const { PRACTICE_TOOL, practiceSampleDefinition } =
@@ -102,6 +104,7 @@ describeDatabase("account-scoped Practice sample routes", () => {
       "assistantId",
       "assistantRevision",
       "definitions",
+      "issues",
       "revision",
     ])
     expect(body).toMatchObject({
@@ -109,6 +112,12 @@ describeDatabase("account-scoped Practice sample routes", () => {
       assistantRevision: 1,
       revision: 0,
       definitions: [],
+      issues: [
+        expect.objectContaining({
+          field: "definitions",
+          message: expect.stringContaining(PRACTICE_TOOL.name),
+        }),
+      ],
     })
     expect(JSON.stringify(body)).not.toContain("customer.example.invalid")
     expect(JSON.stringify(body)).not.toContain("customer-secret")
@@ -188,6 +197,7 @@ describeDatabase("account-scoped Practice sample routes", () => {
       assistantRevision: 1,
       revision: 1,
       definitions,
+      issues: [],
     })
 
     const stale = await putSamples(request(), routeContext(assistantId))
@@ -213,5 +223,133 @@ describeDatabase("account-scoped Practice sample routes", () => {
     )
 
     expect(response.status).toBe(404)
+  })
+
+  it("retains stale authored samples and blocks compilation until explicit review", async () => {
+    const assistant = await createAssistant(owner.accountId, {
+      name: `stale sample route ${randomUUID()}`,
+      voice: "marin",
+      accentStyle: "Warm and direct.",
+      instructions: "Answer from synthetic property data.",
+      backendInstructions: "Use the declared property tool.",
+      backendModel: "gpt-5.6-luna",
+      waitingBehavior: "Acknowledge once.",
+      tools: [PRACTICE_TOOL],
+    })
+    const originalDefinitions = [
+      practiceSampleDefinition(fingerprintToolInputSchema(PRACTICE_TOOL)),
+    ]
+    const csrf = await csrfFor(owner)
+    const saved = await putSamples(
+      putRequest(
+        { expectedRevision: 0, definitions: originalDefinitions },
+        {
+          origin: "http://localhost:3000",
+          csrf,
+          fetchSite: "same-origin",
+        }
+      ),
+      routeContext(assistant.id)
+    )
+    expect(saved.status).toBe(200)
+
+    const changedTool = {
+      ...structuredClone(PRACTICE_TOOL),
+      name: "lookup_property_v2",
+      parameters: {
+        type: "object",
+        properties: { propertyId: { type: "integer" } },
+        required: ["propertyId"],
+        additionalProperties: false,
+      },
+    }
+    const updated = await updateAssistantForAccount(
+      owner.accountId,
+      assistant.id,
+      {
+        name: assistant.name,
+        voice: assistant.voice,
+        accentStyle: assistant.accentStyle,
+        instructions: assistant.instructions,
+        backendInstructions: assistant.backendInstructions,
+        backendModel: assistant.backendModel,
+        waitingBehavior: assistant.waitingBehavior,
+        tools: [changedTool],
+      },
+      assistant.revision
+    )
+    expect(updated).toMatchObject({ kind: "updated" })
+
+    requestHeaders.current = new Headers({ cookie: owner.cookie })
+    const staleResponse = await getSamples(
+      new Request("http://localhost:3000"),
+      routeContext(assistant.id)
+    )
+    expect(staleResponse.status).toBe(200)
+    const stale = (await staleResponse.json()) as {
+      assistantRevision: number
+      revision: number
+      definitions: typeof originalDefinitions
+      issues: Array<{ field: string; message: string }>
+    }
+    expect(stale).toMatchObject({
+      assistantRevision: 2,
+      revision: 1,
+      definitions: originalDefinitions,
+    })
+    expect(stale.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: "definitions",
+          message: expect.stringMatching(
+            /not present|review|needs an explicit/i
+          ),
+        }),
+      ])
+    )
+    expect(JSON.stringify(stale.definitions)).toContain("Sample Cottage")
+    expect(JSON.stringify(stale.definitions)).toContain("unavailable")
+
+    const current = await getAssistantForAccount(owner.accountId, assistant.id)
+    expect(current).not.toBeNull()
+    if (current === null) throw new Error("updated assistant disappeared")
+    const blocked = compilePracticeConfiguration({
+      assistant: current,
+      baseRevision: current.revision,
+      source: "saved",
+      samples: stale.definitions,
+      sampleRevision: stale.revision,
+    })
+    expect(blocked).toMatchObject({ kind: "invalid" })
+
+    const reviewedDefinitions = [
+      {
+        ...practiceSampleDefinition(fingerprintToolInputSchema(changedTool)),
+        toolName: changedTool.name,
+      },
+    ]
+    const reviewedResponse = await putSamples(
+      putRequest(
+        { expectedRevision: stale.revision, definitions: reviewedDefinitions },
+        {
+          origin: "http://localhost:3000",
+          csrf,
+          fetchSite: "same-origin",
+        }
+      ),
+      routeContext(assistant.id)
+    )
+    expect(reviewedResponse.status).toBe(200)
+    expect(await reviewedResponse.json()).toMatchObject({ issues: [] })
+
+    expect(
+      compilePracticeConfiguration({
+        assistant: current,
+        baseRevision: current.revision,
+        source: "saved",
+        samples: reviewedDefinitions,
+        sampleRevision: stale.revision + 1,
+      })
+    ).toMatchObject({ kind: "ready" })
   })
 })

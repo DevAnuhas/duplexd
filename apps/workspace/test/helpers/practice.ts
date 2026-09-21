@@ -13,6 +13,14 @@ export const PRACTICE_TOOL = {
   },
 } as const
 
+export const PRACTICE_DRAFT_2020_TOOL = {
+  ...PRACTICE_TOOL,
+  parameters: {
+    ...PRACTICE_TOOL.parameters,
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+  },
+} as const
+
 export const SECOND_PRACTICE_TOOL = {
   name: "check_amenity",
   description: "Checks a synthetic amenity at a sample property.",

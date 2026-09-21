@@ -44,6 +44,7 @@ const { getAssistantForAccount, listAssistantsForAccount } =
 const { signUpNewAccount } = await import("./helpers/auth.ts")
 const { withTestPool } = await import("./helpers/database.ts")
 const { isDatabaseConfigured } = await import("./helpers/environment.ts")
+const { PRACTICE_DRAFT_2020_TOOL } = await import("./helpers/practice.ts")
 const {
   ACCEPTED_PORTS,
   ACCEPTED_SERVER_URLS,
@@ -321,6 +322,24 @@ describeDatabase("tool-list rejection, through the real save path", () => {
     // already knows the shape from Vapi and OpenAI. A translation layer here
     // would be a second thing to learn and a mapping to get wrong.
     expect(stored).toStrictEqual(tools)
+  })
+
+  it("saves a tool with an advisory draft-2020-12 marker unchanged", async () => {
+    const name = `draft 2020 tool ${randomUUID()}`
+
+    expect(
+      await createAssistantAction(
+        formDataFor({
+          name,
+          tools: JSON.stringify([PRACTICE_DRAFT_2020_TOOL]),
+        })
+      )
+    ).toStrictEqual({ ok: true, assistantId: expect.any(String) })
+
+    const saved = (await listAssistantsForAccount(account.accountId)).find(
+      (assistant) => assistant.name === name
+    )
+    expect(saved?.tools).toStrictEqual([PRACTICE_DRAFT_2020_TOOL])
   })
 
   it.each([

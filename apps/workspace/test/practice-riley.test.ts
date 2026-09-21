@@ -9,8 +9,27 @@ import {
   rileyPracticeTemplate,
 } from "@/practice/riley"
 import { parsePracticeSampleDefinitions } from "@/practice/samples"
+import { rileyAssistantTemplate } from "@/lib/riley"
+
+import { rileyDemo } from "../scripts/riley-demo.ts"
 
 describe("versioned Riley Practice pack", () => {
+  it("shares one generic fictional assistant authority with the seed", () => {
+    const authority = rileyAssistantTemplate()
+    const seeded = rileyDemo()
+    const practice = rileyPracticeTemplate()
+
+    expect(seeded).toStrictEqual(authority)
+    expect(practice.assistant).toStrictEqual(authority)
+    expect(JSON.stringify(authority)).not.toMatch(/Rushmore|Boring Host/i)
+    expect(authority.serverUrl).toBeNull()
+    expect(authority).not.toHaveProperty("serverSecret")
+
+    expect(authority).not.toHaveProperty("samples")
+    expect(practice.samples).not.toHaveLength(0)
+    expect(authority.instructions).not.toContain("Practice mode is active")
+  })
+
   it("is pure, disconnected, fictional, and independently cloned", () => {
     const first = rileyPracticeTemplate()
     const second = rileyPracticeTemplate()
@@ -83,5 +102,9 @@ describe("versioned Riley Practice pack", () => {
       transport,
       overrides: override === undefined ? {} : { [toolName]: override },
     })
+    expect(result.snapshot.instructions).toContain("Practice mode is active")
+    expect(template.assistant.instructions).not.toContain(
+      "Practice mode is active"
+    )
   })
 })

@@ -2,8 +2,14 @@ import { randomUUID } from "node:crypto"
 
 import { afterAll, describe, expect, it, vi } from "vitest"
 
+import type {
+  AssistantTool,
+  FrozenPracticeSnapshot,
+} from "@/practice/configuration"
 import type { SignedUpUser } from "./helpers/auth.ts"
 
+const { POST: invokePracticeRoute } =
+  await import("@/app/v1/practice/calls/[callId]/tools/route")
 const { compilePracticeConfiguration, fingerprintToolInputSchema } =
   await import("@/practice/configuration")
 const { MAX_PRACTICE_INVOCATIONS, createPracticeSecret, invokePracticeSample } =
@@ -12,10 +18,12 @@ const { createAssistant } = await import("@/data/assistants")
 const { closeDb, getDb } = await import("@/db/client")
 const { calls, practiceInvocations } = await import("@/db/schema")
 const { encryptSecret } = await import("@/lib/crypto")
+const { validateTools } = await import("@/lib/validate")
 const { signUpNewAccount } = await import("./helpers/auth.ts")
 const { isDatabaseConfigured } = await import("./helpers/environment.ts")
 const {
   PRACTICE_TOOL,
+  PRACTICE_DRAFT_2020_TOOL,
   practiceSampleDefinition,
   practiceSignature,
   practiceWebhookBody,
@@ -32,6 +40,7 @@ type PracticeCall = {
   callId: string
   assistantId: string
   secret: string
+  toolName: string
 }
 
 afterAll(async () => {
@@ -46,8 +55,11 @@ async function createPracticeCall(
     deadline?: Date
     stopped?: boolean
     secret?: string
+    tool?: AssistantTool
+    mutateSnapshot?: (snapshot: FrozenPracticeSnapshot) => void
   } = {}
 ): Promise<PracticeCall> {
+  const tool = input.tool ?? structuredClone(PRACTICE_TOOL)
   const account = await signUpNewAccount()
   const assistant = await createAssistant(account.accountId, {
     name: `Practice invocation ${randomUUID()}`,
@@ -59,25 +71,27 @@ async function createPracticeCall(
     waitingBehavior: "Acknowledge tool work.",
     serverUrl: "https://customer-trap.example.invalid/must-not-run",
     serverSecret: `customer-secret-${randomUUID()}`,
-    tools: [PRACTICE_TOOL],
+    tools: [tool],
   })
   const compiled = compilePracticeConfiguration({
     assistant,
     baseRevision: assistant.revision,
     source: "saved",
     samples: [
-      practiceSampleDefinition(fingerprintToolInputSchema(PRACTICE_TOOL)),
+      {
+        ...practiceSampleDefinition(fingerprintToolInputSchema(tool)),
+        toolName: tool.name,
+      },
     ],
     sampleRevision: 1,
     scenario: {
       transport: input.transport ?? "success",
       overrides:
-        input.override === undefined
-          ? {}
-          : { [PRACTICE_TOOL.name]: input.override },
+        input.override === undefined ? {} : { [tool.name]: input.override },
     },
   })
   if (compiled.kind !== "ready") throw new Error("expected ready snapshot")
+  input.mutateSnapshot?.(compiled.snapshot)
 
   const callId = `call-${randomUUID()}`
   const secret = input.secret ?? createPracticeSecret().plaintext
@@ -102,7 +116,13 @@ async function createPracticeCall(
       state: input.state ?? "active",
     })
 
-  return { account, callId, assistantId: assistant.id, secret }
+  return {
+    account,
+    callId,
+    assistantId: assistant.id,
+    secret,
+    toolName: tool.name,
+  }
 }
 
 async function invoke(
@@ -120,7 +140,7 @@ async function invoke(
   } = {}
 ) {
   const body = practiceWebhookBody({
-    tool: input.tool ?? PRACTICE_TOOL.name,
+    tool: input.tool ?? call.toolName,
     arguments: input.arguments ?? { property: "sample-cottage" },
     callId: input.bodyCallId ?? call.callId,
     assistantId: input.bodyAssistantId ?? call.assistantId,
@@ -185,6 +205,49 @@ describeDatabase("signed Practice invocation", () => {
       kind: "ok",
       status: 200,
       body: { result: { message: "Sample information unavailable." } },
+    })
+  })
+
+  it("executes a save-accepted draft-2020-12 marker through the signed route", async () => {
+    const tool: AssistantTool = structuredClone(PRACTICE_DRAFT_2020_TOOL)
+
+    expect(validateTools([tool])).toStrictEqual([])
+    const call = await createPracticeCall({
+      tool,
+      deadline: new Date(Date.now() + 60_000),
+    })
+    const body = practiceWebhookBody({
+      tool: tool.name,
+      arguments: { property: "sample-cottage" },
+      callId: call.callId,
+      assistantId: call.assistantId,
+      invocationId: `invocation-${randomUUID()}`,
+    })
+    const rawBody = JSON.stringify(body)
+    const timestamp = String(Math.floor(Date.now() / 1_000))
+    const headers = practiceWebhookHeaders({
+      secret: call.secret,
+      timestamp,
+      rawBody,
+      callId: body.callId,
+      assistantId: body.assistantId,
+      invocationId: body.invocationId,
+    })
+
+    const response = await invokePracticeRoute(
+      new Request(
+        `http://localhost:3000/v1/practice/calls/${call.callId}/tools`,
+        { method: "POST", headers, body: rawBody }
+      ),
+      { params: Promise.resolve({ callId: call.callId }) }
+    )
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toStrictEqual({
+      result: {
+        property: "Sample Cottage",
+        checkoutTime: "11:00 AM",
+      },
     })
   })
 
@@ -337,5 +400,26 @@ describeDatabase("signed Practice invocation", () => {
     ).resolves.toMatchObject({ kind: "invalid_request" })
     expect(fetchSpy).not.toHaveBeenCalled()
     fetchSpy.mockRestore()
+  })
+
+  it("rejects invocation when a frozen tool no longer matches its reviewed sample", async () => {
+    const call = await createPracticeCall({
+      mutateSnapshot: (snapshot) => {
+        snapshot.tools[0]!.parameters = {
+          ...snapshot.tools[0]!.parameters,
+          properties: {
+            ...((snapshot.tools[0]!.parameters.properties ?? {}) as Record<
+              string,
+              unknown
+            >),
+            addedAfterReview: { type: "string" },
+          },
+        }
+      },
+    })
+
+    await expect(invoke(call)).resolves.toMatchObject({
+      kind: "invalid_request",
+    })
   })
 })
