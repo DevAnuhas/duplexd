@@ -14,6 +14,7 @@
     "lint": "pnpm run lint:root && pnpm --filter workspace lint",
     "lint:links": "find . -type f -name '*.md' -not -path './.git/*' -not -path './node_modules/*' -not -path './**/node_modules/*' -not -path './**/.venv/*' -not -path './**/.next/*' -print0 | xargs -0 markdown-link-check --quiet --config .markdown-link-check.json",
     "lint:root": "bash -n scripts/classify-docs-only.sh && eslint --max-warnings=0 eslint.config.js vitest.config.ts tests",
+    "seed:riley": "pnpm --filter workspace seed:riley",
     "test": "pnpm run test:root && pnpm --filter workspace test",
     "test:root": "vitest run",
     "typecheck": "pnpm run typecheck:root && pnpm --filter workspace typecheck",

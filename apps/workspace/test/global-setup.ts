@@ -56,6 +56,8 @@ export const DATABASE_BACKED_FILES = [
   "assistant-revision-cas",
   "practice-invocation",
   "practice-sample-routes",
+  // Riley demo seed.
+  "riley-seed-database",
 ] as const
 
 export default async function setup(): Promise<void> {
