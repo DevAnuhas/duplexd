@@ -7,9 +7,12 @@ Node built-ins and does not import the workspace or agent applications.
 ## Current gate
 
 The committed fixture is synthetic. A successful offline validation proves the
-schema and safety checks, **not** provider cleanup. A03 remains blocked until an
-operator separately authorizes the live exercise and a live evidence document
-passes the same validator.
+schema and safety checks, **not** provider cleanup. The bounded live exercise is
+authorized, but provider mutation remains paused at the executable preflight
+gate. A03 remains blocked until the live exercise runs, cleanup is verified,
+and a live evidence document passes the same validator. Follow the
+[live operator sequence](live/OPERATIONS.md); authorization is limited to that
+exact envelope.
 
 Do not put provider credentials, tenant data, phone numbers, recordings, room
 URLs, raw call IDs, raw session IDs, or Daily tokens in evidence. Convert call
@@ -54,15 +57,15 @@ Expected result: exit zero with `"verdict": "blocked_live_gate"`. Only
 These are names and access scopes, not authorization to obtain or configure
 them:
 
-| Prerequisite | Minimum scope |
-| --- | --- |
-| `PIPECAT_API_KEY` | Public start key for the dedicated test agent only |
-| `PIPECAT_PRIVATE_API_KEY` | Private management access to stop and list sessions for that same agent |
-| Test deployment | `min_agents = 0`, `max_agents = 1`, no production traffic |
-| Platform ceiling | `maxSessionDuration = 600` seconds, read back from the active deployment |
-| Base image | Pipecat Cloud base image `0.1.27` or later, verified rather than inferred from `latest` |
-| Daily settings | Ability to inspect effective room and both participant token claims |
-| Evidence access | Exact-session status plus provider usage/billing duration after teardown |
+| Prerequisite              | Minimum scope                                                                           |
+| ------------------------- | --------------------------------------------------------------------------------------- |
+| `PIPECAT_API_KEY`         | Public start key for the dedicated test agent only                                      |
+| `PIPECAT_PRIVATE_API_KEY` | Private management access to stop and list sessions for that same agent                 |
+| Test deployment           | `min_agents = 0`, `max_agents = 1`, no production traffic                               |
+| Platform ceiling          | `maxSessionDuration = 600` seconds, read back from the active deployment                |
+| Base image                | Pipecat Cloud base image `0.1.27` or later, verified rather than inferred from `latest` |
+| Daily settings            | Ability to inspect effective room and both participant token claims                     |
+| Evidence access           | Exact-session status plus provider usage/billing duration after teardown                |
 
 Changing `maxSessionDuration` triggers a deployment. Do not make that change,
 deploy the test agent, provision keys, or start sessions without separate
