@@ -94,7 +94,25 @@ function normalizeApiKey(value, expectedType) {
   }
 }
 
-export function normalizeManifest(value) {
+function manifestBuildId(value) {
+  const source = serviceBody(value)
+  const deployment =
+    source.activeDeployment ??
+    source.deployment ??
+    source.latestDeployment ??
+    source
+  const build = deployment.build ?? source.build ?? deployment
+  return requiredString(
+    {
+      buildId:
+        build.buildId ?? build.id ?? deployment.buildId ?? source.buildId,
+    },
+    ["buildId"],
+    "build ID"
+  )
+}
+
+export function normalizeManifest(value, { imageDigest: suppliedDigest } = {}) {
   const source = serviceBody(value)
   const deployment =
     source.activeDeployment ??
@@ -109,6 +127,7 @@ export function normalizeManifest(value) {
       : build
   const manifestImage = deployment.manifest?.spec?.image
   const imageDigest =
+    suppliedDigest ??
     deployment.imageDigest ??
     source.imageDigest ??
     image.imageDigest ??
@@ -118,7 +137,11 @@ export function normalizeManifest(value) {
     deployment.secretSet ??
     deployment.secretSetName ??
     source.secretSet ??
-    source.secretSetName
+    source.secretSetName ??
+    (Array.isArray(deployment.manifest?.spec?.envFromSecretNames) &&
+    deployment.manifest.spec.envFromSecretNames.length === 1
+      ? deployment.manifest.spec.envFromSecretNames[0]
+      : undefined)
   const manifest = {
     agentName: requiredString(source, ["serviceName", "name"], "agent name"),
     deploymentId: requiredString(
@@ -327,7 +350,28 @@ export class ControlPlaneClient {
       credential: this.operatorToken,
       fetchImpl: this.fetchImpl,
     })
-    return normalizeManifest(value)
+    try {
+      return normalizeManifest(value)
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !/omitted image digest/u.test(error.message)
+      ) {
+        throw error
+      }
+    }
+    const buildId = manifestBuildId(value)
+    const { value: buildValue } = await requestJson(
+      this.#url(`/builds/${encodeURIComponent(buildId)}`),
+      { credential: this.operatorToken, fetchImpl: this.fetchImpl }
+    )
+    const build = buildValue?.body?.build ?? buildValue?.build ?? buildValue
+    const imageDigest = requiredString(
+      build,
+      ["imageDigest", "digest"],
+      "image digest"
+    )
+    return normalizeManifest(value, { imageDigest })
   }
 
   async listSessions() {

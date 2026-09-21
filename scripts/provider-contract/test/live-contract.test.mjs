@@ -41,6 +41,7 @@ import {
 } from "../live/run-state.mjs"
 import { CASES, runLiveExercise } from "../live/execute.mjs"
 import { createNgrokTunnel } from "../live/tunnel.mjs"
+import { runReadOnlyPreflight } from "../live/preflight.mjs"
 import {
   createFileOperatorWitness,
   decodeBrowserClaims,
@@ -1017,6 +1018,107 @@ test("ControlPlaneClient normalizes OAuth key buckets and selects the exact priv
     "https://api.pipecat.daily.co/v1/organizations/org-name/apiKeys/private%2Fkey-id"
   )
   assert.equal(calls[1].options.method, "DELETE")
+})
+
+test("read-only preflight accepts the sanitized real control-plane response shapes", async () => {
+  const calls = []
+  const responses = [
+    jsonResponse(200, {
+      body: {
+        name: BASELINE.agentName,
+        activeDeploymentId: BASELINE.deploymentId,
+        autoScaling: { minReplicas: 0, maxReplicas: 3 },
+        activeSessionCount: 0,
+        deployment: {
+          id: BASELINE.deploymentId,
+          buildId: BASELINE.buildId,
+          manifest: {
+            spec: { envFromSecretNames: [BASELINE.secretSet] },
+          },
+        },
+      },
+    }),
+    jsonResponse(200, {
+      build: { id: BASELINE.buildId, imageDigest: BASELINE.imageDigest },
+    }),
+    jsonResponse(200, {
+      total_count: 1,
+      sessions: [
+        {
+          sessionId: "historical-session",
+          deploymentId: BASELINE.deploymentId,
+          createdAt: "2026-09-21T00:00:00.000Z",
+          endedAt: "2026-09-21T00:01:00.000Z",
+          updatedAt: "2026-09-21T00:01:01.000Z",
+          completionStatus: "completed",
+          resourceMetrics: null,
+        },
+      ],
+    }),
+    jsonResponse(200, {
+      public: [
+        {
+          id: "existing-public-key",
+          metadata: { name: "Existing public key" },
+          type: "public",
+        },
+      ],
+      private: [],
+    }),
+    jsonResponse(200, {
+      sets: [
+        {
+          name: BASELINE.secretSet,
+          type: "user",
+          region: "sanitized-region",
+          source: "user",
+          status: "ready",
+        },
+      ],
+    }),
+  ]
+  const client = new ControlPlaneClient({
+    operatorToken: "operator-secret",
+    organization: "org-name",
+    fetchImpl: async (url, options) => {
+      calls.push({ url: String(url), options })
+      return responses.shift()
+    },
+  })
+
+  assert.deepEqual(await runReadOnlyPreflight(client), {
+    baseline: {
+      agentName: true,
+      buildId: true,
+      imageDigest: true,
+      scaling: true,
+      secretSet: true,
+      durationOverrideAbsent: true,
+    },
+    activeSessionCount: 0,
+    privateKeyCount: 0,
+    temporarySecretSetAbsent: true,
+    ok: true,
+  })
+  assert.deepEqual(
+    calls.map(({ url, options }) => [url, options.method]),
+    [
+      [
+        "https://api.pipecat.daily.co/v1/organizations/org-name/services/duplexd-agent",
+        "GET",
+      ],
+      [
+        `https://api.pipecat.daily.co/v1/organizations/org-name/builds/${BASELINE.buildId}`,
+        "GET",
+      ],
+      [
+        "https://api.pipecat.daily.co/v1/organizations/org-name/services/duplexd-agent/sessions",
+        "GET",
+      ],
+      ["https://api.pipecat.daily.co/v1/organizations/org-name/apiKeys", "GET"],
+      ["https://api.pipecat.daily.co/v1/organizations/org-name/secrets", "GET"],
+    ]
+  )
 })
 
 test("ProviderClient does not retry and redacts transport/provider failures", async () => {
