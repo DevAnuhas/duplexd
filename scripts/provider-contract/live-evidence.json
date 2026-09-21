@@ -1,7 +1,7 @@
 {
   "status": "blocked",
-  "reason": "provider_ceiling_set",
-  "runId": "stage-a-20260921-a01-temp-service-1",
+  "reason": "probe_manifest_readback",
+  "runId": "stage-a-20260921-a01-temp-service-2",
   "starts": 0,
   "totalBilledMinutes": 0,
   "limits": {
@@ -15,5 +15,10 @@
     "productionUnchanged": true,
     "probeServiceAbsent": true,
     "zeroKnownSessions": true
+  },
+  "diagnostic": {
+    "category": "deploy_cli_success",
+    "exitCode": 0,
+    "reconciled": false
   }
 }

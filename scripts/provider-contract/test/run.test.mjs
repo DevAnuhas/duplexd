@@ -256,6 +256,27 @@ test("real manifest nesting maps only the baseline proof fields", () => {
   })
 })
 
+test("real probe manifest normalizes the authoritative nested duration", () => {
+  const buildId = "11111111-2222-4333-8444-555555555555"
+  const imageDigest = `sha256:${"1".repeat(64)}`
+  const value = {
+    body: {
+      name: "duplexd-provider-proof",
+      autoScaling: { minReplicas: 0, maxReplicas: 1 },
+      deployment: {
+        id: "deployment",
+        buildId,
+        manifest: {
+          spec: { envFromSecretNames: [], maxSessionDurationSeconds: 600 },
+        },
+      },
+    },
+  }
+  const manifest = manifestFacts(value, imageDigest)
+  assert.equal(manifest.maxSessionDurationSeconds, 600)
+  assert.equal(verifyProbeManifest(manifest, buildId), true)
+})
+
 test("rollback requires the exact baseline and clean provider state", () => {
   const keys = { body: { public: [{}], private: [] } }
   const secrets = { body: { sets: [{ name: "duplexd-agent-secrets" }] } }

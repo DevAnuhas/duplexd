@@ -154,6 +154,7 @@ export function manifestFacts(value, imageDigest) {
   if (!body || !deployment || !spec || !Array.isArray(secrets))
     throw new Error("manifest_shape_invalid")
   const duration =
+    spec.maxSessionDurationSeconds ??
     deployment.maxSessionDurationSeconds ??
     deployment.maxSessionDuration ??
     body.maxSessionDurationSeconds ??
