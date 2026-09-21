@@ -34,6 +34,8 @@ const REQUIRED_CASE_CHECKS = Object.freeze({
   ],
   no_registration_startup: [
     "providerExecutionCeilingObserved",
+    "browserEjected",
+    "agentEjected",
     "processTerminated",
     "usageCeased",
   ],
@@ -50,6 +52,18 @@ const REQUIRED_CASE_CHECKS = Object.freeze({
     "processTerminated",
     "usageCeased",
   ],
+})
+
+const REQUIRED_OBSERVATION_SOURCES = Object.freeze({
+  startResponseFields: ["start_response"],
+  registrationMatched: ["runner_registration"],
+  knownSessionStopTargetStable: ["stop_response"],
+  stop404Reconciled: ["provider_session_status"],
+  providerExecutionCeilingObserved: ["provider_session_status"],
+  browserEjected: ["daily_browser_event"],
+  agentEjected: ["daily_agent_event"],
+  processTerminated: ["provider_session_status"],
+  usageCeased: ["provider_usage"],
 })
 
 export function safeReference(value) {
@@ -137,42 +151,64 @@ function validateSourceFacts(sourceFacts, errors) {
   })
 }
 
-function validateMedia(media, deadlineMilliseconds, errors) {
+function validateMedia(media, deadlineMilliseconds, sessionRef, path, errors) {
   if (!isRecord(media)) {
-    errors.push("evidence.media must be an object.")
+    errors.push(`${path} must be an object.`)
     return
+  }
+
+  if (media.sessionRef !== sessionRef) {
+    errors.push(`${path}.sessionRef must match the containing case.`)
   }
 
   for (const participant of ["room", "browser", "agent"]) {
     const value = media[participant]
-    const path = `evidence.media.${participant}`
+    const participantPath = `${path}.${participant}`
     if (!isRecord(value)) {
-      errors.push(`${path} must be an object.`)
+      errors.push(`${participantPath} must be an object.`)
       continue
     }
 
-    const expiry = parseTime(value.expiresAt, `${path}.expiresAt`, errors)
-    if (expiry !== null && deadlineMilliseconds !== null && expiry > deadlineMilliseconds) {
-      errors.push(`${path}.expiresAt exceeds the whole-test deadline.`)
+    const expiry = parseTime(
+      value.expiresAt,
+      `${participantPath}.expiresAt`,
+      errors
+    )
+    if (
+      expiry !== null &&
+      deadlineMilliseconds !== null &&
+      expiry > deadlineMilliseconds
+    ) {
+      errors.push(`${participantPath}.expiresAt exceeds the whole-test deadline.`)
     }
-    assertBoolean(value, "ejectAtExpiry", path, errors)
+    parseTime(value.observedAt, `${participantPath}.observedAt`, errors)
+    assertBoolean(value, "ejectAtExpiry", participantPath, errors)
   }
 
   const browser = media.browser
   if (isRecord(browser)) {
     if (browser.isOwner !== false) {
-      errors.push("evidence.media.browser.isOwner must be false.")
+      errors.push(`${path}.browser.isOwner must be false.`)
     }
-    assertBoolean(browser, "roomScoped", "evidence.media.browser", errors)
+    assertBoolean(browser, "roomScoped", `${path}.browser`, errors)
   }
 
   if (isRecord(media.agent)) {
-    assertBoolean(media.agent, "roomScoped", "evidence.media.agent", errors)
+    assertBoolean(media.agent, "roomScoped", `${path}.agent`, errors)
   }
 }
 
 function validateStopAttempts(testCase, path, errors) {
-  if (!Array.isArray(testCase.stopAttempts) || testCase.stopAttempts.length === 0) {
+  const requiresStop = testCase.checks?.knownSessionStopTargetStable === true
+  if (
+    !Array.isArray(testCase.stopAttempts) ||
+    testCase.stopAttempts.length === 0
+  ) {
+    if (requiresStop) {
+      errors.push(
+        `${path}.stopAttempts must contain exact-session cleanup evidence.`
+      )
+    }
     return
   }
 
@@ -188,6 +224,9 @@ function validateStopAttempts(testCase, path, errors) {
       errors.push(`${attemptPath}.sessionRef must be a safe SHA-256 reference.`)
     } else {
       refs.add(attempt.sessionRef)
+      if (attempt.sessionRef !== testCase.sessionRef) {
+        errors.push(`${attemptPath}.sessionRef must match the containing case.`)
+      }
     }
     if (!Number.isInteger(attempt.httpStatus)) {
       errors.push(`${attemptPath}.httpStatus must be an integer.`)
@@ -202,6 +241,65 @@ function validateStopAttempts(testCase, path, errors) {
   }
   if (saw404 && testCase.checks?.stop404Reconciled !== true) {
     errors.push(`${path} treats a 404 as final without identity/status reconciliation.`)
+  }
+  if (testCase.case === "known_session_stop_retry") {
+    if (testCase.stopAttempts.length < 2) {
+      errors.push(`${path}.stopAttempts must demonstrate a retry.`)
+    }
+    if (!saw404) {
+      errors.push(`${path}.stopAttempts must include a reconciled 404.`)
+    }
+  }
+}
+
+function validateCaseObservations(testCase, path, mode, errors) {
+  if (
+    !Array.isArray(testCase.observations) ||
+    testCase.observations.length === 0
+  ) {
+    errors.push(`${path}.observations must contain timestamped evidence.`)
+    return
+  }
+
+  const sources = new Set()
+  testCase.observations.forEach((observation, index) => {
+    const observationPath = `${path}.observations[${index}]`
+    if (!isRecord(observation)) {
+      errors.push(`${observationPath} must be an object.`)
+      return
+    }
+    if (observation.kind !== mode) {
+      errors.push(`${observationPath}.kind must match evidence.observationMode.`)
+    }
+    if (typeof observation.source !== "string" || observation.source === "") {
+      errors.push(`${observationPath}.source is required.`)
+    } else {
+      sources.add(observation.source)
+    }
+    if (observation.sessionRef !== testCase.sessionRef) {
+      errors.push(`${observationPath}.sessionRef must match the containing case.`)
+    }
+    if (typeof observation.fact !== "string" || observation.fact.trim() === "") {
+      errors.push(`${observationPath}.fact is required.`)
+    }
+    parseTime(observation.observedAt, `${observationPath}.observedAt`, errors)
+  })
+
+  if (isRecord(testCase.checks)) {
+    for (const [check, requiredSources] of Object.entries(
+      REQUIRED_OBSERVATION_SOURCES
+    )) {
+      if (testCase.checks[check] !== true) {
+        continue
+      }
+      for (const requiredSource of requiredSources) {
+        if (!sources.has(requiredSource)) {
+          errors.push(
+            `${path}.checks.${check} lacks a ${requiredSource} observation.`
+          )
+        }
+      }
+    }
   }
 }
 
@@ -243,6 +341,16 @@ function validateCase(testCase, path, mode, limits, errors) {
     }
   }
 
+  const deadline =
+    dispatched === null ? null : dispatched + limits.wholeTestSeconds * 1_000
+  validateMedia(
+    testCase.media,
+    deadline,
+    testCase.sessionRef,
+    `${path}.media`,
+    errors
+  )
+
   if (testCase.case === "cold_start") {
     const ready = parseTime(testCase.readyAt, `${path}.readyAt`, errors)
     if (
@@ -262,6 +370,7 @@ function validateCase(testCase, path, mode, limits, errors) {
     }
   }
 
+  validateCaseObservations(testCase, path, mode, errors)
   validateStopAttempts(testCase, path, errors)
 }
 
@@ -308,21 +417,6 @@ export function validateEvidence(evidence) {
       )
     }
   }
-
-  const dispatchedAt = parseTime(
-    evidence.dispatchedAt,
-    "evidence.dispatchedAt",
-    errors
-  )
-  const deadlineAt = parseTime(evidence.deadlineAt, "evidence.deadlineAt", errors)
-  if (
-    dispatchedAt !== null &&
-    deadlineAt !== null &&
-    deadlineAt - dispatchedAt !== REQUIRED_LIMITS.wholeTestSeconds * 1_000
-  ) {
-    errors.push("evidence.deadlineAt must be exactly 600 seconds after dispatch.")
-  }
-  validateMedia(evidence.media, deadlineAt, errors)
 
   if (!isRecord(evidence.prerequisites)) {
     errors.push("evidence.prerequisites must be an object.")
@@ -378,4 +472,3 @@ export function validateEvidence(evidence) {
 
   return { ok: true, verdict: "pass", errors, warnings }
 }
-

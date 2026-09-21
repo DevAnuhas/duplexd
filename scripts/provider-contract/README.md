@@ -36,13 +36,18 @@ Expected result: exit zero with `"verdict": "blocked_live_gate"`. Only
 - Every cleanup retry must target the same known session reference.
 - A stop `404` is unresolved until service identity and session status are
   reconciled. It is not proof of cleanup by itself.
-- Room and both participant credentials must expire by the absolute deadline
-  and eject at expiry. The browser participant must be non-owner and both
-  credentials must be room-scoped.
+- Every case carries media configuration bound to that case's session
+  reference. Room and both participant credentials must expire by that case's
+  absolute deadline and eject at expiry. The browser participant must be
+  non-owner and both credentials must be room-scoped.
 - Room ejection proves media cessation only. Process termination and usage
   cessation require separate observations.
 - Each case records the injected fault, the boundary that actually stopped the
   resource, and safe timestamps/references.
+- A true check is not evidence by itself. Each asserted outcome must have a
+  matching same-session timestamped observation: start response, runner
+  registration, stop response, exact-session status, Daily participant event,
+  or provider usage. Synthetic observations cannot satisfy a live run.
 
 ## Live operator prerequisites
 
@@ -83,10 +88,12 @@ application state without timestamp-based ownership guesses.
 6. Retry cleanup against one session, including a post-stop `404`; reconcile
    agent identity and ended status instead of treating the `404` as success.
 
-Budget at most six provider sessions, one at a time, with a hard allowance of
-60 provider session-minutes plus documented provider startup/teardown overhead.
-Stop the exercise on the first unbounded or uncorrelatable session. Do not raise
-the ceiling, add warm capacity, or redial an ambiguous start.
+Budget at most six provider sessions, one at a time, with a hard billed-usage
+allowance of 72 provider session-minutes total. That ceiling includes the
+provider-documented startup and teardown time around the six 10-minute runtime
+bounds. Stop when either limit is reached, or on the first unbounded or
+uncorrelatable session. Do not raise the ceiling, add warm capacity, or redial
+an ambiguous start.
 
 ## Source snapshot
 

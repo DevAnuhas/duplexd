@@ -28,25 +28,6 @@
     "wholeTestSeconds": 600,
     "providerMaxSessionSeconds": 600
   },
-  "dispatchedAt": "2026-09-21T10:00:00.000Z",
-  "deadlineAt": "2026-09-21T10:10:00.000Z",
-  "media": {
-    "room": {
-      "expiresAt": "2026-09-21T10:10:00.000Z",
-      "ejectAtExpiry": true
-    },
-    "browser": {
-      "expiresAt": "2026-09-21T10:10:00.000Z",
-      "ejectAtExpiry": true,
-      "isOwner": false,
-      "roomScoped": true
-    },
-    "agent": {
-      "expiresAt": "2026-09-21T10:10:00.000Z",
-      "ejectAtExpiry": true,
-      "roomScoped": true
-    }
-  },
   "prerequisites": {
     "publicStartKeyAvailable": true,
     "privateManagementKeyAvailable": true,
@@ -65,11 +46,48 @@
       "dispatchedAt": "2026-09-21T10:00:00.000Z",
       "readyAt": "2026-09-21T10:01:30.000Z",
       "ceasedAt": "2026-09-21T10:02:00.000Z",
+      "media": {
+        "sessionRef": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "room": {
+          "expiresAt": "2026-09-21T10:10:00.000Z",
+          "observedAt": "2026-09-21T10:00:05.000Z",
+          "ejectAtExpiry": true
+        },
+        "browser": {
+          "expiresAt": "2026-09-21T10:10:00.000Z",
+          "observedAt": "2026-09-21T10:00:05.000Z",
+          "ejectAtExpiry": true,
+          "isOwner": false,
+          "roomScoped": true
+        },
+        "agent": {
+          "expiresAt": "2026-09-21T10:10:00.000Z",
+          "observedAt": "2026-09-21T10:00:05.000Z",
+          "ejectAtExpiry": true,
+          "roomScoped": true
+        }
+      },
       "cessationBoundary": "provider_stop",
       "checks": {
         "startResponseFields": true,
         "registrationMatched": true
-      }
+      },
+      "observations": [
+        {
+          "kind": "synthetic",
+          "source": "start_response",
+          "sessionRef": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "fact": "Fixture contains all documented start response fields.",
+          "observedAt": "2026-09-21T10:00:05.000Z"
+        },
+        {
+          "kind": "synthetic",
+          "source": "runner_registration",
+          "sessionRef": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "fact": "Fixture registration carries the same session reference.",
+          "observedAt": "2026-09-21T10:01:20.000Z"
+        }
+      ]
     },
     {
       "case": "cancel_before_join",
@@ -79,6 +97,27 @@
       "callRef": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
       "dispatchedAt": "2026-09-21T10:00:00.000Z",
       "ceasedAt": "2026-09-21T10:00:20.000Z",
+      "media": {
+        "sessionRef": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "room": {
+          "expiresAt": "2026-09-21T10:10:00.000Z",
+          "observedAt": "2026-09-21T10:00:05.000Z",
+          "ejectAtExpiry": true
+        },
+        "browser": {
+          "expiresAt": "2026-09-21T10:10:00.000Z",
+          "observedAt": "2026-09-21T10:00:05.000Z",
+          "ejectAtExpiry": true,
+          "isOwner": false,
+          "roomScoped": true
+        },
+        "agent": {
+          "expiresAt": "2026-09-21T10:10:00.000Z",
+          "observedAt": "2026-09-21T10:00:05.000Z",
+          "ejectAtExpiry": true,
+          "roomScoped": true
+        }
+      },
       "cessationBoundary": "provider_stop",
       "checks": {
         "knownSessionStopTargetStable": true,
@@ -90,6 +129,29 @@
           "sessionRef": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "httpStatus": 200
         }
+      ],
+      "observations": [
+        {
+          "kind": "synthetic",
+          "source": "stop_response",
+          "sessionRef": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "fact": "Fixture cleanup targets the known session reference.",
+          "observedAt": "2026-09-21T10:00:10.000Z"
+        },
+        {
+          "kind": "synthetic",
+          "source": "provider_session_status",
+          "sessionRef": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "fact": "Fixture session is terminated.",
+          "observedAt": "2026-09-21T10:00:20.000Z"
+        },
+        {
+          "kind": "synthetic",
+          "source": "provider_usage",
+          "sessionRef": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "fact": "Fixture usage stops increasing after termination.",
+          "observedAt": "2026-09-21T10:00:20.000Z"
+        }
       ]
     },
     {
@@ -100,6 +162,27 @@
       "callRef": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
       "dispatchedAt": "2026-09-21T10:00:00.000Z",
       "ceasedAt": "2026-09-21T10:01:00.000Z",
+      "media": {
+        "sessionRef": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "room": {
+          "expiresAt": "2026-09-21T10:10:00.000Z",
+          "observedAt": "2026-09-21T10:00:05.000Z",
+          "ejectAtExpiry": true
+        },
+        "browser": {
+          "expiresAt": "2026-09-21T10:10:00.000Z",
+          "observedAt": "2026-09-21T10:00:05.000Z",
+          "ejectAtExpiry": true,
+          "isOwner": false,
+          "roomScoped": true
+        },
+        "agent": {
+          "expiresAt": "2026-09-21T10:10:00.000Z",
+          "observedAt": "2026-09-21T10:00:05.000Z",
+          "ejectAtExpiry": true,
+          "roomScoped": true
+        }
+      },
       "cessationBoundary": "registered_session_stop",
       "checks": {
         "registrationMatched": true,
@@ -112,6 +195,36 @@
           "sessionRef": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
           "httpStatus": 200
         }
+      ],
+      "observations": [
+        {
+          "kind": "synthetic",
+          "source": "runner_registration",
+          "sessionRef": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "fact": "Fixture registration recovers the exact session reference.",
+          "observedAt": "2026-09-21T10:00:40.000Z"
+        },
+        {
+          "kind": "synthetic",
+          "source": "stop_response",
+          "sessionRef": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "fact": "Fixture cleanup targets the registered session.",
+          "observedAt": "2026-09-21T10:00:50.000Z"
+        },
+        {
+          "kind": "synthetic",
+          "source": "provider_session_status",
+          "sessionRef": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "fact": "Fixture session is terminated.",
+          "observedAt": "2026-09-21T10:01:00.000Z"
+        },
+        {
+          "kind": "synthetic",
+          "source": "provider_usage",
+          "sessionRef": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "fact": "Fixture usage stops increasing after termination.",
+          "observedAt": "2026-09-21T10:01:00.000Z"
+        }
       ]
     },
     {
@@ -122,12 +235,65 @@
       "callRef": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
       "dispatchedAt": "2026-09-21T10:00:00.000Z",
       "ceasedAt": "2026-09-21T10:10:00.000Z",
+      "media": {
+        "sessionRef": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "room": {
+          "expiresAt": "2026-09-21T10:10:00.000Z",
+          "observedAt": "2026-09-21T10:00:05.000Z",
+          "ejectAtExpiry": true
+        },
+        "browser": {
+          "expiresAt": "2026-09-21T10:10:00.000Z",
+          "observedAt": "2026-09-21T10:00:05.000Z",
+          "ejectAtExpiry": true,
+          "isOwner": false,
+          "roomScoped": true
+        },
+        "agent": {
+          "expiresAt": "2026-09-21T10:10:00.000Z",
+          "observedAt": "2026-09-21T10:00:05.000Z",
+          "ejectAtExpiry": true,
+          "roomScoped": true
+        }
+      },
       "cessationBoundary": "provider_execution_ceiling",
       "checks": {
         "providerExecutionCeilingObserved": true,
+        "browserEjected": true,
+        "agentEjected": true,
         "processTerminated": true,
         "usageCeased": true
-      }
+      },
+      "observations": [
+        {
+          "kind": "synthetic",
+          "source": "daily_browser_event",
+          "sessionRef": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "fact": "Fixture browser participant is ejected at expiry.",
+          "observedAt": "2026-09-21T10:10:00.000Z"
+        },
+        {
+          "kind": "synthetic",
+          "source": "daily_agent_event",
+          "sessionRef": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "fact": "Fixture agent participant is ejected at expiry.",
+          "observedAt": "2026-09-21T10:10:00.000Z"
+        },
+        {
+          "kind": "synthetic",
+          "source": "provider_session_status",
+          "sessionRef": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "fact": "Fixture ceiling terminates the no-registration session.",
+          "observedAt": "2026-09-21T10:10:00.000Z"
+        },
+        {
+          "kind": "synthetic",
+          "source": "provider_usage",
+          "sessionRef": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "fact": "Fixture usage stops at the provider ceiling.",
+          "observedAt": "2026-09-21T10:10:00.000Z"
+        }
+      ]
     },
     {
       "case": "hung_runtime",
@@ -137,6 +303,27 @@
       "callRef": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
       "dispatchedAt": "2026-09-21T10:00:00.000Z",
       "ceasedAt": "2026-09-21T10:10:00.000Z",
+      "media": {
+        "sessionRef": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "room": {
+          "expiresAt": "2026-09-21T10:10:00.000Z",
+          "observedAt": "2026-09-21T10:00:05.000Z",
+          "ejectAtExpiry": true
+        },
+        "browser": {
+          "expiresAt": "2026-09-21T10:10:00.000Z",
+          "observedAt": "2026-09-21T10:00:05.000Z",
+          "ejectAtExpiry": true,
+          "isOwner": false,
+          "roomScoped": true
+        },
+        "agent": {
+          "expiresAt": "2026-09-21T10:10:00.000Z",
+          "observedAt": "2026-09-21T10:00:05.000Z",
+          "ejectAtExpiry": true,
+          "roomScoped": true
+        }
+      },
       "cessationBoundary": "provider_execution_ceiling",
       "checks": {
         "providerExecutionCeilingObserved": true,
@@ -144,7 +331,37 @@
         "agentEjected": true,
         "processTerminated": true,
         "usageCeased": true
-      }
+      },
+      "observations": [
+        {
+          "kind": "synthetic",
+          "source": "daily_browser_event",
+          "sessionRef": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "fact": "Fixture browser participant is ejected at expiry.",
+          "observedAt": "2026-09-21T10:10:00.000Z"
+        },
+        {
+          "kind": "synthetic",
+          "source": "daily_agent_event",
+          "sessionRef": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "fact": "Fixture agent participant is ejected at expiry.",
+          "observedAt": "2026-09-21T10:10:00.000Z"
+        },
+        {
+          "kind": "synthetic",
+          "source": "provider_session_status",
+          "sessionRef": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "fact": "Fixture ceiling terminates the hung runtime.",
+          "observedAt": "2026-09-21T10:10:00.000Z"
+        },
+        {
+          "kind": "synthetic",
+          "source": "provider_usage",
+          "sessionRef": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "fact": "Fixture usage stops at the provider ceiling.",
+          "observedAt": "2026-09-21T10:10:00.000Z"
+        }
+      ]
     },
     {
       "case": "known_session_stop_retry",
@@ -154,6 +371,27 @@
       "callRef": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
       "dispatchedAt": "2026-09-21T10:00:00.000Z",
       "ceasedAt": "2026-09-21T10:00:45.000Z",
+      "media": {
+        "sessionRef": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "room": {
+          "expiresAt": "2026-09-21T10:10:00.000Z",
+          "observedAt": "2026-09-21T10:00:05.000Z",
+          "ejectAtExpiry": true
+        },
+        "browser": {
+          "expiresAt": "2026-09-21T10:10:00.000Z",
+          "observedAt": "2026-09-21T10:00:05.000Z",
+          "ejectAtExpiry": true,
+          "isOwner": false,
+          "roomScoped": true
+        },
+        "agent": {
+          "expiresAt": "2026-09-21T10:10:00.000Z",
+          "observedAt": "2026-09-21T10:00:05.000Z",
+          "ejectAtExpiry": true,
+          "roomScoped": true
+        }
+      },
       "cessationBoundary": "status_reconciled_after_stop",
       "checks": {
         "knownSessionStopTargetStable": true,
@@ -169,6 +407,29 @@
         {
           "sessionRef": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
           "httpStatus": 404
+        }
+      ],
+      "observations": [
+        {
+          "kind": "synthetic",
+          "source": "stop_response",
+          "sessionRef": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "fact": "Fixture retries the same known session reference.",
+          "observedAt": "2026-09-21T10:00:20.000Z"
+        },
+        {
+          "kind": "synthetic",
+          "source": "provider_session_status",
+          "sessionRef": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "fact": "Fixture reconciles the 404 against exact-session ended status.",
+          "observedAt": "2026-09-21T10:00:45.000Z"
+        },
+        {
+          "kind": "synthetic",
+          "source": "provider_usage",
+          "sessionRef": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "fact": "Fixture usage stops increasing after termination.",
+          "observedAt": "2026-09-21T10:00:45.000Z"
         }
       ]
     }
