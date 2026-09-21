@@ -40,7 +40,12 @@ import {
  */
 
 export type ActionResult =
-  { ok: true; assistantId?: string } | { ok: false; issues: ValidationIssue[] }
+  | { ok: true; assistantId?: string; revision?: number }
+  | {
+      ok: false
+      issues: ValidationIssue[]
+      currentRevision?: number
+    }
 
 /** The one place a submitted assistant is turned into validated input. */
 function readAssistantInput(formData: FormData): {
@@ -126,31 +131,83 @@ export async function updateAssistantAction(
 ): Promise<ActionResult> {
   const { accountId } = await requireCurrentAccount()
   const { input, issues } = readAssistantInput(formData)
+  const expectedRevision = Number(formData.get("expectedRevision"))
+
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
+    issues.push({
+      field: "name",
+      message: "This assistant revision is invalid. Reload before saving.",
+    })
+  }
 
   if (issues.length > 0) {
     return { ok: false, issues }
   }
 
-  const updated = await updateAssistantForAccount(accountId, assistantId, input)
+  const updated = await updateAssistantForAccount(
+    accountId,
+    assistantId,
+    input,
+    expectedRevision
+  )
 
-  if (updated === null) {
+  if (updated.kind === "not_found") {
     return {
       ok: false,
       issues: [{ field: "name", message: "That assistant no longer exists." }],
     }
   }
+  if (updated.kind === "conflict") {
+    return {
+      ok: false,
+      currentRevision: updated.currentRevision,
+      issues: [
+        {
+          field: "name",
+          message:
+            "This assistant changed in another tab. Your draft was kept; reload or rebase it before saving.",
+        },
+      ],
+    }
+  }
 
   revalidatePath("/assistants")
 
-  return { ok: true }
+  return { ok: true, revision: updated.assistant.revision }
 }
 
 export async function archiveAssistantAction(
-  assistantId: string
+  assistantId: string,
+  expectedRevision: number
 ): Promise<ActionResult> {
   const { accountId } = await requireCurrentAccount()
 
-  await archiveAssistantForAccount(accountId, assistantId)
+  const archived = await archiveAssistantForAccount(
+    accountId,
+    assistantId,
+    expectedRevision
+  )
+  if (archived.kind === "conflict") {
+    return {
+      ok: false,
+      currentRevision: archived.currentRevision,
+      issues: [
+        {
+          field: "assistantId",
+          message:
+            "This assistant changed in another tab. Reload before archiving it.",
+        },
+      ],
+    }
+  }
+  if (archived.kind === "not_found") {
+    return {
+      ok: false,
+      issues: [
+        { field: "assistantId", message: "That assistant no longer exists." },
+      ],
+    }
+  }
   revalidatePath("/assistants")
 
   return { ok: true }

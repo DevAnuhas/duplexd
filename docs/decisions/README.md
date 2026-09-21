@@ -49,3 +49,4 @@ Supersede rather than edit: mark the old record superseded and write a new one.
 - [009: Gemini 3.8 Live is the candidate second provider; provider limits live in adapters](009-gemini-live-candidate-provider.md) — proposed
 - [010: Pipecat is the voice runtime; this project is the platform on top of it](010-pipecat-runtime.md) — accepted
 - [011: Vercel hosts the workspace and control API](011-vercel-hosting.md) — accepted
+- [012: Practice uses immutable snapshots and a platform-owned signed backend](012-practice-snapshots.md) — accepted

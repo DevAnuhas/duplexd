@@ -27,11 +27,13 @@ const migrationsFolder = fileURLToPath(
 export const EXPECTED_TABLES = [
   "accounts",
   "api_keys",
+  "assistant_samples",
   "assistants",
   "auth_accounts",
   "call_events",
   "call_rate_limits",
   "calls",
+  "practice_invocations",
   "sessions",
   "users",
   "verifications",
