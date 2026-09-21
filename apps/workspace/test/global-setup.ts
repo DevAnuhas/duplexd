@@ -52,6 +52,8 @@ export const DATABASE_BACKED_FILES = [
   // Account settings.
   "account-rename-scoping",
   "signup-workspace-name",
+  // Riley demo seed.
+  "riley-seed-database",
 ] as const
 
 export default async function setup(): Promise<void> {
