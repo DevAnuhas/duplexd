@@ -434,7 +434,11 @@ describeDatabase("stale call sweeps", () => {
 
       const second = await handleSweepRequest(request(), now)
       expect(second.status).toBe(200)
-      expect(await second.json()).toStrictEqual({ incomplete: 0, failed: 0 })
+      expect(await second.json()).toStrictEqual({
+        incomplete: 0,
+        failed: 0,
+        expiredSandboxReservations: 0,
+      })
       expect(await storedCall(target.callId)).toMatchObject({
         state: "incomplete",
         ended_reason: "agent_lost",

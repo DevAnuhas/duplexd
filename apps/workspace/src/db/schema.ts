@@ -202,18 +202,27 @@ export const calls = pgTable(
     apiKeyId: text("api_key_id").references(() => apiKeys.id, {
       onDelete: "set null",
     }),
+    initiatedByUserId: text("initiated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
     assistantSnapshot: jsonb("assistant_snapshot").notNull(),
     source: text("source").notNull().default("integration"),
+    channel: text("channel").notNull().default("browser"),
     testMode: text("test_mode"),
     configSource: text("config_source"),
     baseAssistantRevision: integer("base_assistant_revision"),
     configDigest: text("config_digest"),
+    snapshotVersion: integer("snapshot_version"),
+    scenarioRevision: integer("scenario_revision"),
     practiceCompilerVersion: text("practice_compiler_version"),
     practiceSnapshot: jsonb("practice_snapshot"),
     practiceSecretCiphertext: text("practice_secret_ciphertext"),
     executionDeadline: timestamp("execution_deadline", { withTimezone: true }),
     stopRequestedAt: timestamp("stop_requested_at", { withTimezone: true }),
-    agentTokenHash: text("agent_token_hash").notNull(),
+    // Sandbox reservations exist before dispatch and therefore before an
+    // agent token can safely exist. Integration calls still write this field
+    // at insertion, exactly as before.
+    agentTokenHash: text("agent_token_hash"),
     configClaimedAt: timestamp("config_claimed_at", { withTimezone: true }),
     pipecatSessionId: text("pipecat_session_id"),
     dailyRoom: text("daily_room"),
@@ -245,6 +254,109 @@ export const calls = pgTable(
     index("calls_starting_idx")
       .on(table.state)
       .where(sql`${table.state} = 'starting'`),
+  ]
+)
+
+/**
+ * One durable browser Sandbox admission attempt.
+ *
+ * This row owns idempotency and tab-controller proof. It deliberately has no
+ * provider credential or join credential columns: the provider-independent
+ * foundation cannot manufacture either while execution remains disabled.
+ */
+export const sandboxAttempts = pgTable(
+  "sandbox_attempts",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    initiatedByUserId: text("initiated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    callId: text("call_id")
+      .notNull()
+      .references(() => calls.id, { onDelete: "cascade" }),
+    clientAttemptId: text("client_attempt_id").notNull(),
+    inputDigest: text("input_digest").notNull(),
+    controllerProofHash: text("controller_proof_hash").notNull(),
+    state: text("state").notNull(),
+    preparedAt: timestamp("prepared_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    reservationExpiresAt: timestamp("reservation_expires_at", {
+      withTimezone: true,
+    }).notNull(),
+    dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+    stopRequestedAt: timestamp("stop_requested_at", { withTimezone: true }),
+    stopReason: text("stop_reason"),
+    canceledAt: timestamp("canceled_at", { withTimezone: true }),
+    expiredAt: timestamp("expired_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("sandbox_attempts_owner_client_idx").on(
+      table.accountId,
+      table.initiatedByUserId,
+      table.clientAttemptId
+    ),
+    uniqueIndex("sandbox_attempts_call_idx").on(table.callId),
+    index("sandbox_attempts_account_state_idx").on(
+      table.accountId,
+      table.state
+    ),
+    index("sandbox_attempts_reservation_expiry_idx").on(
+      table.reservationExpiresAt
+    ),
+  ]
+)
+
+/** One unresolved Sandbox attempt per user, with an account-wide cap. */
+export const sandboxSlots = pgTable(
+  "sandbox_slots",
+  {
+    accountId: text("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    attemptId: text("attempt_id")
+      .notNull()
+      .references(() => sandboxAttempts.id, { onDelete: "cascade" }),
+    acquiredAt: timestamp("acquired_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.accountId, table.userId] }),
+    uniqueIndex("sandbox_slots_attempt_idx").on(table.attemptId),
+    index("sandbox_slots_account_idx").on(table.accountId),
+  ]
+)
+
+/** Atomic fixed-window Sandbox admission counters for user and account quotas. */
+export const sandboxAdmissionRateLimits = pgTable(
+  "sandbox_admission_rate_limits",
+  {
+    accountId: text("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    subjectType: text("subject_type").notNull(),
+    subjectId: text("subject_id").notNull(),
+    windowStartedAt: timestamp("window_started_at", {
+      withTimezone: true,
+    }).notNull(),
+    count: integer("count").notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [
+        table.accountId,
+        table.subjectType,
+        table.subjectId,
+        table.windowStartedAt,
+      ],
+    }),
   ]
 )
 

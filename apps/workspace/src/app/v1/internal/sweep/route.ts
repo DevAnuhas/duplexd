@@ -2,6 +2,7 @@ import { authenticateSweep } from "@/control/sweep-auth"
 import { json, problem } from "@/control/http"
 import { sweepStaleCalls } from "@/data/calls"
 import { readCallSweepToken } from "@/db/env"
+import { expireSandboxReservations } from "@/sandbox/admission"
 
 export async function handleSweepRequest(
   request: Request,
@@ -22,7 +23,9 @@ export async function handleSweepRequest(
   }
 
   try {
-    return json(await sweepStaleCalls(now))
+    const calls = await sweepStaleCalls(now)
+    const expiredSandboxReservations = await expireSandboxReservations(now)
+    return json({ ...calls, expiredSandboxReservations })
   } catch {
     console.error("[sweep] failed")
     return problem(500, "sweep_failed", "The call sweep failed.")

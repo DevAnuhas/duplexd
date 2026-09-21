@@ -1,11 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-const { secretsMatch, sweepStaleCalls } = vi.hoisted(() => ({
-  secretsMatch: vi.fn((left: string, right: string) => left === right),
-  sweepStaleCalls: vi.fn(),
-}))
+const { expireSandboxReservations, secretsMatch, sweepStaleCalls } = vi.hoisted(
+  () => ({
+    expireSandboxReservations: vi.fn(),
+    secretsMatch: vi.fn((left: string, right: string) => left === right),
+    sweepStaleCalls: vi.fn(),
+  })
+)
 vi.mock("@/data/calls", () => ({ sweepStaleCalls }))
 vi.mock("@/lib/crypto", () => ({ secretsMatch }))
+vi.mock("@/sandbox/admission", () => ({ expireSandboxReservations }))
 
 import { POST } from "@/app/v1/internal/sweep/route"
 import { authenticateSweep } from "@/control/sweep-auth"
@@ -77,6 +81,8 @@ describe("sweep route", () => {
     process.env.CALL_SWEEP_TOKEN = TOKEN
     sweepStaleCalls.mockReset()
     sweepStaleCalls.mockResolvedValue({ incomplete: 2, failed: 1 })
+    expireSandboxReservations.mockReset()
+    expireSandboxReservations.mockResolvedValue(3)
   })
 
   afterEach(() => {
@@ -125,8 +131,13 @@ describe("sweep route", () => {
 
     const accepted = await POST(request(`Bearer ${TOKEN}`, "?token=wrong"))
     expect(accepted.status).toBe(200)
-    expect(await accepted.json()).toStrictEqual({ incomplete: 2, failed: 1 })
+    expect(await accepted.json()).toStrictEqual({
+      incomplete: 2,
+      failed: 1,
+      expiredSandboxReservations: 3,
+    })
     expect(sweepStaleCalls).toHaveBeenCalledOnce()
+    expect(expireSandboxReservations).toHaveBeenCalledOnce()
   })
 
   it("maps sweep failures to a secret-free error", async () => {

@@ -50,3 +50,4 @@ Supersede rather than edit: mark the old record superseded and write a new one.
 - [010: Pipecat is the voice runtime; this project is the platform on top of it](010-pipecat-runtime.md) — accepted
 - [011: Vercel hosts the workspace and control API](011-vercel-hosting.md) — accepted
 - [012: Practice uses immutable snapshots and a platform-owned signed backend](012-practice-snapshots.md) — accepted
+- [013: Sandbox admission is durable and execution is gated server-side](013-disabled-sandbox-admission.md) — accepted
