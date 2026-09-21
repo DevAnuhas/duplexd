@@ -5,7 +5,7 @@ import {
   timingSafeEqual,
 } from "node:crypto"
 
-import { and, count, eq, isNull, sql } from "drizzle-orm"
+import { and, count, eq, isNull } from "drizzle-orm"
 
 import { getDb } from "@/db/client"
 import {
@@ -676,7 +676,7 @@ export async function invokePracticeSample(input: {
     .where(eq(calls.id, input.callId))
     .limit(1)
   const release = releaseRows[0]
-  const releaseNow = input.clock?.() ?? new Date()
+  const releaseNow = input.clock?.() ?? input.now ?? new Date()
   if (
     release === undefined ||
     release.state !== "active" ||
@@ -697,6 +697,3 @@ export async function invokePracticeSample(input: {
     readyAt: selected.readyAt,
   }
 }
-
-/** SQL used by tests/diagnostics without returning any secret material. */
-export const PRACTICE_SAMPLE_STORAGE_BYTES = sql<number>`octet_length(${assistantSamples.definitions}::text)`

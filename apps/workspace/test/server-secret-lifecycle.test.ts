@@ -63,6 +63,7 @@ const PUBLIC_COLUMNS = [
   "id",
   "instructions",
   "name",
+  "revision",
   "serverUrl",
   "tools",
   "updatedAt",
@@ -141,6 +142,21 @@ describeDatabase("a secret set through the real create action", () => {
 
       return rows[0]?.server_secrets ?? []
     })
+  }
+
+  async function updateCurrent(
+    submitted: Record<string, string>
+  ): ReturnType<typeof updateAssistantAction> {
+    const current = await getAssistantForAccount(account.accountId, assistantId)
+
+    expect(current, "the assistant to update is gone").not.toBeNull()
+    return updateAssistantAction(
+      assistantId,
+      formDataFor({
+        ...submitted,
+        expectedRevision: String(current?.revision),
+      })
+    )
   }
 
   it("wrote one encrypted entry that decrypts to what was typed", async () => {
@@ -251,12 +267,13 @@ describeDatabase("a secret set through the real create action", () => {
   it("leaves the stored ciphertext byte-identical when the secret field is empty", async () => {
     const before = await storedSecrets()
 
-    const result = await updateAssistantAction(
-      assistantId,
-      formDataFor({ ...fields, name: `${name} renamed`, serverSecret: "" })
-    )
+    const result = await updateCurrent({
+      ...fields,
+      name: `${name} renamed`,
+      serverSecret: "",
+    })
 
-    expect(result).toStrictEqual({ ok: true })
+    expect(result).toMatchObject({ ok: true })
 
     const after = await storedSecrets()
 
@@ -272,7 +289,7 @@ describeDatabase("a secret set through the real create action", () => {
   it("leaves it byte-identical when the field is absent from the submission", async () => {
     const before = await storedSecrets()
 
-    await updateAssistantAction(assistantId, formDataFor({ ...fields, name }))
+    await updateCurrent({ ...fields, name })
 
     expect(await storedSecrets()).toStrictEqual(before)
   })
@@ -285,12 +302,13 @@ describeDatabase("a secret set through the real create action", () => {
   it("replaces the stored ciphertext when a new secret is supplied", async () => {
     const before = await storedSecrets()
 
-    const result = await updateAssistantAction(
-      assistantId,
-      formDataFor({ ...fields, name, serverSecret: REPLACEMENT })
-    )
+    const result = await updateCurrent({
+      ...fields,
+      name,
+      serverSecret: REPLACEMENT,
+    })
 
-    expect(result).toStrictEqual({ ok: true })
+    expect(result).toMatchObject({ ok: true })
 
     const after = await storedSecrets()
 
@@ -319,17 +337,14 @@ describeDatabase("a secret set through the real create action", () => {
   it("empties the secret when the clear checkbox is ticked", async () => {
     expect(await storedSecrets()).toHaveLength(1)
 
-    const result = await updateAssistantAction(
-      assistantId,
-      formDataFor({
-        ...fields,
-        name,
-        serverSecret: "",
-        clearServerSecret: "on",
-      })
-    )
+    const result = await updateCurrent({
+      ...fields,
+      name,
+      serverSecret: "",
+      clearServerSecret: "on",
+    })
 
-    expect(result).toStrictEqual({ ok: true })
+    expect(result).toMatchObject({ ok: true })
     expect(await storedSecrets()).toStrictEqual([])
     expect(
       (await getAssistantForAccount(account.accountId, assistantId))
@@ -340,10 +355,7 @@ describeDatabase("a secret set through the real create action", () => {
   it("sets a fresh secret on an assistant that has none", async () => {
     const third = `canary-third-secret-${randomUUID()}`
 
-    await updateAssistantAction(
-      assistantId,
-      formDataFor({ ...fields, name, serverSecret: third })
-    )
+    await updateCurrent({ ...fields, name, serverSecret: third })
 
     const secrets = await storedSecrets()
 
@@ -364,15 +376,12 @@ describeDatabase("a secret set through the real create action", () => {
   it("prefers a supplied secret over the clear checkbox when both arrive", async () => {
     const both = `canary-both-${randomUUID()}`
 
-    await updateAssistantAction(
-      assistantId,
-      formDataFor({
-        ...fields,
-        name,
-        serverSecret: both,
-        clearServerSecret: "on",
-      })
-    )
+    await updateCurrent({
+      ...fields,
+      name,
+      serverSecret: both,
+      clearServerSecret: "on",
+    })
 
     const secrets = await storedSecrets()
 

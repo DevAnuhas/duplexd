@@ -43,6 +43,23 @@ A Python `uv` project outside the pnpm workspace. Pipecat is a pinned dependency
 
 The backend model is called through the **Responses API**, not chat completions. Current reasoning models reject function tools on chat completions with a 400, and Pipecat's backend worker turns that error into an empty answer — the gate spike failed exactly this way before the fix.
 
+### Practice configuration foundation
+
+Practice uses the same delegated tool contract with a platform-owned endpoint,
+not a browser mock or second agent runtime. A compiler freezes only allowed
+assistant fields, reviewed synthetic samples, the assistant/sample revisions
+and a versioned disclosure into an immutable snapshot. Its digest excludes
+runtime credentials and volatile timestamps. The Practice database read omits
+the customer's URL and secret entirely.
+
+Assistant and sample writes use revision compare-and-swap. The signed Practice
+endpoint accepts only an active, unexpired Practice call, validates the frozen
+tool schema and persists the chosen response before returning it, so identical
+delivery retries replay one result and conflicting reuse is rejected. The
+per-call Practice secret is encrypted separately and can be purged without
+changing the authored digest. There is deliberately no Sandbox start surface
+yet; admission and provider lifecycle are later work. [ADR 012](docs/decisions/012-practice-snapshots.md)
+
 ## Lifecycle of one call
 
 ```mermaid

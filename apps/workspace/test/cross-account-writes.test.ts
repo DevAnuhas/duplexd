@@ -78,6 +78,8 @@ describeDatabase("two accounts, one another’s assistants", () => {
   let intruder: SignedUpUser
   let ownedId = ""
   let intruderOwnId = ""
+  let ownedRevision = 1
+  let intruderOwnRevision = 1
   const ownedName = `owned ${randomUUID()}`
 
   beforeAll(async () => {
@@ -92,6 +94,7 @@ describeDatabase("two accounts, one another’s assistants", () => {
     })
 
     ownedId = String(owned.id)
+    ownedRevision = owned.revision
 
     const theirs = await createAssistant(intruder.accountId, {
       name: `intruder own ${randomUUID()}`,
@@ -99,6 +102,7 @@ describeDatabase("two accounts, one another’s assistants", () => {
     })
 
     intruderOwnId = String(theirs.id)
+    intruderOwnRevision = theirs.revision
   })
 
   /** Without this, every assertion below could be passing on an empty database. */
@@ -117,11 +121,16 @@ describeDatabase("two accounts, one another’s assistants", () => {
       const before = await getAssistantForAccount(owner.accountId, ownedId)
 
       expect(
-        await updateAssistantForAccount(intruder.accountId, ownedId, {
-          name: "renamed by the intruder",
-          instructions: "Rewritten by the intruder.",
-        })
-      ).toBeNull()
+        await updateAssistantForAccount(
+          intruder.accountId,
+          ownedId,
+          {
+            name: "renamed by the intruder",
+            instructions: "Rewritten by the intruder.",
+          },
+          ownedRevision
+        )
+      ).toStrictEqual({ kind: "not_found" })
 
       const after = await getAssistantForAccount(owner.accountId, ownedId)
 
@@ -133,10 +142,15 @@ describeDatabase("two accounts, one another’s assistants", () => {
       const renamed = `intruder renamed ${randomUUID()}`
 
       expect(
-        await updateAssistantForAccount(intruder.accountId, intruderOwnId, {
-          name: renamed,
-        })
-      ).not.toBeNull()
+        await updateAssistantForAccount(
+          intruder.accountId,
+          intruderOwnId,
+          { name: renamed },
+          intruderOwnRevision
+        )
+      ).toMatchObject({ kind: "updated" })
+
+      intruderOwnRevision += 1
 
       expect(
         (await getAssistantForAccount(intruder.accountId, intruderOwnId))?.name
@@ -145,8 +159,12 @@ describeDatabase("two accounts, one another’s assistants", () => {
 
     it("cannot archive the owner’s assistant, and it stays readable", async () => {
       expect(
-        await archiveAssistantForAccount(intruder.accountId, ownedId)
-      ).toBe(false)
+        await archiveAssistantForAccount(
+          intruder.accountId,
+          ownedId,
+          ownedRevision
+        )
+      ).toStrictEqual({ kind: "not_found" })
 
       expect(
         await getAssistantForAccount(owner.accountId, ownedId),
@@ -183,7 +201,10 @@ describeDatabase("two accounts, one another’s assistants", () => {
     it("refuses an edit of the owner’s assistant without a 500, and changes nothing", async () => {
       const result = await updateAssistantAction(
         ownedId,
-        formDataFor({ name: "renamed through the action" })
+        formDataFor({
+          name: "renamed through the action",
+          expectedRevision: String(ownedRevision),
+        })
       )
 
       expect(result.ok).toBe(false)
@@ -193,11 +214,10 @@ describeDatabase("two accounts, one another’s assistants", () => {
       expect(after?.name).toBe(ownedName)
     })
 
-    it("reports success for an archive it did not perform, and performs none", async () => {
-      // The action reports `ok` because "not yours" and "already gone" are the
-      // same answer on purpose — what matters is the post-state, which is that
-      // the owner's assistant is untouched.
-      await archiveAssistantAction(ownedId)
+    it("refuses an archive it cannot own, and performs none", async () => {
+      expect(
+        await archiveAssistantAction(ownedId, ownedRevision)
+      ).toMatchObject({ ok: false })
 
       expect(
         await getAssistantForAccount(owner.accountId, ownedId),

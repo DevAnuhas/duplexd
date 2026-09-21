@@ -52,6 +52,10 @@ export const DATABASE_BACKED_FILES = [
   // Account settings.
   "account-rename-scoping",
   "signup-workspace-name",
+  // A02 Practice foundations.
+  "assistant-revision-cas",
+  "practice-invocation",
+  "practice-sample-routes",
 ] as const
 
 export default async function setup(): Promise<void> {

@@ -270,7 +270,11 @@ describeDatabase("the server URL matrix, through the real save path", () => {
 
     const result = await updateAssistantAction(
       String(saved?.id),
-      formDataFor({ name, serverUrl: url })
+      formDataFor({
+        name,
+        serverUrl: url,
+        expectedRevision: String(saved?.revision),
+      })
     )
 
     expect(result.ok).toBe(false)
@@ -423,6 +427,7 @@ describeDatabase("tool-list rejection, through the real save path", () => {
       String(saved?.id),
       formDataFor({
         name,
+        expectedRevision: String(saved?.revision),
         tools: JSON.stringify([
           {
             ...VALID_TOOL,
@@ -538,8 +543,11 @@ describeDatabase("an assistant round-trips every field", () => {
     }
 
     expect(
-      await updateAssistantAction(String(saved?.id), formDataFor(edited))
-    ).toStrictEqual({ ok: true })
+      await updateAssistantAction(
+        String(saved?.id),
+        formDataFor({ ...edited, expectedRevision: String(saved?.revision) })
+      )
+    ).toMatchObject({ ok: true, revision: 2 })
 
     const after = await getAssistantForAccount(
       account.accountId,
@@ -571,7 +579,7 @@ describeDatabase("an assistant round-trips every field", () => {
 
     expect(saved, "the assistant to archive was not created").toBeDefined()
 
-    await archiveAssistantAction(String(saved?.id))
+    await archiveAssistantAction(String(saved?.id), saved?.revision ?? 0)
 
     expect(
       (await listAssistantsForAccount(account.accountId)).map((row) => row.name)
@@ -595,11 +603,14 @@ describeDatabase("an assistant round-trips every field", () => {
       (row) => row.name === name
     )
 
-    await archiveAssistantAction(String(saved?.id))
+    await archiveAssistantAction(String(saved?.id), saved?.revision ?? 0)
 
     const result = await updateAssistantAction(
       String(saved?.id),
-      formDataFor({ name: `${name} edited` })
+      formDataFor({
+        name: `${name} edited`,
+        expectedRevision: String(saved?.revision),
+      })
     )
 
     expect(result.ok).toBe(false)
