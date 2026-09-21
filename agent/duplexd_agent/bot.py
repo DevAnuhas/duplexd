@@ -12,7 +12,6 @@ from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.daily.transport import DailyParams
 
 from duplexd_agent.config import RunnerInput
-from duplexd_agent.contract_probe import parse_contract_probe, run_contract_probe
 from duplexd_agent.egress import Connector, EgressPolicy
 from duplexd_agent.errors import AgentStartupError
 from duplexd_agent.platform import PlatformClient
@@ -47,16 +46,6 @@ async def bootstrap(
     webhook_connector: Connector | None = None,
     egress_policy: EgressPolicy | None = None,
 ) -> None:
-    contract_probe = parse_contract_probe(runner_args.body)
-    if contract_probe is not None:
-        await run_contract_probe(
-            runner_args,
-            contract_probe,
-            transport_factory=transport_factory,
-            transport_params=TRANSPORT_PARAMS,
-        )
-        return
-
     runner_input = RunnerInput.from_body(runner_args.body)
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:

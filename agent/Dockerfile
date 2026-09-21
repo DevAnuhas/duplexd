@@ -1,4 +1,4 @@
-FROM dailyco/pipecat-base:0.1.29
+FROM dailyco/pipecat-base:latest
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
