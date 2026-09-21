@@ -132,6 +132,110 @@ describeDatabase("migrations from an empty database", () => {
       expect(definition).toMatch(/\(agent_token_hash\)/i)
     })
 
+    it("adds the Sandbox ownership, idempotency, slot, and expiry indexes", () => {
+      const definition = (name: string) =>
+        definitionOf(name).replaceAll('"', "")
+
+      expect(definition("sandbox_attempts_owner_client_idx")).toMatch(
+        /CREATE UNIQUE INDEX.*\(account_id, initiated_by_user_id, client_attempt_id\)/i
+      )
+      expect(definition("sandbox_attempts_call_idx")).toMatch(
+        /CREATE UNIQUE INDEX.*\(call_id\)/i
+      )
+      expect(definition("sandbox_attempts_account_state_idx")).toMatch(
+        /\(account_id, state\)/i
+      )
+      expect(definition("sandbox_attempts_reservation_expiry_idx")).toMatch(
+        /\(reservation_expires_at\)/i
+      )
+      expect(definition("sandbox_slots_attempt_idx")).toMatch(
+        /CREATE UNIQUE INDEX.*\(attempt_id\)/i
+      )
+      expect(definition("sandbox_slots_account_idx")).toMatch(/\(account_id\)/i)
+    })
+
+    it("allows pre-dispatch calls to have no agent credential while keeping provenance non-null", async () => {
+      const columns = await withTestPool(async (pool) => {
+        const { rows } = await pool.query<{
+          column_name: string
+          is_nullable: string
+          column_default: string | null
+        }>(
+          `SELECT column_name, is_nullable, column_default
+           FROM information_schema.columns
+           WHERE table_schema = 'public' AND table_name = 'calls'
+             AND column_name = ANY($1::text[])`,
+          [["agent_token_hash", "source", "channel", "initiated_by_user_id"]]
+        )
+        return new Map(rows.map((row) => [row.column_name, row]))
+      })
+
+      expect(columns.get("agent_token_hash")?.is_nullable).toBe("YES")
+      expect(columns.get("initiated_by_user_id")?.is_nullable).toBe("YES")
+      expect(columns.get("source")).toMatchObject({
+        is_nullable: "NO",
+        column_default: "'integration'::text",
+      })
+      expect(columns.get("channel")).toMatchObject({
+        is_nullable: "NO",
+        column_default: "'browser'::text",
+      })
+    })
+
+    it("keeps Sandbox identity and controller fields required without credential columns", async () => {
+      const columns = await withTestPool(async (pool) => {
+        const { rows } = await pool.query<{
+          column_name: string
+          is_nullable: string
+        }>(
+          `SELECT column_name, is_nullable
+           FROM information_schema.columns
+           WHERE table_schema = 'public' AND table_name = 'sandbox_attempts'
+           ORDER BY column_name`
+        )
+        return rows
+      })
+
+      expect(columns.map((column) => column.column_name)).toStrictEqual(
+        [
+          "account_id",
+          "call_id",
+          "canceled_at",
+          "client_attempt_id",
+          "controller_proof_hash",
+          "dispatched_at",
+          "expired_at",
+          "id",
+          "initiated_by_user_id",
+          "input_digest",
+          "prepared_at",
+          "reservation_expires_at",
+          "state",
+          "stop_reason",
+          "stop_requested_at",
+        ].sort()
+      )
+      const nullability = new Map(
+        columns.map((column) => [column.column_name, column.is_nullable])
+      )
+      for (const required of [
+        "account_id",
+        "call_id",
+        "client_attempt_id",
+        "controller_proof_hash",
+        "id",
+        "input_digest",
+        "prepared_at",
+        "reservation_expires_at",
+        "state",
+      ]) {
+        expect(nullability.get(required), required).toBe("NO")
+      }
+      expect(columns.map((column) => column.column_name).join(" ")).not.toMatch(
+        /token|credential|room|secret/i
+      )
+    })
+
     it("gives call_events a composite primary key on (call_id, seq)", async () => {
       const key = await withTestPool(async (pool) => {
         const { rows } = await pool.query<{ column_name: string }>(

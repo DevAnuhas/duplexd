@@ -57,6 +57,8 @@ export const DATABASE_BACKED_FILES = [
   "practice-integration-boundary",
   "practice-invocation",
   "practice-sample-routes",
+  // A03 Sandbox foundations.
+  "sandbox-foundation",
   // Riley demo seed.
   "riley-seed-database",
 ] as const
