@@ -11,13 +11,17 @@ export const CASES = Object.freeze([
 
 export const REQUIRED_LIMITS = Object.freeze({
   startupSeconds: 120,
-  wholeTestSeconds: 600,
+  providerMaxSessionSeconds: 600,
+  operatorContainmentSeconds: 720,
 })
 
 const SAFE_REF = /^sha256:[a-f0-9]{64}$/u
-const RAW_UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu
-const SECRET_KEY = /(?:authorization|api[_-]?key|secret|raw[_-]?token|private[_-]?key)/iu
-const TOKEN_VALUE = /(?:^Bearer\s+|^pk_[A-Za-z0-9]|^sk_[A-Za-z0-9]|^[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}$)/u
+const RAW_UUID =
+  /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu
+const SECRET_KEY =
+  /(?:authorization|api[_-]?key|secret|raw[_-]?token|private[_-]?key)/iu
+const TOKEN_VALUE =
+  /(?:^Bearer\s+|^pk_[A-Za-z0-9]|^sk_[A-Za-z0-9]|^[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}$)/u
 
 const REQUIRED_CASE_CHECKS = Object.freeze({
   cold_start: ["startResponseFields", "registrationMatched"],
@@ -85,7 +89,10 @@ function parseTime(value, path, errors) {
   }
 
   const milliseconds = Date.parse(value)
-  if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== value) {
+  if (
+    !Number.isFinite(milliseconds) ||
+    new Date(milliseconds).toISOString() !== value
+  ) {
     errors.push(`${path} must be a canonical ISO timestamp.`)
     return null
   }
@@ -101,7 +108,9 @@ function assertBoolean(record, key, path, errors) {
 
 function scanForSecrets(value, path, errors) {
   if (Array.isArray(value)) {
-    value.forEach((item, index) => scanForSecrets(item, `${path}[${index}]`, errors))
+    value.forEach((item, index) =>
+      scanForSecrets(item, `${path}[${index}]`, errors)
+    )
     return
   }
 
@@ -144,7 +153,10 @@ function validateSourceFacts(sourceFacts, errors) {
     if (typeof fact.claim !== "string" || fact.claim.trim() === "") {
       errors.push(`${path}.claim is required.`)
     }
-    if (typeof fact.source !== "string" || !fact.source.startsWith("https://")) {
+    if (
+      typeof fact.source !== "string" ||
+      !fact.source.startsWith("https://")
+    ) {
       errors.push(`${path}.source must be an HTTPS URL.`)
     }
     parseTime(fact.checkedAt, `${path}.checkedAt`, errors)
@@ -179,7 +191,9 @@ function validateMedia(media, deadlineMilliseconds, sessionRef, path, errors) {
       deadlineMilliseconds !== null &&
       expiry > deadlineMilliseconds
     ) {
-      errors.push(`${participantPath}.expiresAt exceeds the whole-test deadline.`)
+      errors.push(
+        `${participantPath}.expiresAt exceeds the operator-containment deadline.`
+      )
     }
     parseTime(value.observedAt, `${participantPath}.observedAt`, errors)
     assertBoolean(value, "ejectAtExpiry", participantPath, errors)
@@ -220,7 +234,10 @@ function validateStopAttempts(testCase, path, errors) {
       errors.push(`${attemptPath} must be an object.`)
       continue
     }
-    if (typeof attempt.sessionRef !== "string" || !SAFE_REF.test(attempt.sessionRef)) {
+    if (
+      typeof attempt.sessionRef !== "string" ||
+      !SAFE_REF.test(attempt.sessionRef)
+    ) {
       errors.push(`${attemptPath}.sessionRef must be a safe SHA-256 reference.`)
     } else {
       refs.add(attempt.sessionRef)
@@ -237,10 +254,14 @@ function validateStopAttempts(testCase, path, errors) {
   }
 
   if (refs.size > 1) {
-    errors.push(`${path}.stopAttempts must always target the same known session.`)
+    errors.push(
+      `${path}.stopAttempts must always target the same known session.`
+    )
   }
   if (saw404 && testCase.checks?.stop404Reconciled !== true) {
-    errors.push(`${path} treats a 404 as final without identity/status reconciliation.`)
+    errors.push(
+      `${path} treats a 404 as final without identity/status reconciliation.`
+    )
   }
   if (testCase.case === "known_session_stop_retry") {
     if (testCase.stopAttempts.length < 2) {
@@ -269,7 +290,9 @@ function validateCaseObservations(testCase, path, mode, errors) {
       return
     }
     if (observation.kind !== mode) {
-      errors.push(`${observationPath}.kind must match evidence.observationMode.`)
+      errors.push(
+        `${observationPath}.kind must match evidence.observationMode.`
+      )
     }
     if (typeof observation.source !== "string" || observation.source === "") {
       errors.push(`${observationPath}.source is required.`)
@@ -277,9 +300,14 @@ function validateCaseObservations(testCase, path, mode, errors) {
       sources.add(observation.source)
     }
     if (observation.sessionRef !== testCase.sessionRef) {
-      errors.push(`${observationPath}.sessionRef must match the containing case.`)
+      errors.push(
+        `${observationPath}.sessionRef must match the containing case.`
+      )
     }
-    if (typeof observation.fact !== "string" || observation.fact.trim() === "") {
+    if (
+      typeof observation.fact !== "string" ||
+      observation.fact.trim() === ""
+    ) {
       errors.push(`${observationPath}.fact is required.`)
     }
     parseTime(observation.observedAt, `${observationPath}.observedAt`, errors)
@@ -315,34 +343,59 @@ function validateCase(testCase, path, mode, limits, errors) {
   if (testCase.observation !== mode) {
     errors.push(`${path}.observation must match evidence.observationMode.`)
   }
-  if (typeof testCase.injection !== "string" || testCase.injection.trim() === "") {
+  if (
+    typeof testCase.injection !== "string" ||
+    testCase.injection.trim() === ""
+  ) {
     errors.push(`${path}.injection must state the injected fault.`)
   }
-  if (typeof testCase.cessationBoundary !== "string" || testCase.cessationBoundary === "") {
-    errors.push(`${path}.cessationBoundary must state the observed stopping boundary.`)
+  if (
+    typeof testCase.cessationBoundary !== "string" ||
+    testCase.cessationBoundary === ""
+  ) {
+    errors.push(
+      `${path}.cessationBoundary must state the observed stopping boundary.`
+    )
   }
   if (testCase.cessationBoundary === "room_ejection") {
-    errors.push(`${path}.cessationBoundary cannot use room ejection as process/usage proof.`)
+    errors.push(
+      `${path}.cessationBoundary cannot use room ejection as process/usage proof.`
+    )
   }
-  if (typeof testCase.sessionRef !== "string" || !SAFE_REF.test(testCase.sessionRef)) {
+  if (
+    typeof testCase.sessionRef !== "string" ||
+    !SAFE_REF.test(testCase.sessionRef)
+  ) {
     errors.push(`${path}.sessionRef must be a safe SHA-256 reference.`)
   }
-  if (typeof testCase.callRef !== "string" || !SAFE_REF.test(testCase.callRef)) {
+  if (
+    typeof testCase.callRef !== "string" ||
+    !SAFE_REF.test(testCase.callRef)
+  ) {
     errors.push(`${path}.callRef must be a safe SHA-256 reference.`)
   }
 
-  const dispatched = parseTime(testCase.dispatchedAt, `${path}.dispatchedAt`, errors)
+  const dispatched = parseTime(
+    testCase.dispatchedAt,
+    `${path}.dispatchedAt`,
+    errors
+  )
   const ceased = parseTime(testCase.ceasedAt, `${path}.ceasedAt`, errors)
   if (dispatched !== null && ceased !== null) {
     if (ceased < dispatched) {
       errors.push(`${path}.ceasedAt precedes dispatch.`)
-    } else if (ceased - dispatched > limits.wholeTestSeconds * 1_000) {
-      errors.push(`${path} exceeded the whole-test bound.`)
+    } else if (
+      ceased - dispatched >
+      limits.operatorContainmentSeconds * 1_000
+    ) {
+      errors.push(`${path} exceeded the operator-containment bound.`)
     }
   }
 
   const deadline =
-    dispatched === null ? null : dispatched + limits.wholeTestSeconds * 1_000
+    dispatched === null
+      ? null
+      : dispatched + limits.operatorContainmentSeconds * 1_000
   validateMedia(
     testCase.media,
     deadline,
@@ -392,7 +445,10 @@ export function validateEvidence(evidence) {
   if (evidence.schemaVersion !== 1) {
     errors.push("evidence.schemaVersion must be 1.")
   }
-  if (evidence.observationMode !== "synthetic" && evidence.observationMode !== "live") {
+  if (
+    evidence.observationMode !== "synthetic" &&
+    evidence.observationMode !== "live"
+  ) {
     errors.push("evidence.observationMode must be synthetic or live.")
   }
   parseTime(evidence.recordedAt, "evidence.recordedAt", errors)
@@ -409,12 +465,10 @@ export function validateEvidence(evidence) {
     }
     if (
       !Number.isInteger(limits.providerMaxSessionSeconds) ||
-      limits.providerMaxSessionSeconds > REQUIRED_LIMITS.wholeTestSeconds ||
-      limits.providerMaxSessionSeconds < 60
+      limits.providerMaxSessionSeconds !==
+        REQUIRED_LIMITS.providerMaxSessionSeconds
     ) {
-      errors.push(
-        "evidence.limits.providerMaxSessionSeconds must be an integer from 60 to 600."
-      )
+      errors.push("evidence.limits.providerMaxSessionSeconds must be 600.")
     }
   }
 
@@ -429,7 +483,12 @@ export function validateEvidence(evidence) {
       "sessionStatusAccessAvailable",
       "usageEvidenceAccessAvailable",
     ]) {
-      assertBoolean(evidence.prerequisites, key, "evidence.prerequisites", errors)
+      assertBoolean(
+        evidence.prerequisites,
+        key,
+        "evidence.prerequisites",
+        errors
+      )
     }
   }
 
@@ -447,7 +506,9 @@ export function validateEvidence(evidence) {
       )
       if (isRecord(testCase) && typeof testCase.case === "string") {
         if (seen.has(testCase.case)) {
-          errors.push(`evidence.cases contains duplicate case ${testCase.case}.`)
+          errors.push(
+            `evidence.cases contains duplicate case ${testCase.case}.`
+          )
         }
         seen.add(testCase.case)
       }

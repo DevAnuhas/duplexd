@@ -90,8 +90,8 @@ export function buildLiveEvidence({
     ],
     limits: {
       startupSeconds: 120,
-      wholeTestSeconds: 600,
       providerMaxSessionSeconds: 600,
+      operatorContainmentSeconds: 720,
     },
     prerequisites: {
       publicStartKeyAvailable: true,

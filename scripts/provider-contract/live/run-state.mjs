@@ -6,7 +6,10 @@ export const LIMITS = Object.freeze({
   maxBilledMinutes: 72,
   maxBilledMinutesPerSession: 12,
   startupSeconds: 120,
-  wholeSessionSeconds: 600,
+  providerMaxSessionSeconds: 600,
+  operatorContainmentSeconds: 720,
+  ambiguousReconciliationSeconds: 60,
+  reconciliationPollSeconds: 5,
 })
 
 export const BASELINE = Object.freeze({
@@ -73,7 +76,7 @@ export class LiveRunState {
     attempt.wholeTimer = this.#schedule(() => {
       this.#aborted = true
       onWholeTimeout(caseId)
-    }, LIMITS.wholeSessionSeconds * 1_000)
+    }, LIMITS.operatorContainmentSeconds * 1_000)
     attempt.startupTimer?.unref?.()
     attempt.wholeTimer?.unref?.()
     this.#active.set(caseId, attempt)
@@ -115,6 +118,14 @@ export class LiveRunState {
   markReady(caseId) {
     const attempt = this.#required(caseId)
     attempt.ready = true
+    if (attempt.startupTimer !== null) {
+      this.#cancel(attempt.startupTimer)
+      attempt.startupTimer = null
+    }
+  }
+
+  cancelStartupDeadline(caseId) {
+    const attempt = this.#required(caseId)
     if (attempt.startupTimer !== null) {
       this.#cancel(attempt.startupTimer)
       attempt.startupTimer = null
@@ -319,6 +330,7 @@ export function createOperatorGuard({ state = new LiveRunState(), cleanup }) {
   }
   let cleanupPromise = null
   let resolveAbort
+  const controller = new AbortController()
   const abortSignal = new Promise((resolve) => {
     resolveAbort = resolve
   })
@@ -326,6 +338,7 @@ export function createOperatorGuard({ state = new LiveRunState(), cleanup }) {
   function abort(reason) {
     if (cleanupPromise === null) {
       state.abort()
+      controller.abort(reason)
       resolveAbort(reason)
       cleanupPromise = Promise.resolve().then(() => cleanup(reason))
       void cleanupPromise.catch(() => {})
@@ -356,6 +369,7 @@ export function createOperatorGuard({ state = new LiveRunState(), cleanup }) {
     },
     abort,
     abortSignal,
+    signal: controller.signal,
     cleanupResult() {
       return cleanupPromise
     },

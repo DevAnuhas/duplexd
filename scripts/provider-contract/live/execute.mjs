@@ -11,6 +11,7 @@ import { ControlPlaneClient, ProviderClient } from "./provider.mjs"
 import { createRunSecret, signActivation } from "./protocol.mjs"
 import {
   BASELINE,
+  LIMITS,
   LiveRunState,
   abortAndRestore,
   createOperatorGuard,
@@ -195,44 +196,116 @@ async function waitForBaseline(controlPlane, { sleep = delay } = {}) {
 }
 
 async function reconcileEnded(
-  provider,
   sessionId,
   guard,
-  { sleep = delay } = {}
+  { readSession, sleep = delay } = {}
 ) {
-  let ended = null
-  for (;;) {
-    const detail = await provider.session(sessionId)
+  if (typeof readSession !== "function") {
+    throw new TypeError("exact-session reader is required")
+  }
+  let previousMarker = null
+  const maximumPolls = Math.ceil(
+    LIMITS.operatorContainmentSeconds / LIMITS.reconciliationPollSeconds
+  )
+  for (let attempt = 0; attempt < maximumPolls; attempt += 1) {
+    const detail = await Promise.race([
+      readSession(sessionId),
+      guard.abortSignal.then((reason) => {
+        throw new Error(`run aborted: ${reason}`)
+      }),
+    ])
+    let marker = null
     if (detail.endedAt !== null) {
-      ended = detail
-      break
+      try {
+        marker = `${detail.endedAt}|${detail.updatedAt}|${usageMarker(
+          detail.resourceMetrics
+        )}`
+      } catch {
+        marker = null
+      }
     }
+    if (marker !== null && marker === previousMarker) return detail
+    previousMarker = marker
     await Promise.race([
-      sleep(5_000),
+      sleep(LIMITS.reconciliationPollSeconds * 1_000),
       guard.abortSignal.then((reason) => {
         throw new Error(`run aborted: ${reason}`)
       }),
     ])
   }
-  await Promise.race([
-    sleep(5_000),
-    guard.abortSignal.then((reason) => {
-      throw new Error(`run aborted: ${reason}`)
-    }),
+  throw new Error(
+    "exact-session usage/status did not stabilize before reconciliation deadline"
+  )
+}
+
+async function recoverAmbiguousStart({
+  definition,
+  bootId,
+  collector,
+  provider,
+  controlPlane,
+  probeDeploymentId,
+  guard,
+  mutate,
+  containment,
+  sleep,
+}) {
+  containment.unknownAcceptedStart = true
+  guard.state.cancelStartupDeadline(definition.caseId)
+  const abort = guard.abortSignal.then((reason) => {
+    throw new Error(`run aborted: ${reason}`)
+  })
+  const registered = await Promise.race([
+    collector.waitFor(bootId, "registered"),
+    sleep(LIMITS.startupSeconds * 1_000).then(() => null),
+    abort,
   ])
-  const stable = await provider.session(sessionId)
-  const endedUsageMarker = usageMarker(ended.resourceMetrics)
-  const stableUsageMarker = usageMarker(stable.resourceMetrics)
-  if (
-    stable.endedAt !== ended.endedAt ||
-    stable.updatedAt !== ended.updatedAt ||
-    stableUsageMarker !== endedUsageMarker
-  ) {
-    throw new Error(
-      "exact-session usage/status did not stabilize after termination"
-    )
+  if (registered !== null) {
+    guard.state.recordRegistration(definition.caseId, registered.sessionId)
+    containment.unknownAcceptedStart = false
+    const stopped = await mutate(() => provider.stop(registered.sessionId))
+    if (![200, 404].includes(stopped.status)) {
+      throw new Error("ambiguous exact-session stop was not reconciled")
+    }
+    const status = await reconcileEnded(registered.sessionId, guard, {
+      readSession: (sessionId) => mutate(() => provider.session(sessionId)),
+      sleep,
+    })
+    guard.finishCase(definition.caseId, {
+      billedMinutes: status.billedMinutes,
+      endedAt: Date.parse(status.endedAt),
+    })
+    throw new Error("ambiguous start contained by exact boot registration")
   }
-  return stable
+
+  await Promise.race([
+    sleep((LIMITS.providerMaxSessionSeconds - LIMITS.startupSeconds) * 1_000),
+    abort,
+  ])
+  let consecutiveEmpty = 0
+  const maximumPolls = Math.ceil(
+    LIMITS.ambiguousReconciliationSeconds / LIMITS.reconciliationPollSeconds
+  )
+  for (let attempt = 0; attempt < maximumPolls; attempt += 1) {
+    const activeProbeSessions = (
+      await mutate(() => controlPlane.listSessions())
+    ).filter(
+      (session) =>
+        session.deploymentId === probeDeploymentId && session.endedAt === null
+    )
+    consecutiveEmpty =
+      activeProbeSessions.length === 0 ? consecutiveEmpty + 1 : 0
+    if (consecutiveEmpty >= 2) {
+      containment.unknownAcceptedStart = false
+      throw new Error(
+        "ambiguous start contained after zero-active reconciliation"
+      )
+    }
+    await Promise.race([sleep(LIMITS.reconciliationPollSeconds * 1_000), abort])
+  }
+  throw new Error(
+    "ambiguous start containment could not prove zero active sessions"
+  )
 }
 
 function observation(source, sessionRef, fact, observedAt) {
@@ -418,12 +491,15 @@ async function runCase({
   callbackSecret,
   activationSecret,
   provider,
+  controlPlane,
+  probeDeploymentId,
   collector,
   witness,
   guard,
   mutate,
   now = () => Date.now(),
   sleep = delay,
+  containment,
 }) {
   guard.beginCase(definition.caseId)
   const bootId = randomUUID()
@@ -442,17 +518,34 @@ async function runCase({
     secret: activationSecret,
     config: probe,
   })
-  const operatorStart = await mutate(async () => {
-    const value = await provider.start({
-      body: { providerContractProbe: probe },
-      expiresAtEpochSeconds,
+  let operatorStart
+  try {
+    operatorStart = await mutate(async () => {
+      const value = await provider.start({
+        body: { providerContractProbe: probe },
+        expiresAtEpochSeconds,
+      })
+      guard.state.recordOperatorWitness(definition.caseId, value.sessionId)
+      if (definition.caseId !== "lost_start_response_registered") {
+        guard.state.recordStart(definition.caseId, value.sessionId)
+      }
+      return value
     })
-    guard.state.recordOperatorWitness(definition.caseId, value.sessionId)
-    if (definition.caseId !== "lost_start_response_registered") {
-      guard.state.recordStart(definition.caseId, value.sessionId)
-    }
-    return value
-  })
+  } catch (error) {
+    await recoverAmbiguousStart({
+      definition,
+      bootId,
+      collector,
+      provider,
+      controlPlane,
+      probeDeploymentId,
+      guard,
+      mutate,
+      containment,
+      sleep,
+    })
+    throw error
+  }
   let cleanupSessionId =
     definition.caseId === "lost_start_response_registered"
       ? null
@@ -544,14 +637,10 @@ async function runCase({
   }
 
   const reconciliationSessionId = cleanupSessionId ?? operatorStart.sessionId
-  const status = await reconcileEnded(
-    provider,
-    reconciliationSessionId,
-    guard,
-    {
-      sleep,
-    }
-  )
+  const status = await reconcileEnded(reconciliationSessionId, guard, {
+    readSession: (sessionId) => mutate(() => provider.session(sessionId)),
+    sleep,
+  })
   const ceasedAt = status.endedAt
   const finished = guard.finishCase(definition.caseId, {
     billedMinutes: status.billedMinutes,
@@ -607,6 +696,7 @@ export async function runLiveExercise({
   let cleanupResult = null
   let probeManifest = null
   let inFlightMutation = Promise.resolve()
+  const containment = { unknownAcceptedStart: false }
 
   function mutate(task) {
     assertRunActive(state)
@@ -630,6 +720,11 @@ export async function runLiveExercise({
       },
       restoreBaseline: async () => {
         if (!probeDeployed) return
+        if (containment.unknownAcceptedStart) {
+          throw new Error(
+            "baseline restore blocked by an unresolved ambiguous start"
+          )
+        }
         await controlPlane.restoreBaseline(BASELINE)
         await waitForBaseline(controlPlane, { sleep })
       },
@@ -654,6 +749,8 @@ export async function runLiveExercise({
       }),
     })
     cleanupResult.reason = reason
+    cleanupResult.containment.unknownAcceptedStart =
+      containment.unknownAcceptedStart
     try {
       await tunnel.close()
     } catch {
@@ -761,7 +858,7 @@ export async function runLiveExercise({
     provider = providerFactory({ publicKey, privateKey })
     assertRunActive(state)
     probeDeployed = true
-    await mutate(() => deployCommands.deployProbe())
+    await mutate(() => deployCommands.deployProbe({ signal: guard.signal }))
     assertRunActive(state)
     await mutate(() => provider.setMaxSessionDuration(600))
     probeManifest = await waitForProbeManifest(controlPlane, guard, { sleep })
@@ -778,12 +875,15 @@ export async function runLiveExercise({
           callbackSecret,
           activationSecret,
           provider,
+          controlPlane,
+          probeDeploymentId: probeManifest.deploymentId,
           collector,
           witness,
           guard,
           mutate,
           now,
           sleep,
+          containment,
         })
       )
     }

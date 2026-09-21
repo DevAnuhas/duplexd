@@ -24,7 +24,7 @@ its steps manually. Never enable shell tracing or print credentials.
 | Temporary private key | `Stage A provider proof`                                                  |
 | Sessions              | Six maximum, concurrency one                                              |
 | Usage                 | 12 billed minutes per session, 72 total                                   |
-| Timers                | 120-second startup, 600-second whole session                              |
+| Timers                | 120-second startup, 600-second provider ceiling, 720-second containment   |
 | Probe scaling         | `min=0`, `max=1`                                                          |
 | Restored scaling      | `min=0`, `max=3`                                                          |
 
@@ -90,7 +90,8 @@ strict baseline + zero-session/key/secret-set preflight
   -> create one named private key
   -> build/deploy probe with min0/max1 and temporary secret set
   -> set and read back maxSessionDurationSeconds=600
-  -> run six cases serially with guarded starts and exact-session reconciliation
+  -> run six cases serially with a distinct 720s operator containment guard
+  -> poll exact-session status/usage until two consecutive stable observations
   -> restore full baseline build/min0/max3/original secret-set reference
   -> revoke every matching temporary private key
   -> delete temporary secret set only after verified baseline restoration
@@ -110,11 +111,23 @@ The six cases are fixed in code: cold start, cancel before join, lost response
 with registration, no application registration, hung runtime, and same-session
 stop retry with a reconciled 404. The executable never retries `start`.
 
+An ambiguous `start` response does not trigger immediate restoration. The
+runner keeps the probe deployment and secret set intact while it waits for the
+exact boot callback through the 120-second startup window. If registration
+arrives it stops and reconciles that exact session. Otherwise it waits through
+the provider's 600-second ceiling and requires two consecutive zero-active
+readbacks scoped to the exact probe deployment during the remaining bounded
+allowance. It never retries `start` or guesses ownership from timestamps. If
+zero active probe sessions cannot be proved, baseline restoration and secret
+set deletion stay blocked for containment.
+
 ## Abort and containment
 
 SIGINT, SIGTERM, a timeout, a seventh/concurrent start, an uncorrelatable
 callback, a response-shape mismatch, unstable usage, or any failed gate enters
-the same cleanup path. Cleanup waits for any in-flight mutation, stops every
+the same cleanup path. The deploy subprocess has a ten-minute hard timeout;
+signals terminate its process tree and wait for exit before cleanup continues.
+Cleanup waits for any other in-flight mutation, stops every
 exactly known session, restores the baseline, revokes the temporary key, then
 deletes the temporary secret set. All readback errors are redacted.
 

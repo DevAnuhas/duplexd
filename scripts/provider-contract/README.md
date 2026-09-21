@@ -66,6 +66,7 @@ them:
 | Temporary activation set  | One four-value `duplexd-provider-proof` set; never modify `duplexd-agent-secrets`           |
 | Test deployment           | Existing service only, `min_agents = 0`, `max_agents = 1`, no production traffic            |
 | Platform ceiling          | `maxSessionDuration = 600` seconds, read back from the active deployment                    |
+| Operator containment      | 720 seconds from dispatch, including startup and exact-session reconciliation               |
 | Base image                | Dockerfile pinned to Pipecat Cloud base image `0.1.29`                                      |
 | Daily and evidence access | Effective claims plus exact-session status/resource metrics after teardown                  |
 
@@ -88,7 +89,8 @@ application state without timestamp-based ownership guesses.
 3. Discard the start response after acceptance while allowing registration;
    stop the registered exact session.
 4. Discard the start response and suppress registration; let the 600-second
-   provider ceiling terminate the process.
+   provider ceiling terminate the process, then prove two consecutive
+   zero-active readbacks for the exact probe deployment before restoration.
 5. Hang the runtime past application watchdogs; verify browser and agent media
    ejection plus provider process and usage cessation.
 6. Retry cleanup against one session, including a post-stop `404`; reconcile
@@ -100,6 +102,12 @@ provider-documented startup and teardown time around the six 10-minute runtime
 bounds. Stop when either limit is reached, or on the first unbounded or
 uncorrelatable session. Do not raise the ceiling, add warm capacity, or redial
 an ambiguous start.
+
+The 600-second value is the provider runtime ceiling, not the local cleanup
+deadline. A separate 720-second operator envelope bounds HTTP dispatch,
+startup, termination, and reconciliation inside the authorized 12 billed
+minutes per session. Exact-session status and usage must be identical across
+two consecutive polls; one delayed metrics sample is not treated as failure.
 
 ## Source snapshot
 

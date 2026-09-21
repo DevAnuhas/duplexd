@@ -375,7 +375,7 @@ test("LiveRunState enforces concurrency, six starts, timers and raw-id lifecycle
   const startupTimer = first.startupTimer
   assert.deepEqual(
     clock.scheduled.map((timer) => timer.milliseconds),
-    [LIMITS.startupSeconds * 1_000, LIMITS.wholeSessionSeconds * 1_000]
+    [LIMITS.startupSeconds * 1_000, LIMITS.operatorContainmentSeconds * 1_000]
   )
   assert.ok(clock.scheduled.every((timer) => timer.unrefCalled))
   assert.throws(() => state.beginCase("case-concurrent"), /concurrency/u)
@@ -1094,6 +1094,7 @@ test("command, tunnel and browser-claim adapters are bounded and exact", async (
   assert.ok(spawnCalls[1].args.includes("test-org"))
   assert.ok(spawnCalls[1].args.includes("--force"))
   assert.ok(spawnCalls[1].args.includes("--yes"))
+  assert.equal(spawnCalls[1].options.timeoutMs, 10 * 60 * 1_000)
 
   const process = new EventEmitter()
   process.exitCode = null
@@ -1163,6 +1164,26 @@ test("command, tunnel and browser-claim adapters are bounded and exact", async (
   assert.throws(() => decodeBrowserClaims("not-a-jwt"), /invalid/u)
 })
 
+test("runCommand terminates an aborted child tree and waits for its exit", async () => {
+  const controller = new AbortController()
+  const child = new EventEmitter()
+  child.pid = 43210
+  const terminations = []
+  const running = runCommand("never-exits", [], {
+    spawnImpl: () => child,
+    signal: controller.signal,
+    timeoutMs: 60_000,
+    terminateImpl(value, signal) {
+      assert.equal(value, child)
+      terminations.push(signal)
+      queueMicrotask(() => child.emit("exit", null, signal))
+    },
+  })
+  controller.abort("operator signal")
+  await assert.rejects(running, /never-exits aborted/u)
+  assert.deepEqual(terminations, ["SIGTERM"])
+})
+
 test("file witness writes mode-0600 volatile material, verifies input and destroys it", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "duplexd-witness-test-"))
   t.after(() => rm(directory, { recursive: true, force: true }))
@@ -1203,6 +1224,8 @@ function liveHarness({
   failRestore = false,
   failStartAt = null,
   missingUsageAt = null,
+  suppressRegistrationAt = null,
+  changingUsageAt = null,
 } = {}) {
   const order = []
   let privateKeyPresent = false
@@ -1210,6 +1233,7 @@ function liveHarness({
   let probeActive = false
   const sessions = new Map()
   const callbacks = new Map()
+  const sessionReads = new Map()
   let startCount = 0
   const controlPlane = {
     async readManifest() {
@@ -1228,7 +1252,13 @@ function liveHarness({
     },
     async listSessions() {
       order.push("control:sessions")
-      return []
+      return [...sessions.entries()]
+        .filter(([, session]) => session.active)
+        .map(([sessionId]) => ({
+          sessionId,
+          deploymentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          endedAt: null,
+        }))
     },
     async listKeys() {
       order.push("control:keys")
@@ -1293,23 +1323,23 @@ function liveHarness({
     },
     async start({ body }) {
       startCount += 1
-      if (failStartAt === startCount)
-        throw new Error("start-ambiguous-canary private-canary")
       const probe = body.providerContractProbe
       const sessionId = `session-${startCount}-12345678`
-      sessions.set(sessionId, { stops: 0 })
-      callbacks.set(`${probe.bootId}:registered`, {
-        ...event({
-          caseId: probe.caseId,
-          bootId: probe.bootId,
-          sessionId,
-          event: "registered",
-          dailyClaims: {
-            ...event().dailyClaims,
-            expiresAtEpochSeconds: 1_800_000_300,
-          },
-        }),
-      })
+      sessions.set(sessionId, { stops: 0, active: true })
+      if (suppressRegistrationAt !== startCount) {
+        callbacks.set(`${probe.bootId}:registered`, {
+          ...event({
+            caseId: probe.caseId,
+            bootId: probe.bootId,
+            sessionId,
+            event: "registered",
+            dailyClaims: {
+              ...event().dailyClaims,
+              expiresAtEpochSeconds: 1_800_000_300,
+            },
+          }),
+        })
+      }
       callbacks.set(`${probe.bootId}:agent_joined`, {
         ...event({
           caseId: probe.caseId,
@@ -1344,6 +1374,8 @@ function liveHarness({
           },
         })
       ).toString("base64url")}.signature`
+      if (failStartAt === startCount)
+        throw new Error("start-ambiguous-canary private-canary")
       return {
         sessionId,
         dailyRoom: "https://daily.example/room",
@@ -1354,20 +1386,29 @@ function liveHarness({
       order.push(`stop:${sessionId}`)
       const current = sessions.get(sessionId)
       current.stops += 1
+      current.active = false
       return { status: current.stops === 1 ? 200 : 404 }
     },
     async session(sessionId) {
+      const current = sessions.get(sessionId)
+      if (current !== undefined) current.active = false
+      const reads = (sessionReads.get(sessionId) ?? 0) + 1
+      sessionReads.set(sessionId, reads)
+      const changing =
+        sessionId === `session-${changingUsageAt}-12345678` && reads < 3
       return {
         sessionId,
         endedAt: "2027-01-15T08:00:01.000Z",
-        updatedAt: "2027-01-15T08:00:02.000Z",
+        updatedAt: changing
+          ? `2027-01-15T08:00:0${reads}.000Z`
+          : "2027-01-15T08:00:03.000Z",
         completionStatus: "stopped",
         resourceMetrics:
           sessionId === `session-${missingUsageAt}-12345678`
             ? null
             : {
-                sampleCount: 2,
-                timeseries: [{ t: 0 }, { t: 60 }],
+                sampleCount: changing ? reads : 3,
+                timeseries: [{ t: 0 }, { t: changing ? reads : 60 }],
               },
         billedMinutes: 0.01,
       }
@@ -1421,6 +1462,12 @@ function liveHarness({
     tunnel,
     witness,
     containment,
+    expireSessions() {
+      for (const session of sessions.values()) session.active = false
+    },
+    sessionReadCount(sessionId) {
+      return sessionReads.get(sessionId) ?? 0
+    },
     get startCount() {
       return startCount
     },
@@ -1540,6 +1587,137 @@ test("ambiguous start failure cleans up and redacts volatile credentials from th
   )
   assert.ok(harness.order.includes(`restore:${BASELINE.secretSet}`))
   assert.ok(harness.order.includes("delete:secret-set"))
+  assert.equal(harness.startCount, 1)
+  assert.equal(
+    harness.order.filter((entry) => entry === "stop:session-1-12345678").length,
+    1
+  )
+})
+
+test("ambiguous start without registration waits through the provider ceiling before zero-active restore", async () => {
+  const harness = liveHarness({
+    failStartAt: 1,
+    suppressRegistrationAt: 1,
+  })
+  const sleeps = []
+  await assert.rejects(
+    runLiveExercise({
+      environment: liveEnvironment(),
+      controlPlane: harness.controlPlane,
+      providerFactory: () => harness.provider,
+      deployCommands: { async deployProbe() {} },
+      collectorFactory: () => harness.collector,
+      tunnel: harness.tunnel,
+      witness: harness.witness,
+      sleep: async (milliseconds) => {
+        sleeps.push(milliseconds)
+        if (
+          milliseconds ===
+          (LIMITS.providerMaxSessionSeconds - LIMITS.startupSeconds) * 1_000
+        ) {
+          harness.expireSessions()
+        }
+      },
+    }),
+    /cleanup verified/u
+  )
+  assert.equal(harness.startCount, 1)
+  assert.ok(sleeps.includes(LIMITS.startupSeconds * 1_000))
+  assert.ok(
+    sleeps.includes(
+      (LIMITS.providerMaxSessionSeconds - LIMITS.startupSeconds) * 1_000
+    )
+  )
+  assert.ok(harness.order.includes(`restore:${BASELINE.secretSet}`))
+})
+
+test("unresolved ambiguous start preserves the probe deployment and secret set", async () => {
+  const harness = liveHarness({
+    failStartAt: 1,
+    suppressRegistrationAt: 1,
+  })
+  await assert.rejects(
+    runLiveExercise({
+      environment: liveEnvironment(),
+      controlPlane: harness.controlPlane,
+      providerFactory: () => harness.provider,
+      deployCommands: { async deployProbe() {} },
+      collectorFactory: () => harness.collector,
+      tunnel: harness.tunnel,
+      witness: harness.witness,
+      sleep: async () => {},
+    }),
+    /cleanup blocked/u
+  )
+  assert.equal(harness.startCount, 1)
+  assert.equal(harness.order.includes(`restore:${BASELINE.secretSet}`), false)
+  assert.equal(harness.order.includes("delete:secret-set"), false)
+  assert.equal(harness.containment[0].containment.unknownAcceptedStart, true)
+})
+
+test("exact-session reconciliation requires two consecutive stable observations", async () => {
+  const harness = liveHarness({ changingUsageAt: 1 })
+  await runLiveExercise({
+    environment: liveEnvironment(),
+    controlPlane: harness.controlPlane,
+    providerFactory: () => harness.provider,
+    deployCommands: { async deployProbe() {} },
+    collectorFactory: () => harness.collector,
+    tunnel: harness.tunnel,
+    witness: harness.witness,
+    sleep: async () => {},
+    now: () => Date.parse("2027-01-15T08:00:00.000Z"),
+  })
+  assert.equal(harness.sessionReadCount("session-1-12345678"), 4)
+})
+
+test("signal aborts a hung deploy before cleanup runs exactly once", async () => {
+  const harness = liveHarness()
+  let guard
+  let deployAborted = 0
+  await assert.rejects(
+    runLiveExercise({
+      environment: liveEnvironment(),
+      controlPlane: harness.controlPlane,
+      providerFactory: () => harness.provider,
+      deployCommands: {
+        deployProbe({ signal }) {
+          return new Promise((resolve, reject) => {
+            signal.addEventListener(
+              "abort",
+              () => {
+                deployAborted += 1
+                reject(new Error("deploy aborted"))
+              },
+              { once: true }
+            )
+            queueMicrotask(() => guard.abort("signal_sigint"))
+          })
+        },
+      },
+      collectorFactory: () => harness.collector,
+      tunnel: harness.tunnel,
+      witness: harness.witness,
+      onGuard(value) {
+        guard = value
+      },
+    }),
+    /cleanup verified/u
+  )
+  assert.equal(deployAborted, 1)
+  assert.equal(
+    harness.order.filter((entry) => entry === `restore:${BASELINE.secretSet}`)
+      .length,
+    1
+  )
+  assert.equal(
+    harness.order.filter((entry) => entry === "revoke:key-temp").length,
+    1
+  )
+  assert.equal(
+    harness.order.filter((entry) => entry === "delete:secret-set").length,
+    1
+  )
 })
 
 test("live runner blocks when exact-session resource usage is unavailable", async () => {
