@@ -181,7 +181,7 @@ inherit this for free; if you add a second client, you do not.** See
 
 ## CI
 
-`.github/workflows/ci.yml` always starts for pull requests and pushes to `main`. Its `changes` job runs the repository's merge-base-aware path classifier. Code changes run the Node checks in `checks` and the independent frozen Python lint, typecheck, tests, and Docker build in `agent`; documentation-only changes run `pnpm lint:links` in `docs`. Unselected jobs report skipped rather than disappearing, so branch protection can require the stable check names recorded in [WORKFLOW.md](WORKFLOW.md).
+`.github/workflows/ci.yml` runs its CI jobs for ready-for-review pull requests and pushes to `main`. A draft creation or draft update can create a GitHub Actions workflow record, because GitHub Actions cannot filter draft state at the trigger level, but every CI job is skipped and no dependencies are installed or checks run. Marking a draft ready runs CI; later pushes while it remains ready run CI again at the current head. Its `changes` job runs the repository's merge-base-aware path classifier. Code changes run the Node checks in `checks` and the independent frozen Python lint, typecheck, tests, and Docker build in `agent`; documentation-only changes run `pnpm lint:links` in `docs`. Unselected jobs report skipped rather than disappearing, so branch protection can require the stable check names recorded in [WORKFLOW.md](WORKFLOW.md).
 
 The classifier is covered by 41 tests in `tests/classify-docs-only.test.ts`, run by `pnpm test`. They are the reason a change to the routing rules cannot land silently.
 
