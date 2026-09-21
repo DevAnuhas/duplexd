@@ -1,0 +1,176 @@
+{
+  "schemaVersion": 1,
+  "runId": "offline-contract-fixture",
+  "observationMode": "synthetic",
+  "recordedAt": "2026-09-21T10:00:00.000Z",
+  "sourceFacts": [
+    {
+      "kind": "documented",
+      "claim": "Pipecat start returns sessionId, dailyRoom, and dailyToken.",
+      "source": "https://docs.pipecat.ai/api-reference/pipecat-cloud/rest-reference/endpoint/start",
+      "checkedAt": "2026-09-21T09:00:00.000Z"
+    },
+    {
+      "kind": "documented",
+      "claim": "Pipecat stop requires a private management credential and targets an exact agent and session.",
+      "source": "https://docs.pipecat.ai/api-reference/pipecat-cloud/rest-reference/endpoint/stop",
+      "checkedAt": "2026-09-21T09:00:00.000Z"
+    },
+    {
+      "kind": "documented",
+      "claim": "Pipecat has a configurable platform maximum session duration.",
+      "source": "https://docs.pipecat.ai/pipecat-cloud/fundamentals/active-sessions#session-duration-limits",
+      "checkedAt": "2026-09-21T09:00:00.000Z"
+    }
+  ],
+  "limits": {
+    "startupSeconds": 120,
+    "wholeTestSeconds": 600,
+    "providerMaxSessionSeconds": 600
+  },
+  "dispatchedAt": "2026-09-21T10:00:00.000Z",
+  "deadlineAt": "2026-09-21T10:10:00.000Z",
+  "media": {
+    "room": {
+      "expiresAt": "2026-09-21T10:10:00.000Z",
+      "ejectAtExpiry": true
+    },
+    "browser": {
+      "expiresAt": "2026-09-21T10:10:00.000Z",
+      "ejectAtExpiry": true,
+      "isOwner": false,
+      "roomScoped": true
+    },
+    "agent": {
+      "expiresAt": "2026-09-21T10:10:00.000Z",
+      "ejectAtExpiry": true,
+      "roomScoped": true
+    }
+  },
+  "prerequisites": {
+    "publicStartKeyAvailable": true,
+    "privateManagementKeyAvailable": true,
+    "baseImageCeilingSupported": true,
+    "deploymentCeilingVerified": true,
+    "sessionStatusAccessAvailable": true,
+    "usageEvidenceAccessAvailable": true
+  },
+  "cases": [
+    {
+      "case": "cold_start",
+      "observation": "synthetic",
+      "injection": "min_agents=0 cold start",
+      "sessionRef": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "callRef": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "dispatchedAt": "2026-09-21T10:00:00.000Z",
+      "readyAt": "2026-09-21T10:01:30.000Z",
+      "ceasedAt": "2026-09-21T10:02:00.000Z",
+      "cessationBoundary": "provider_stop",
+      "checks": {
+        "startResponseFields": true,
+        "registrationMatched": true
+      }
+    },
+    {
+      "case": "cancel_before_join",
+      "observation": "synthetic",
+      "injection": "cancel after start response and before browser join",
+      "sessionRef": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "callRef": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "dispatchedAt": "2026-09-21T10:00:00.000Z",
+      "ceasedAt": "2026-09-21T10:00:20.000Z",
+      "cessationBoundary": "provider_stop",
+      "checks": {
+        "knownSessionStopTargetStable": true,
+        "processTerminated": true,
+        "usageCeased": true
+      },
+      "stopAttempts": [
+        {
+          "sessionRef": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "httpStatus": 200
+        }
+      ]
+    },
+    {
+      "case": "lost_start_response_registered",
+      "observation": "synthetic",
+      "injection": "discard start response after provider accepts it; retain registration",
+      "sessionRef": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "callRef": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "dispatchedAt": "2026-09-21T10:00:00.000Z",
+      "ceasedAt": "2026-09-21T10:01:00.000Z",
+      "cessationBoundary": "registered_session_stop",
+      "checks": {
+        "registrationMatched": true,
+        "knownSessionStopTargetStable": true,
+        "processTerminated": true,
+        "usageCeased": true
+      },
+      "stopAttempts": [
+        {
+          "sessionRef": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "httpStatus": 200
+        }
+      ]
+    },
+    {
+      "case": "no_registration_startup",
+      "observation": "synthetic",
+      "injection": "discard start response and prevent the agent from registering",
+      "sessionRef": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "callRef": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "dispatchedAt": "2026-09-21T10:00:00.000Z",
+      "ceasedAt": "2026-09-21T10:10:00.000Z",
+      "cessationBoundary": "provider_execution_ceiling",
+      "checks": {
+        "providerExecutionCeilingObserved": true,
+        "processTerminated": true,
+        "usageCeased": true
+      }
+    },
+    {
+      "case": "hung_runtime",
+      "observation": "synthetic",
+      "injection": "hang the registered runtime beyond application watchdogs",
+      "sessionRef": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "callRef": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "dispatchedAt": "2026-09-21T10:00:00.000Z",
+      "ceasedAt": "2026-09-21T10:10:00.000Z",
+      "cessationBoundary": "provider_execution_ceiling",
+      "checks": {
+        "providerExecutionCeilingObserved": true,
+        "browserEjected": true,
+        "agentEjected": true,
+        "processTerminated": true,
+        "usageCeased": true
+      }
+    },
+    {
+      "case": "known_session_stop_retry",
+      "observation": "synthetic",
+      "injection": "repeat cleanup against one known session and reconcile a 404",
+      "sessionRef": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "callRef": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "dispatchedAt": "2026-09-21T10:00:00.000Z",
+      "ceasedAt": "2026-09-21T10:00:45.000Z",
+      "cessationBoundary": "status_reconciled_after_stop",
+      "checks": {
+        "knownSessionStopTargetStable": true,
+        "stop404Reconciled": true,
+        "processTerminated": true,
+        "usageCeased": true
+      },
+      "stopAttempts": [
+        {
+          "sessionRef": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "httpStatus": 200
+        },
+        {
+          "sessionRef": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "httpStatus": 404
+        }
+      ]
+    }
+  ]
+}
