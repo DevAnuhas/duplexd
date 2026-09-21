@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto"
 
-import Ajv from "ajv"
-
-import { validateTools, type ValidationIssue } from "@/lib/validate"
+import {
+  compileToolParameters,
+  validateTools,
+  type ToolParametersCompilation,
+  type ValidationIssue,
+} from "@/lib/validate"
 
 export const PRACTICE_COMPILER_VERSION = "practice-v1" as const
 export const PRACTICE_DISCLOSURE_VERSION = "practice-disclosure-v1" as const
@@ -231,11 +234,6 @@ export function validateRunnableAssistant(
   const tools = projectAssistantTools(assistant.tools)
   if (tools === null) {
     issues.push({ field: "tools", message: "Tools cannot be compiled." })
-  } else if (tools.length > MAX_PRACTICE_TOOLS) {
-    issues.push({
-      field: "tools",
-      message: `An assistant can define at most ${MAX_PRACTICE_TOOLS} tools.`,
-    })
   }
 
   if (mode === "integration") {
@@ -255,6 +253,12 @@ export function validateRunnableAssistant(
       })
     }
   } else {
+    if (tools !== null && tools.length > MAX_PRACTICE_TOOLS) {
+      issues.push({
+        field: "tools",
+        message: `An assistant can define at most ${MAX_PRACTICE_TOOLS} tools.`,
+      })
+    }
     if (
       typeof assistant.voice === "string" &&
       !(SUPPORTED_PRACTICE_CAPABILITIES.voices as readonly string[]).includes(
@@ -441,7 +445,10 @@ export function compilePracticeConfiguration(
   }
 }
 
-const argumentValidators = new Map<string, ReturnType<Ajv["compile"]>>()
+const argumentValidators = new Map<
+  string,
+  Extract<ToolParametersCompilation, { ok: true }>["validator"]
+>()
 
 export function validatePracticeArguments(
   tool: AssistantTool,
@@ -450,9 +457,9 @@ export function validatePracticeArguments(
   const fingerprint = fingerprintToolInputSchema(tool)
   let validator = argumentValidators.get(fingerprint)
   if (validator === undefined) {
-    validator = new Ajv({ strict: false, allErrors: true }).compile(
-      tool.parameters
-    )
+    const compiled = compileToolParameters(tool.parameters)
+    if (!compiled.ok) return false
+    validator = compiled.validator
     argumentValidators.set(fingerprint, validator)
   }
   return Boolean(validator(value))

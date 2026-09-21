@@ -1,4 +1,4 @@
-import Ajv from "ajv"
+import Ajv, { type ValidateFunction } from "ajv"
 
 /**
  * Validation shared by every write surface.
@@ -358,19 +358,44 @@ export function validateServerUrl(
  * and the field is advisory for a tool's `parameters` anyway — providers ignore
  * it. So it is ignored here too, and everything under it is still validated.
  */
-function schemaProblem(parameters: object): string | null {
+export type ToolParametersCompilation =
+  { ok: true; validator: ValidateFunction } | { ok: false; problem: string }
+
+/**
+ * The one normalization and compilation path for tool input schemas.
+ *
+ * The top-level dialect marker is advisory in the provider tool contract and
+ * is deliberately removed before Ajv sees it. Save-time validation and
+ * Practice invocation must call this same helper: accepting a schema on one
+ * path and throwing while executing it on another is a signed 500.
+ */
+export function compileToolParameters(
+  parameters: Record<string, unknown>
+): ToolParametersCompilation {
   const withoutDialect: Record<string, unknown> = {
-    ...(parameters as Record<string, unknown>),
+    ...parameters,
   }
 
   delete withoutDialect.$schema
 
   try {
-    new Ajv({ strict: false, allErrors: true }).compile(withoutDialect)
-    return null
+    return {
+      ok: true,
+      validator: new Ajv({ strict: false, allErrors: true }).compile(
+        withoutDialect
+      ),
+    }
   } catch (error) {
-    return error instanceof Error ? error.message : "schema is not valid"
+    return {
+      ok: false,
+      problem: error instanceof Error ? error.message : "schema is not valid",
+    }
   }
+}
+
+function schemaProblem(parameters: Record<string, unknown>): string | null {
+  const compiled = compileToolParameters(parameters)
+  return compiled.ok ? null : compiled.problem
 }
 
 /**
@@ -461,7 +486,7 @@ export function validateTools(value: unknown): ValidationIssue[] {
     // two implementations can disagree about the phrase, but not about whether
     // Ajv accepted it. See `schemaProblem` for why it compiles on a throwaway
     // instance rather than validating on a shared one.
-    const problem = schemaProblem(parameters as object)
+    const problem = schemaProblem(parameters as Record<string, unknown>)
 
     if (problem !== null) {
       issues.push({

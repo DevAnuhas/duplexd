@@ -39,6 +39,7 @@ export type AssistantSamplesDto = {
   assistantRevision: number
   revision: number
   definitions: PracticeSampleDefinition[]
+  issues: ValidationIssue[]
 }
 
 function isJsonValue(value: unknown): value is JsonValue {
@@ -61,36 +62,24 @@ function utf8Bytes(value: unknown): number {
   return Buffer.byteLength(canonicalJson(value), "utf8")
 }
 
-export function parsePracticeSampleDefinitions(
-  value: unknown,
-  toolsValue: unknown
-):
-  | { ok: true; definitions: PracticeSampleDefinition[] }
-  | { ok: false; issues: ValidationIssue[] } {
+export function decodeStoredPracticeSamples(value: unknown): {
+  definitions: PracticeSampleDefinition[]
+  issues: ValidationIssue[]
+} {
   if (!Array.isArray(value)) {
     return {
-      ok: false,
+      definitions: [],
       issues: [{ field: "definitions", message: "Samples must be a list." }],
     }
   }
   if (utf8Bytes(value) > MAX_SAMPLE_DEFINITIONS_BYTES) {
     return {
-      ok: false,
+      definitions: [],
       issues: [
         {
           field: "definitions",
           message: `Samples must fit within ${MAX_SAMPLE_DEFINITIONS_BYTES} bytes.`,
         },
-      ],
-    }
-  }
-
-  const tools = projectAssistantTools(toolsValue)
-  if (tools === null) {
-    return {
-      ok: false,
-      issues: [
-        { field: "definitions", message: "Assistant tools are not valid." },
       ],
     }
   }
@@ -132,54 +121,55 @@ export function parsePracticeSampleDefinitions(
     }
 
     const toolName = record.toolName
-    const tool =
-      typeof toolName === "string"
-        ? tools.find((candidateTool) => candidateTool.name === toolName)
-        : undefined
-    if (tool === undefined) {
-      issues.push({
-        field: "definitions",
-        message: `Sample ${index + 1} names a tool that does not exist.`,
-      })
-      return
-    }
-    if (seenTools.has(tool.name)) {
-      issues.push({
-        field: "definitions",
-        message: `Tool "${tool.name}" has more than one sample definition.`,
-      })
-      return
-    }
-    seenTools.add(tool.name)
-
-    const fingerprint = fingerprintToolInputSchema(tool)
     if (
-      record.inputSchemaFingerprint !== fingerprint ||
-      record.reviewedFingerprint !== fingerprint
+      typeof toolName !== "string" ||
+      !/^[a-zA-Z0-9_-]{1,64}$/.test(toolName)
     ) {
       issues.push({
         field: "definitions",
-        message: `Tool "${tool.name}" changed its name or input schema; review its samples again.`,
+        message: `Sample ${index + 1} has an invalid tool name.`,
       })
+      return
+    }
+    if (seenTools.has(toolName)) {
+      issues.push({
+        field: "definitions",
+        message: `Tool "${toolName}" has more than one sample definition.`,
+      })
+      return
+    }
+    seenTools.add(toolName)
+
+    if (
+      typeof record.inputSchemaFingerprint !== "string" ||
+      !/^[0-9a-f]{64}$/.test(record.inputSchemaFingerprint) ||
+      typeof record.reviewedFingerprint !== "string" ||
+      !/^[0-9a-f]{64}$/.test(record.reviewedFingerprint)
+    ) {
+      issues.push({
+        field: "definitions",
+        message: `Tool "${toolName}" has an invalid schema fingerprint.`,
+      })
+      return
     }
     if (!isJsonValue(record.defaultResult)) {
       issues.push({
         field: "definitions",
-        message: `Tool "${tool.name}" needs an explicit JSON default result.`,
+        message: `Tool "${toolName}" needs an explicit JSON default result.`,
       })
       return
     }
     if (utf8Bytes(record.defaultResult) > MAX_SAMPLE_RESULT_BYTES) {
       issues.push({
         field: "definitions",
-        message: `Tool "${tool.name}" default result exceeds ${MAX_SAMPLE_RESULT_BYTES} bytes.`,
+        message: `Tool "${toolName}" default result exceeds ${MAX_SAMPLE_RESULT_BYTES} bytes.`,
       })
       return
     }
     if (!Array.isArray(record.overrides)) {
       issues.push({
         field: "definitions",
-        message: `Tool "${tool.name}" overrides must be a list.`,
+        message: `Tool "${toolName}" overrides must be a list.`,
       })
       return
     }
@@ -194,7 +184,7 @@ export function parsePracticeSampleDefinitions(
       ) {
         issues.push({
           field: "definitions",
-          message: `Tool "${tool.name}" has an invalid override.`,
+          message: `Tool "${toolName}" has an invalid override.`,
         })
         continue
       }
@@ -211,7 +201,7 @@ export function parsePracticeSampleDefinitions(
       ) {
         issues.push({
           field: "definitions",
-          message: `Tool "${tool.name}" has an invalid or duplicate override.`,
+          message: `Tool "${toolName}" has an invalid or duplicate override.`,
         })
         continue
       }
@@ -223,15 +213,74 @@ export function parsePracticeSampleDefinitions(
     }
 
     definitions.push({
-      toolName: tool.name,
-      inputSchemaFingerprint: fingerprint,
-      reviewedFingerprint: fingerprint,
+      toolName,
+      inputSchemaFingerprint: record.inputSchemaFingerprint,
+      reviewedFingerprint: record.reviewedFingerprint,
       defaultResult: structuredClone(record.defaultResult),
       overrides,
     })
   })
 
-  return issues.length > 0 ? { ok: false, issues } : { ok: true, definitions }
+  return { definitions, issues }
+}
+
+function sampleMappingIssues(
+  definitions: PracticeSampleDefinition[],
+  toolsValue: unknown
+): ValidationIssue[] {
+  const tools = projectAssistantTools(toolsValue)
+  if (tools === null) {
+    return [{ field: "definitions", message: "Assistant tools are not valid." }]
+  }
+
+  const issues: ValidationIssue[] = []
+  for (const definition of definitions) {
+    const tool = tools.find(
+      (candidateTool) => candidateTool.name === definition.toolName
+    )
+    if (tool === undefined) {
+      issues.push({
+        field: "definitions",
+        message: `Sample tool "${definition.toolName}" is not present in this configuration.`,
+      })
+      continue
+    }
+    const fingerprint = fingerprintToolInputSchema(tool)
+    if (
+      definition.inputSchemaFingerprint !== fingerprint ||
+      definition.reviewedFingerprint !== fingerprint
+    ) {
+      issues.push({
+        field: "definitions",
+        message: `Tool "${tool.name}" changed its name or input schema; review its samples again.`,
+      })
+    }
+  }
+  for (const tool of tools) {
+    if (!definitions.some((definition) => definition.toolName === tool.name)) {
+      issues.push({
+        field: "definitions",
+        message: `Tool "${tool.name}" needs an explicit default sample result.`,
+      })
+    }
+  }
+  return issues
+}
+
+export function parsePracticeSampleDefinitions(
+  value: unknown,
+  toolsValue: unknown
+):
+  | { ok: true; definitions: PracticeSampleDefinition[] }
+  | { ok: false; issues: ValidationIssue[] } {
+  const decoded = decodeStoredPracticeSamples(value)
+  const issues =
+    decoded.issues.length > 0
+      ? decoded.issues
+      : sampleMappingIssues(decoded.definitions, toolsValue)
+  return issues.length > 0
+    ? { ok: false, issues }
+    : { ok: true, definitions: decoded.definitions }
 }
 
 export async function getAssistantSamplesForAccount(
@@ -265,15 +314,17 @@ export async function getAssistantSamplesForAccount(
   const row = rows[0]
   if (row === undefined) return null
 
-  const parsed = parsePracticeSampleDefinitions(
-    row.definitions ?? [],
-    row.tools
-  )
+  const decoded = decodeStoredPracticeSamples(row.definitions ?? [])
+  const issues = [
+    ...decoded.issues,
+    ...sampleMappingIssues(decoded.definitions, row.tools),
+  ]
   return {
     assistantId: row.assistantId,
     assistantRevision: row.assistantRevision,
     revision: row.sampleRevision ?? 0,
-    definitions: parsed.ok ? parsed.definitions : [],
+    definitions: decoded.definitions,
+    issues,
   }
 }
 
@@ -359,6 +410,7 @@ export async function saveAssistantSamplesForAccount(
         assistantRevision: assistant.revision,
         revision,
         definitions: parsed.definitions,
+        issues: [],
       },
     } as const
   })

@@ -134,10 +134,11 @@ pnpm seed:riley
 ```
 
 This validates and prints a **disconnected demo preview**, without connecting to
-a database or provider. It includes separate voice/backend instructions and one proposed
-`get_property_information` tool for parking, checkout, and amenities. It contains
-no real property facts, guest data, phone numbers, Vapi credentials, or webhook
-secret. Voice/model values are starting points, not a claim of live compatibility.
+a database or provider. It includes separate voice/backend instructions and one
+generic `get_property_information` tool for fictional parking, checkout, and
+amenities examples. It contains no tenant identity, real property facts, guest
+data, phone numbers, Vapi credentials, or webhook secret. Voice/model values are
+starting points, not a claim of live compatibility.
 
 To create it in duplexd, sign up normally first. Configure `DATABASE_URL` for the
 intended local or staging duplexd database in `apps/workspace/.env.local`, apply
@@ -162,20 +163,15 @@ look up or select a workspace.
 
 **This is configuration preparation, not a working Boring Host integration.**
 The saved assistant intentionally has no server URL or signing secret, so call
-creation is blocked. Its tool schema is a proposed adapter contract, not a
-function already exposed by Boring Host. The existing Vapi webhook is not
-compatible with duplexd's signed request format and must not be pasted in as a
-shortcut. No Boring Host/Vapi access or mutation is performed by the seed.
+creation is blocked. Its tool schema is a generic fictional example, not a
+contract for Boring Host or another customer. No Boring Host/Vapi access or
+mutation is performed by the seed.
 
-Before a real demo, a separately authorized customer adapter must verify the
-duplexd signature and bind the call to a verified tenant/property session. It must
-return `result.status` as `available`, `verification_required`, `unavailable`, or
-`denied`, with only appropriate non-sensitive answer/next-question content.
-Duplexd's current API still lacks the trusted session-context extension described
-in the P06 plan. Once that integration exists, configure its URL and a separate
-customer-owned signing secret through the assistant editor, mint an API key in
-the workspace, and use a browser client to join the returned Daily room. The
-workspace currently has no call-launch client; this seed does not add one.
+Before a real connected demo, a separately authorized customer adapter must
+verify the duplexd signature and bind the call to the customer's own authorized
+context. Configure its URL and a separate customer-owned signing secret through
+the assistant editor only after that contract exists. This seed does not add a
+customer adapter or a call-launch client.
 
 For an audio-only synthetic demo today, the [local call stub](#local-call-stub)
 uses the Pipecat WebRTC runner and synthetic data, independently of this seeded
