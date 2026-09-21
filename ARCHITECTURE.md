@@ -57,8 +57,24 @@ endpoint accepts only an active, unexpired Practice call, validates the frozen
 tool schema and persists the chosen response before returning it, so identical
 delivery retries replay one result and conflicting reuse is rejected. The
 per-call Practice secret is encrypted separately and can be purged without
-changing the authored digest. There is deliberately no Sandbox start surface
-yet; admission and provider lifecycle are later work. [ADR 012](docs/decisions/012-practice-snapshots.md)
+changing the authored digest. [ADR 012](docs/decisions/012-practice-snapshots.md)
+
+### Disabled Sandbox admission foundation
+
+Workspace-authenticated Sandbox preparation is durable but cannot execute. A
+transaction freezes the Practice snapshot, creates a call and attempt, claims
+one per-user slot, and consumes atomic per-user/account quota. A stable client
+UUID plus canonical input digest makes identical retries return the same
+attempt; changed input conflicts. Only a hash of the tab's controller proof is
+stored.
+
+Reservations expire after 30 seconds and can be canceled before dispatch. Safe
+current/status reads expose no snapshot, proof, token or provider identifier.
+Start, join and presence terminate at a hard-disabled server boundary that has
+no provider client or token-mint dependency. The stop path cannot cross into
+provider cleanup. This is an additive foundation, not an enabled Sandbox:
+provider dispatch, agent registration, join credentials, runtime protocol and
+cleanup remain absent pending the external safety gate. [ADR 013](docs/decisions/013-disabled-sandbox-admission.md)
 
 ## Lifecycle of one call
 
@@ -110,7 +126,11 @@ Four parties, and the whole design is about keeping authority where it belongs.
 
 _The schema and its read/write paths exist and are applied by committed migrations._
 
-Postgres on Neon, through Drizzle, with migrations generated and committed. Everything is owned by an account; there is no global object. The tables are accounts and users, API keys, assistants, calls, and call events.
+Postgres on Neon, through Drizzle, with migrations generated and committed.
+Everything is owned by an account; there is no global object. Calls carry
+explicit source/channel provenance. Sandbox attempts own idempotency and
+controller-proof hashes; Sandbox slots and admission counters provide durable,
+atomic concurrency and quota boundaries.
 
 Three rules in that schema are decisions rather than detail:
 
