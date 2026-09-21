@@ -12,7 +12,7 @@ permissions:
 jobs:
   changes:
     name: changes
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request' || github.event.action == 'ready_for_review' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
@@ -35,7 +35,7 @@ jobs:
   checks:
     name: checks
     needs: changes
-    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.docs_only != 'true'
+    if: (github.event_name != 'pull_request' || github.event.action == 'ready_for_review' || github.event.pull_request.draft == false) && needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     # The database-backed tests — cross-account isolation, migrate-from-empty,
     # and encryption at rest — must RUN here, not skip. This job is the only
@@ -103,7 +103,7 @@ jobs:
   agent:
     name: agent
     needs: changes
-    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.docs_only != 'true'
+    if: (github.event_name != 'pull_request' || github.event.action == 'ready_for_review' || github.event.pull_request.draft == false) && needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -131,7 +131,7 @@ jobs:
   docs:
     name: docs
     needs: changes
-    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.docs_only == 'true'
+    if: (github.event_name != 'pull_request' || github.event.action == 'ready_for_review' || github.event.pull_request.draft == false) && needs.changes.outputs.docs_only == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
