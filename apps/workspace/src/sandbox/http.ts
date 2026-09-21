@@ -39,17 +39,39 @@ export async function readBoundedJsonObject(
       ),
     }
   }
-  const raw = await request.text()
-  if (Buffer.byteLength(raw, "utf8") > maximumBytes) {
-    return {
-      ok: false,
-      response: sandboxProblem(
-        413,
-        "request_too_large",
-        "The Sandbox request is too large."
-      ),
+
+  const chunks: Uint8Array[] = []
+  let totalBytes = 0
+  const reader = request.body?.getReader()
+  if (reader !== undefined) {
+    try {
+      while (true) {
+        const chunk = await reader.read()
+        if (chunk.done) break
+        totalBytes += chunk.value.byteLength
+        if (totalBytes > maximumBytes) {
+          try {
+            await reader.cancel("Sandbox request body exceeded its byte limit.")
+          } catch {
+            // The response contract is still 413 if the peer races cancellation.
+          }
+          return {
+            ok: false,
+            response: sandboxProblem(
+              413,
+              "request_too_large",
+              "The Sandbox request is too large."
+            ),
+          }
+        }
+        chunks.push(chunk.value)
+      }
+    } finally {
+      reader.releaseLock()
     }
   }
+
+  const raw = Buffer.concat(chunks, totalBytes).toString("utf8")
 
   let value: unknown
   try {
