@@ -69,6 +69,7 @@ export type AssistantFormValues = {
   serverUrl?: string | null
   tools?: unknown
   hasServerSecret?: boolean
+  revision?: number
 }
 
 const sections = [
@@ -178,6 +179,7 @@ export function AssistantForm({
   const router = useRouter()
   const [, startTransition] = useTransition()
   const [hasSecret, setHasSecret] = useState(values.hasServerSecret === true)
+  const [revision, setRevision] = useState(values.revision)
   const [toolsOpen, setToolsOpen] = useState(false)
   const form = useForm<AssistantFormInput>({
     resolver: zodResolver(assistantSchema),
@@ -240,6 +242,9 @@ export function AssistantForm({
 
   async function submit(input: AssistantFormInput) {
     const data = new FormData()
+    if (revision !== undefined) {
+      data.set("expectedRevision", String(revision))
+    }
     for (const [name, value] of Object.entries(input)) {
       if (name === "clearServerSecret") {
         if (value === true) data.set(name, "on")
@@ -261,6 +266,7 @@ export function AssistantForm({
           }
           if (input.serverSecret.trim() !== "") setHasSecret(true)
           else if (input.clearServerSecret) setHasSecret(false)
+          if (result.revision !== undefined) setRevision(result.revision)
           form.reset({ ...input, serverSecret: "", clearServerSecret: false })
           toast.success("Saved")
           if (values.id === undefined && result.assistantId !== undefined) {

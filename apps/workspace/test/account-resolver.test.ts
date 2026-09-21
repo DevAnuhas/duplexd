@@ -53,6 +53,7 @@ describeDatabase("getCurrentAccount", () => {
 
     expect(await getCurrentAccount()).toStrictEqual({
       accountId: first.accountId,
+      sessionId: expect.any(String),
       userId: first.userId,
     })
   })

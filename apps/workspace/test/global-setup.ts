@@ -52,6 +52,11 @@ export const DATABASE_BACKED_FILES = [
   // Account settings.
   "account-rename-scoping",
   "signup-workspace-name",
+  // A02 Practice foundations.
+  "assistant-revision-cas",
+  "practice-integration-boundary",
+  "practice-invocation",
+  "practice-sample-routes",
   // Riley demo seed.
   "riley-seed-database",
 ] as const

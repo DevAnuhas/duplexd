@@ -28,6 +28,7 @@ import {
 } from "@/db/schema"
 import { decryptSecret, secretsMatch } from "@/lib/crypto"
 import { hashCredential, mintAgentToken } from "@/lib/credentials"
+import { validateRunnableAssistant } from "@/practice/configuration"
 
 type StoredTool = {
   type: "function"
@@ -306,37 +307,16 @@ function buildSnapshot(source: AssistantRuntimeSource): {
   snapshot: AssistantSnapshot | null
   missing: string[]
 } {
-  const missing: string[] = []
-  const nonEmptyFields = [
-    ["voice", source.voice],
-    ["instructions", source.instructions],
-    ["backendModel", source.backendModel],
-    ["backendInstructions", source.backendInstructions],
-    ["serverUrl", source.serverUrl],
-  ] as const
-
-  for (const [name, value] of nonEmptyFields) {
-    if (typeof value !== "string" || value.trim() === "") {
-      missing.push(name)
-    }
-  }
-
-  if (typeof source.accentStyle !== "string") {
-    missing.push("accentStyle")
-  }
-  if (typeof source.waitingBehavior !== "string") {
-    missing.push("waitingBehavior")
-  }
-
   const serverSecretCiphertext = privateSecretCiphertext(source.serverSecrets)
-  if (serverSecretCiphertext === null) {
-    missing.push("serverSecret")
-  }
-
   const tools = projectTools(source.tools)
-  if (tools === null) {
-    missing.push("tools")
-  }
+  const missing = [
+    ...new Set(
+      validateRunnableAssistant(
+        { ...source, hasServerSecret: serverSecretCiphertext !== null },
+        "integration"
+      ).map((issue) => issue.field)
+    ),
+  ]
 
   if (missing.length > 0 || tools === null || serverSecretCiphertext === null) {
     return { snapshot: null, missing }

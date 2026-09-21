@@ -153,6 +153,7 @@ function AssistantList({
                       <ArchiveButton
                         assistantId={assistant.id}
                         assistantName={assistant.name}
+                        assistantRevision={assistant.revision}
                       />
                     </div>
                   </TableCell>

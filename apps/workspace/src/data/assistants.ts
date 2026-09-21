@@ -40,6 +40,7 @@ const publicColumns = {
   waitingBehavior: assistants.waitingBehavior,
   serverUrl: assistants.serverUrl,
   tools: assistants.tools,
+  revision: assistants.revision,
   createdAt: assistants.createdAt,
   updatedAt: assistants.updatedAt,
   /**
@@ -90,6 +91,21 @@ export type AssistantRuntimeSource = Pick<
   | "waitingBehavior"
   | "serverUrl"
   | "serverSecrets"
+  | "tools"
+  | "revision"
+>
+
+/** Practice source: connection fields are excluded at the SQL boundary. */
+export type AssistantPracticeSource = Pick<
+  typeof assistants.$inferSelect,
+  | "id"
+  | "revision"
+  | "voice"
+  | "accentStyle"
+  | "instructions"
+  | "backendInstructions"
+  | "backendModel"
+  | "waitingBehavior"
   | "tools"
 >
 
@@ -195,6 +211,36 @@ export async function getAssistantRuntimeSourceForAccount(
       serverUrl: assistants.serverUrl,
       serverSecrets: assistants.serverSecrets,
       tools: assistants.tools,
+      revision: assistants.revision,
+    })
+    .from(assistants)
+    .where(
+      and(
+        eq(assistants.id, assistantId),
+        eq(assistants.accountId, accountId),
+        isNull(assistants.archivedAt)
+      )
+    )
+    .limit(1)
+
+  return rows[0] ?? null
+}
+
+export async function getAssistantPracticeSourceForAccount(
+  accountId: string,
+  assistantId: string
+): Promise<AssistantPracticeSource | null> {
+  const rows = await getDb()
+    .select({
+      id: assistants.id,
+      revision: assistants.revision,
+      voice: assistants.voice,
+      accentStyle: assistants.accentStyle,
+      instructions: assistants.instructions,
+      backendInstructions: assistants.backendInstructions,
+      backendModel: assistants.backendModel,
+      waitingBehavior: assistants.waitingBehavior,
+      tools: assistants.tools,
     })
     .from(assistants)
     .where(
@@ -236,8 +282,13 @@ export async function listAssistantsForAccount(
 export async function updateAssistantForAccount(
   accountId: string,
   assistantId: string,
-  input: AssistantInput & { clearServerSecret?: boolean }
-): Promise<Assistant | null> {
+  input: AssistantInput & { clearServerSecret?: boolean },
+  expectedRevision: number
+): Promise<
+  | { kind: "updated"; assistant: Assistant }
+  | { kind: "not_found" }
+  | { kind: "conflict"; currentRevision: number }
+> {
   const replacement =
     input.serverSecret === undefined ||
     input.serverSecret === null ||
@@ -268,6 +319,7 @@ export async function updateAssistantForAccount(
       waitingBehavior: input.waitingBehavior ?? null,
       serverUrl: input.serverUrl ?? null,
       tools: input.tools ?? [],
+      revision: sql`${assistants.revision} + 1`,
       updatedAt: new Date(),
       ...secretChange,
     })
@@ -275,12 +327,31 @@ export async function updateAssistantForAccount(
       and(
         eq(assistants.id, assistantId),
         eq(assistants.accountId, accountId),
+        eq(assistants.revision, expectedRevision),
         isNull(assistants.archivedAt)
       )
     )
     .returning(publicColumns)
 
-  return rows[0] ?? null
+  if (rows[0] !== undefined) {
+    return { kind: "updated", assistant: rows[0] }
+  }
+
+  const current = await getDb()
+    .select({ revision: assistants.revision })
+    .from(assistants)
+    .where(
+      and(
+        eq(assistants.id, assistantId),
+        eq(assistants.accountId, accountId),
+        isNull(assistants.archivedAt)
+      )
+    )
+    .limit(1)
+
+  return current[0] === undefined
+    ? { kind: "not_found" }
+    : { kind: "conflict", currentRevision: current[0].revision }
 }
 
 /**
@@ -290,11 +361,35 @@ export async function updateAssistantForAccount(
  */
 export async function archiveAssistantForAccount(
   accountId: string,
-  assistantId: string
-): Promise<boolean> {
+  assistantId: string,
+  expectedRevision: number
+): Promise<
+  | { kind: "archived" }
+  | { kind: "not_found" }
+  | { kind: "conflict"; currentRevision: number }
+> {
   const rows = await getDb()
     .update(assistants)
-    .set({ archivedAt: new Date() })
+    .set({
+      archivedAt: new Date(),
+      revision: sql`${assistants.revision} + 1`,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(assistants.id, assistantId),
+        eq(assistants.accountId, accountId),
+        eq(assistants.revision, expectedRevision),
+        isNull(assistants.archivedAt)
+      )
+    )
+    .returning({ id: assistants.id })
+
+  if (rows.length > 0) return { kind: "archived" }
+
+  const current = await getDb()
+    .select({ revision: assistants.revision })
+    .from(assistants)
     .where(
       and(
         eq(assistants.id, assistantId),
@@ -302,7 +397,9 @@ export async function archiveAssistantForAccount(
         isNull(assistants.archivedAt)
       )
     )
-    .returning({ id: assistants.id })
+    .limit(1)
 
-  return rows.length > 0
+  return current[0] === undefined
+    ? { kind: "not_found" }
+    : { kind: "conflict", currentRevision: current[0].revision }
 }

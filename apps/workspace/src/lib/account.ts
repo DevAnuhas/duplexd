@@ -18,6 +18,7 @@ import { getAuth } from "@/lib/auth"
 export type CurrentAccount = {
   accountId: string
   userId: string
+  sessionId: string
 }
 
 /** Resolves the current account, or `null` when the request is unauthenticated. */
@@ -58,7 +59,7 @@ export async function getCurrentAccount(): Promise<CurrentAccount | null> {
     )
   }
 
-  return { accountId, userId: session.user.id }
+  return { accountId, userId: session.user.id, sessionId: session.session.id }
 }
 
 /** Resolves the current account, or throws. For paths that require a session. */

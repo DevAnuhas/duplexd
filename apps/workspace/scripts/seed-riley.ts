@@ -5,8 +5,8 @@ import { eq, sql } from "drizzle-orm"
 
 import { closeDb, getDb } from "../src/db/client.ts"
 import { assistants, users } from "../src/db/schema.ts"
+import { rileyAssistantTemplate, rileyDemoId } from "../src/lib/riley.ts"
 import { validateServerUrl, validateTools } from "../src/lib/validate.ts"
-import { rileyDemo, rileyDemoId } from "./riley-demo.ts"
 
 class SeedInputError extends Error {}
 
@@ -43,7 +43,7 @@ export function parseSeedArgs(args: string[]) {
 }
 
 export function validatedRileyDemo() {
-  const config = rileyDemo()
+  const config = rileyAssistantTemplate()
   const validation = validateTools(config.tools)
   const urlIssue = validateServerUrl(config.serverUrl)
   if (urlIssue) validation.push(urlIssue)
