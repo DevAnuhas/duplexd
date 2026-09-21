@@ -441,7 +441,13 @@ export async function getCallForAccount(
   const rows = await getDb()
     .select(publicCallColumns)
     .from(calls)
-    .where(and(eq(calls.id, callId), eq(calls.accountId, accountId)))
+    .where(
+      and(
+        eq(calls.id, callId),
+        eq(calls.accountId, accountId),
+        eq(calls.source, "integration")
+      )
+    )
     .limit(1)
 
   const row = rows[0]
@@ -585,9 +591,10 @@ export async function listCallsForAccount(
 
   const predicate =
     cursor === null
-      ? eq(calls.accountId, accountId)
+      ? and(eq(calls.accountId, accountId), eq(calls.source, "integration"))
       : and(
           eq(calls.accountId, accountId),
+          eq(calls.source, "integration"),
           or(
             lt(calls.createdAt, cursor.createdAt),
             and(eq(calls.createdAt, cursor.createdAt), lt(calls.id, cursor.id))
@@ -700,7 +707,7 @@ async function authenticateAgentCall(
   }
 
   const suppliedHash = hashCredential(rawToken)
-  if (!secretsMatch(row.tokenHash, suppliedHash)) {
+  if (row.tokenHash === null || !secretsMatch(row.tokenHash, suppliedHash)) {
     const belongsElsewhere = await getDb()
       .select({ id: calls.id })
       .from(calls)
