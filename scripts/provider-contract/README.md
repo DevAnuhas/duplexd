@@ -29,8 +29,9 @@ six starts, and no more than 72 billed session-minutes total.
 
 ## What was observed
 
-Five authorized runs were attempted on 2026-09-21. Every run stopped before
-case 1, so none produced a session-level acceptance observation.
+Nine authorized runs were attempted on 2026-09-21. The first eight stopped
+before a session-level acceptance observation. The final run started one
+`cold_start` session but produced no durable case evidence.
 
 | Run ID                                | Last trustworthy observation                                                                                                                                                                                                                                                                                                          |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -41,15 +42,19 @@ case 1, so none produced a session-level acceptance observation.
 | `stage-a-20260921-a01-probe-1`        | The disposable image built successfully in Pipecat Cloud and the deployment was created, but the CLI exited during deployment readiness monitoring. The discarded raw output prevents a narrower claim. Containment cleanup completed. See [`live-evidence.json`](live-evidence.json).                                                |
 | `stage-a-20260921-a01-probe-2`        | The CLI reported success, but exact manifest reconciliation refused the deployment because same-service update semantics inherited `duplexd-agent-secrets`. No secret value was accessed or logged. Cleanup restored the exact baseline. See [`live-evidence.json`](live-evidence.json).                                              |
 | `stage-a-20260921-a01-temp-service-1` | The isolated service passed exact build/digest/min0/max1/empty-secret readback, then stopped before case 1 because the repository's Pipecat CLI 0.4.4 did not support the duration operation used by the runner. Cleanup deleted the probe service and production remained unchanged. See [`live-evidence.json`](live-evidence.json). |
+| `stage-a-20260921-a01-temp-service-2` | The supported CLI deployed with the duration bound, but the runner omitted the authoritative nested duration field during readback. No session started; cleanup deleted the probe service and production remained unchanged.                                                                                                          |
+| `stage-a-20260921-a01-temp-service-3` | One `cold_start` session started. Runner cleanup overwrote the case stage and deleted volatile collector state, so registration and stable billing are unknowable. Post-exit containment stopped the exact session and deleted the probe service; production remained exact. See [`live-evidence.json`](live-evidence.json).          |
 
-Across all five runs:
+Across all nine runs:
 
-- provider sessions started: **0**;
-- calculated billed session usage: **0 minutes**;
+- provider sessions started: **1**;
+- stable billed usage: **unknown**; the recorded zero is unaccumulated and is
+  not evidence of zero billing;
 - acceptance cases completed: **0 of 6**;
 - no call, audio, transcript, tenant, or customer data was involved.
 
-After each attempt, authenticated readback verified the same strict baseline:
+After each attempt and required containment, authenticated readback verified
+the same strict baseline:
 
 | Check                               | Verified value                                                            |
 | ----------------------------------- | ------------------------------------------------------------------------- |
@@ -140,8 +145,9 @@ blocked and the safer 600-second containment remains visible.
 
 ## Merge rule
 
-**A01 and A03 remain blocked until the released live exercise passes.** Offline
-tests prove only dispatch and safety logic. After live evidence and strict
-rollback are verified, remove the disposable Dockerfile, probe, runner and tests
-before merging; retain only this runbook plus sanitized evidence. If any case
-cannot prove the contract, keep #60 open and return to technical design.
+**A01 and dependent A03 remain blocked pending a redesigned durable
+evidence-retention and cleanup mechanism.** The current runner loses the exact
+case/registration stage on cleanup failure and cannot prove stable usage after
+the temporary service is deleted. Keep PR #71 draft and retain the disposable
+probe until that design is settled; do not infer acceptance from the recorded
+zero or perform another live run with this mechanism.

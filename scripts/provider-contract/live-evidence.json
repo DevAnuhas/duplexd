@@ -1,8 +1,8 @@
 {
   "status": "blocked",
-  "reason": "probe_manifest_readback",
-  "runId": "stage-a-20260921-a01-temp-service-2",
-  "starts": 0,
+  "reason": "cleanup_unverified",
+  "runId": "stage-a-20260921-a01-temp-service-3",
+  "starts": 1,
   "totalBilledMinutes": 0,
   "limits": {
     "starts": 6,
@@ -12,13 +12,8 @@
   },
   "cases": [],
   "cleanup": {
-    "productionUnchanged": true,
-    "probeServiceAbsent": true,
-    "zeroKnownSessions": true
-  },
-  "diagnostic": {
-    "category": "deploy_cli_success",
-    "exitCode": 0,
-    "reconciled": false
+    "productionUnchanged": false,
+    "probeServiceAbsent": false,
+    "zeroKnownSessions": false
   }
 }
