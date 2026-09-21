@@ -16,6 +16,7 @@ import {
   safeRef,
   stableUsageMarker,
   verifyBaseline,
+  verifyProbeManifest,
 } from "../run.mjs"
 
 const baselineManifest = {
@@ -274,6 +275,25 @@ test("rollback requires the exact baseline and clean provider state", () => {
   )
 })
 
+test("probe manifest refuses inherited production secrets", () => {
+  const probe = {
+    agentName: "duplexd-provider-proof",
+    buildId: "11111111-2222-4333-8444-555555555555",
+    imageDigest: `sha256:${"1".repeat(64)}`,
+    minAgents: 0,
+    maxAgents: 1,
+    secretSets: [],
+  }
+  assert.equal(verifyProbeManifest(probe, probe.buildId), true)
+  assert.equal(
+    verifyProbeManifest(
+      { ...probe, secretSets: ["duplexd-agent-secrets"] },
+      probe.buildId
+    ),
+    false
+  )
+})
+
 test("usage cessation requires ended status and real stable-resource samples", () => {
   const ended = {
     endedAt: "2026-09-21T00:01:00.000Z",
@@ -301,10 +321,33 @@ test("runner contains no private-key or temporary-secret mutation", () => {
     /createPrivateKey|revokeKey|probe_secret_set_create/u
   )
   assert.doesNotMatch(source, /\/secrets\/duplexd-provider-proof/u)
-  assert.equal(source.match(/\/v1\/public\/\$\{AGENT\}\/start/gu)?.length, 1)
+  assert.equal(
+    source.match(/\/v1\/public\/\$\{PROBE_AGENT\}\/start/gu)?.length,
+    1
+  )
   assert.match(source, /writeFile\(file, html, \{ mode: 0o600 \}\)/u)
   assert.ok(
     source.indexOf('stage = "cleanup_ambiguous_start_containment"') <
-      source.indexOf('stage = "cleanup_restore_baseline"')
+      source.indexOf('stage = "cleanup_delete_probe_service"')
   )
+})
+
+test("temporary service is absent before deploy, exclusively targeted, deleted, and rechecked", () => {
+  const source = readFileSync("scripts/provider-contract/run.mjs", "utf8")
+  assert.match(source, /stage = "probe_absence_preflight"/u)
+  assert.match(source, /"delete",\s+PROBE_AGENT/gu)
+  assert.match(source, /stage = "cleanup_verify_probe_absent"/u)
+  assert.match(source, /probeServiceAbsent: finalProbeAbsent/u)
+  assert.match(source, /productionUnchanged: finalBaseline/u)
+  assert.doesNotMatch(source, /"deploy",\s+PROD_AGENT/gu)
+  assert.doesNotMatch(source, /\/v1\/agents\/\$\{PROD_AGENT\}/gu)
+  assert.match(
+    source,
+    /readControlPlane\(\s*operatorToken,\s*organization,\s*PROD_AGENT/u
+  )
+  assert.ok(
+    source.indexOf("await cleanup()") > source.indexOf("} catch (error)")
+  )
+  assert.match(source, /process\.once\("SIGINT", onSignal\)/u)
+  assert.match(source, /process\.once\("SIGTERM", onSignal\)/u)
 })

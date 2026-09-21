@@ -16,7 +16,8 @@ import { fileURLToPath } from "node:url"
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..")
 const PROBE_ROOT = join(ROOT, "scripts/provider-contract/probe")
-const AGENT = "duplexd-agent"
+const PROD_AGENT = "duplexd-agent"
+const PROBE_AGENT = "duplexd-provider-proof"
 const ORIGIN = "https://api.pipecat.daily.co"
 const BASELINE = Object.freeze({
   buildId: "3010f496-fd84-4f39-a75c-c4a58a1bd922",
@@ -179,7 +180,7 @@ export function verifyBaseline(manifest, sessions, keys, secretSets) {
       )
   const sets = (secretSets?.body ?? secretSets)?.sets ?? []
   return (
-    manifest.agentName === AGENT &&
+    manifest.agentName === PROD_AGENT &&
     manifest.buildId === BASELINE.buildId &&
     manifest.imageDigest === BASELINE.imageDigest &&
     manifest.minAgents === BASELINE.minAgents &&
@@ -190,6 +191,18 @@ export function verifyBaseline(manifest, sessions, keys, secretSets) {
     active.length === 0 &&
     privateKeys.length === 0 &&
     !sets.some((set) => set.name === "duplexd-provider-proof")
+  )
+}
+
+export function verifyProbeManifest(manifest, buildId) {
+  return (
+    manifest.agentName === PROBE_AGENT &&
+    manifest.buildId === buildId &&
+    /^sha256:[a-f0-9]{64}$/u.test(manifest.imageDigest) &&
+    manifest.imageDigest !== BASELINE.imageDigest &&
+    manifest.minAgents === 0 &&
+    manifest.maxAgents === 1 &&
+    manifest.secretSets.length === 0
   )
 }
 
@@ -338,9 +351,9 @@ async function requestJson(
   return value
 }
 
-async function readControlPlane(operatorToken, organization) {
+async function readControlPlane(operatorToken, organization, agentName) {
   const base = `${ORIGIN}/v1/organizations/${encodeURIComponent(organization)}`
-  const service = await requestJson(`${base}/services/${AGENT}`, {
+  const service = await requestJson(`${base}/services/${agentName}`, {
     token: operatorToken,
   })
   const buildId = service?.body?.deployment?.buildId
@@ -355,9 +368,12 @@ async function readControlPlane(operatorToken, organization) {
   const imageDigest = build?.imageDigest ?? build?.digest
   if (typeof imageDigest !== "string")
     throw new Error("manifest_digest_missing")
-  const sessionValue = await requestJson(`${base}/services/${AGENT}/sessions`, {
-    token: operatorToken,
-  })
+  const sessionValue = await requestJson(
+    `${base}/services/${agentName}/sessions`,
+    {
+      token: operatorToken,
+    }
+  )
   const sessions =
     sessionValue?.sessions ?? sessionValue?.body?.sessions ?? sessionValue
   if (!Array.isArray(sessions)) throw new Error("session_list_invalid")
@@ -375,7 +391,7 @@ async function readControlPlane(operatorToken, organization) {
 }
 
 async function readSession(base, operatorToken, sessionId) {
-  const value = await requestJson(`${base}/services/${AGENT}/sessions`, {
+  const value = await requestJson(`${base}/services/${PROBE_AGENT}/sessions`, {
     token: operatorToken,
   })
   const sessions = value?.sessions ?? value?.body?.sessions ?? value
@@ -574,7 +590,7 @@ async function stopExact(organization, sessionId, retry = false) {
       "cloud",
       "agent",
       "stop",
-      AGENT,
+      PROBE_AGENT,
       "--session-id",
       sessionId,
       "--organization",
@@ -594,7 +610,7 @@ async function deployProbe(organization, salt) {
     [
       "cloud",
       "deploy",
-      AGENT,
+      PROBE_AGENT,
       "--build-dir",
       PROBE_ROOT,
       "--dockerfile",
@@ -629,41 +645,53 @@ async function deployProbe(organization, salt) {
   }
 }
 
-async function restoreBaseline(organization) {
+async function deleteProbe(organization) {
   await runCommand([
     "cloud",
-    "deploy",
-    AGENT,
-    "--build-id",
-    BASELINE.buildId,
-    "--min-agents",
-    String(BASELINE.minAgents),
-    "--max-agents",
-    String(BASELINE.maxAgents),
-    "--secrets",
-    BASELINE.secretSet,
-    "--profile",
-    "agent-1x",
+    "agent",
+    "delete",
+    PROBE_AGENT,
     "--organization",
     organization,
-    "--no-credentials",
     "--force",
-    "--yes",
   ])
 }
 
 async function waitForManifest(
   operatorToken,
   organization,
+  agentName,
   predicate,
   deadline
 ) {
   while (Date.now() < deadline) {
-    const current = await readControlPlane(operatorToken, organization)
+    const current = await readControlPlane(
+      operatorToken,
+      organization,
+      agentName
+    )
     if (predicate(current.manifest)) return current
     await delay(5_000)
   }
   throw new Error("manifest_readback_timeout")
+}
+
+async function probeAbsent(operatorToken, organization) {
+  try {
+    await readControlPlane(operatorToken, organization, PROBE_AGENT)
+    return false
+  } catch (error) {
+    if (error?.message === "provider_http_404") return true
+    throw error
+  }
+}
+
+async function waitForProbeAbsent(operatorToken, organization, deadline) {
+  while (Date.now() < deadline) {
+    if (await probeAbsent(operatorToken, organization)) return true
+    await delay(5_000)
+  }
+  throw new Error("probe_service_delete_unverified")
 }
 
 function billedMinutes(session) {
@@ -678,7 +706,7 @@ function billedMinutes(session) {
 async function main() {
   if (process.argv[2] === "plan") {
     process.stdout.write(
-      `${JSON.stringify({ agent: AGENT, baseline: BASELINE, limits: LIMITS, cases: CASES })}\n`
+      `${JSON.stringify({ agent: PROBE_AGENT, productionAgent: PROD_AGENT, baseline: BASELINE, limits: LIMITS, cases: CASES })}\n`
     )
     return
   }
@@ -721,6 +749,7 @@ async function main() {
   let finalReason
   let failureDiagnostic = null
   let finalBaseline = false
+  let finalProbeAbsent = false
   const controller = new AbortController()
   liveSignal = controller.signal
 
@@ -739,7 +768,11 @@ async function main() {
         let empty = 0
         const deadline = ambiguousStartedAt + LIMITS.caseSeconds * 1_000
         while (Date.now() < deadline && empty < 2) {
-          const state = await readControlPlane(operatorToken, organization)
+          const state = await readControlPlane(
+            operatorToken,
+            organization,
+            PROBE_AGENT
+          )
           const active = state.sessions.filter(
             (session) =>
               session.deploymentId === probeDeploymentId &&
@@ -763,13 +796,22 @@ async function main() {
         )
       }
       if (probeDeployed) {
-        stage = "cleanup_restore_baseline"
-        await restoreBaseline(organization)
+        if (!(await probeAbsent(operatorToken, organization))) {
+          stage = "cleanup_delete_probe_service"
+          await deleteProbe(organization)
+        }
       }
+      stage = "cleanup_verify_probe_absent"
+      finalProbeAbsent = await waitForProbeAbsent(
+        operatorToken,
+        organization,
+        Date.now() + 120_000
+      )
       stage = "cleanup_verify_baseline"
       const state = await waitForManifest(
         operatorToken,
         organization,
+        PROD_AGENT,
         (manifest) =>
           manifest.buildId === BASELINE.buildId &&
           manifest.imageDigest === BASELINE.imageDigest &&
@@ -802,7 +844,11 @@ async function main() {
   process.once("SIGTERM", onSignal)
 
   try {
-    const preflight = await readControlPlane(operatorToken, organization)
+    const preflight = await readControlPlane(
+      operatorToken,
+      organization,
+      PROD_AGENT
+    )
     if (
       !verifyBaseline(
         preflight.manifest,
@@ -813,12 +859,16 @@ async function main() {
     ) {
       throw new Error("baseline_preflight_failed")
     }
+    stage = "probe_absence_preflight"
+    if (!(await probeAbsent(operatorToken, organization))) {
+      throw new Error("probe_service_already_exists")
+    }
     stage = "collector_start"
     collector = await startCollector({ scratch })
     stage = "tunnel_start"
     tunnel = await startTunnel(collector.port)
     stage = "probe_deploy"
-    // Restore even when the CLI deploy succeeds but its response is lost.
+    // Delete even when the CLI deploy succeeds but its response is lost.
     probeDeployed = true
     const reconciledDeploy = await reconcileProbeDeployment({
       deploy: () => deployProbe(organization, salt),
@@ -827,16 +877,9 @@ async function main() {
         return waitForManifest(
           operatorToken,
           organization,
+          PROBE_AGENT,
           (manifest) =>
-            /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(
-              manifest.buildId
-            ) &&
-            manifest.buildId === probeBuildId &&
-            /^sha256:[a-f0-9]{64}$/u.test(manifest.imageDigest) &&
-            manifest.imageDigest !== BASELINE.imageDigest &&
-            manifest.minAgents === 0 &&
-            manifest.maxAgents === 1 &&
-            manifest.secretSets.length === 0 &&
+            verifyProbeManifest(manifest, probeBuildId) &&
             /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(
               manifest.deploymentId
             ),
@@ -849,7 +892,7 @@ async function main() {
       failureDiagnostic = reconciledDeploy.diagnostic
     }
     stage = "provider_ceiling_set"
-    await requestJson(`${ORIGIN}/v1/agents/${AGENT}`, {
+    await requestJson(`${ORIGIN}/v1/agents/${PROBE_AGENT}`, {
       token: operatorToken,
       method: "POST",
       body: { maxSessionDuration: LIMITS.providerSeconds },
@@ -857,6 +900,7 @@ async function main() {
     probeState = await waitForManifest(
       operatorToken,
       organization,
+      PROBE_AGENT,
       (manifest) =>
         manifest.maxSessionDurationSeconds === LIMITS.providerSeconds,
       Date.now() + 120_000
@@ -884,7 +928,7 @@ async function main() {
       ambiguousStartedAt = dispatchedAt
       let start
       try {
-        start = await requestJson(`${ORIGIN}/v1/public/${AGENT}/start`, {
+        start = await requestJson(`${ORIGIN}/v1/public/${PROBE_AGENT}/start`, {
           token: publicKey,
           method: "POST",
           body: {
@@ -928,7 +972,11 @@ async function main() {
           )
           let empty = 0
           while (Date.now() < deadline && empty < 2) {
-            const state = await readControlPlane(operatorToken, organization)
+            const state = await readControlPlane(
+              operatorToken,
+              organization,
+              PROBE_AGENT
+            )
             const active = state.sessions.filter(
               (session) =>
                 session.deploymentId === probeDeploymentId &&
@@ -1104,7 +1152,8 @@ async function main() {
     limits: LIMITS,
     cases: caseEvidence,
     cleanup: {
-      baselineRestored: finalBaseline,
+      productionUnchanged: finalBaseline,
+      probeServiceAbsent: finalProbeAbsent,
       zeroKnownSessions: knownSessions.size === 0,
     },
     ...(failureDiagnostic ? { diagnostic: failureDiagnostic } : {}),

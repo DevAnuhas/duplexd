@@ -1,7 +1,7 @@
 {
   "status": "blocked",
-  "reason": "probe_deploy",
-  "runId": "stage-a-20260921-a01-probe-1",
+  "reason": "probe_manifest_readback",
+  "runId": "stage-a-20260921-a01-probe-2",
   "starts": 0,
   "totalBilledMinutes": 0,
   "limits": {
@@ -14,5 +14,11 @@
   "cleanup": {
     "baselineRestored": true,
     "zeroKnownSessions": true
-  }
+  },
+  "diagnostic": {
+    "category": "deploy_cli_success",
+    "exitCode": 0,
+    "reconciled": false
+  },
+  "safetyFinding": "Same-service update semantics inherited duplexd-agent-secrets; manifest reconciliation refused the deployment. No secret value was accessed or logged, zero sessions started, and cleanup restored the exact baseline."
 }

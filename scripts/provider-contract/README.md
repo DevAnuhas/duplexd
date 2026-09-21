@@ -32,13 +32,14 @@ six starts, and no more than 72 billed session-minutes total.
 Five authorized runs were attempted on 2026-09-21. Every run stopped before
 case 1, so none produced a session-level acceptance observation.
 
-| Run ID                         | Last trustworthy observation                                                                                                                                                                                                                                                           |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `stage-a-20260921-a01`         | Pre-session control-plane handling failed on the provider's split public/private key-list shape. Containment cleanup completed.                                                                                                                                                        |
-| `stage-a-20260921-a01-r2`      | Pre-session aggregate readback failed. Read-only diagnosis found real manifest/build response shapes that the discarded normalizer did not handle. Containment cleanup completed.                                                                                                      |
-| `stage-a-20260921-a01-r3`      | Pre-session execution failed, but the sanitizer had discarded the operation identity. No more specific failure claim is supportable. Containment cleanup completed.                                                                                                                    |
-| `stage-a-20260921-a01-r4`      | The fixed secret-safe stage was `probe_secret_set_create`. Containment cleanup completed.                                                                                                                                                                                              |
-| `stage-a-20260921-a01-probe-1` | The disposable image built successfully in Pipecat Cloud and the deployment was created, but the CLI exited during deployment readiness monitoring. The discarded raw output prevents a narrower claim. Containment cleanup completed. See [`live-evidence.json`](live-evidence.json). |
+| Run ID                         | Last trustworthy observation                                                                                                                                                                                                                                                             |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stage-a-20260921-a01`         | Pre-session control-plane handling failed on the provider's split public/private key-list shape. Containment cleanup completed.                                                                                                                                                          |
+| `stage-a-20260921-a01-r2`      | Pre-session aggregate readback failed. Read-only diagnosis found real manifest/build response shapes that the discarded normalizer did not handle. Containment cleanup completed.                                                                                                        |
+| `stage-a-20260921-a01-r3`      | Pre-session execution failed, but the sanitizer had discarded the operation identity. No more specific failure claim is supportable. Containment cleanup completed.                                                                                                                      |
+| `stage-a-20260921-a01-r4`      | The fixed secret-safe stage was `probe_secret_set_create`. Containment cleanup completed.                                                                                                                                                                                                |
+| `stage-a-20260921-a01-probe-1` | The disposable image built successfully in Pipecat Cloud and the deployment was created, but the CLI exited during deployment readiness monitoring. The discarded raw output prevents a narrower claim. Containment cleanup completed. See [`live-evidence.json`](live-evidence.json).   |
+| `stage-a-20260921-a01-probe-2` | The CLI reported success, but exact manifest reconciliation refused the deployment because same-service update semantics inherited `duplexd-agent-secrets`. No secret value was accessed or logged. Cleanup restored the exact baseline. See [`live-evidence.json`](live-evidence.json). |
 
 Across all five runs:
 
@@ -71,8 +72,9 @@ callbacks needed above.
 
 The request-scoped run ID, case, boot ID, callback URL, and 256-bit callback
 secret are acceptable only because the image is separately released, runs on
-the existing no-traffic service for this bounded exercise, and is rolled back
-immediately. The collector rejects a callback unless its HMAC and exact
+the temporary `duplexd-provider-proof` service for this bounded exercise, and
+that service is deleted immediately. The production `duplexd-agent` service is
+read-only throughout. The collector rejects a callback unless its HMAC and exact
 run/case/boot/session correlation match. No provider secret set or temporary
 private API key is created.
 
@@ -110,13 +112,15 @@ export PIPECAT_ORGANIZATION=...
 node scripts/provider-contract/run.mjs live
 ```
 
-The runner fails closed unless the baseline is exact and no session is active.
+The runner fails closed unless the production baseline is exact, it has no
+active session, and the temporary service is absent.
 A nonzero deploy CLI exit is reconciled against bounded authoritative manifest
 readback for that exact build; it is never retried. Evidence retains only the
 CLI exit code, an allowlisted failure category, a salted build reference, and
 whether readback reconciled the outcome. Raw CLI output and provider
 identifiers are never written.
-It deploys the probe with min/max 0/1 and no secret set, applies and reads back
+It creates the temporary probe service with min/max 0/1 and no secret set,
+refuses inherited secrets, applies and reads back
 the 600-second provider ceiling before case 1, performs at most six serial
 starts, never retries an ambiguous start, and caps the operator envelope at 720
 seconds per case and calculated usage at 72 billed minutes. For the two ceiling
@@ -124,9 +128,10 @@ cases it requires both agent and browser ejection plus independently stable
 provider ended-state/resource metrics. A second exact-session stop must report
 `404` and is accepted only after that reconciliation.
 
-On success, failure, or signal, cleanup stops every known exact session, uses
-the official CLI to redeploy the pinned baseline, and requires authenticated
-readback of the exact build/digest, min/max 0/3, `duplexd-agent-secrets`, absent
+On success, failure, or signal, cleanup stops every known exact probe session,
+uses the official CLI to delete the temporary service, verifies it absent, and
+requires authenticated readback of the unchanged production build/digest,
+min/max 0/3, `duplexd-agent-secrets`, absent
 duration override, zero active sessions, zero private keys, and absent
 `duplexd-provider-proof`. If cleanup cannot prove those facts, the result stays
 blocked and the safer 600-second containment remains visible.
