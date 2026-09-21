@@ -9,6 +9,7 @@
     "db:migrate": "node --experimental-strip-types src/db/migrate.ts",
     "dev": "next dev",
     "lint": "eslint --max-warnings=0 .",
+    "seed:riley": "node --env-file-if-exists=.env.local --experimental-strip-types scripts/seed-riley.ts",
     "start": "rm -rf .next/standalone/apps/workspace/.next/static && cp -R .next/static .next/standalone/apps/workspace/.next/static && node .next/standalone/apps/workspace/server.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json"
