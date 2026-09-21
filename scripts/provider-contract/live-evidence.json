@@ -1,0 +1,18 @@
+{
+  "status": "blocked",
+  "reason": "probe_deploy",
+  "runId": "stage-a-20260921-a01-probe-1",
+  "starts": 0,
+  "totalBilledMinutes": 0,
+  "limits": {
+    "starts": 6,
+    "providerSeconds": 600,
+    "caseSeconds": 720,
+    "billedMinutes": 72
+  },
+  "cases": [],
+  "cleanup": {
+    "baselineRestored": true,
+    "zeroKnownSessions": true
+  }
+}

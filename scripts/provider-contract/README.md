@@ -29,17 +29,18 @@ six starts, and no more than 72 billed session-minutes total.
 
 ## What was observed
 
-Four authorized runs were attempted on 2026-09-21. Every run stopped before
+Five authorized runs were attempted on 2026-09-21. Every run stopped before
 case 1, so none produced a session-level acceptance observation.
 
-| Run ID                    | Last trustworthy observation                                                                                                                                                      |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `stage-a-20260921-a01`    | Pre-session control-plane handling failed on the provider's split public/private key-list shape. Containment cleanup completed.                                                   |
-| `stage-a-20260921-a01-r2` | Pre-session aggregate readback failed. Read-only diagnosis found real manifest/build response shapes that the discarded normalizer did not handle. Containment cleanup completed. |
-| `stage-a-20260921-a01-r3` | Pre-session execution failed, but the sanitizer had discarded the operation identity. No more specific failure claim is supportable. Containment cleanup completed.               |
-| `stage-a-20260921-a01-r4` | The fixed secret-safe stage was `probe_secret_set_create`. Containment cleanup completed.                                                                                         |
+| Run ID                         | Last trustworthy observation                                                                                                                                                                                                                                                           |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stage-a-20260921-a01`         | Pre-session control-plane handling failed on the provider's split public/private key-list shape. Containment cleanup completed.                                                                                                                                                        |
+| `stage-a-20260921-a01-r2`      | Pre-session aggregate readback failed. Read-only diagnosis found real manifest/build response shapes that the discarded normalizer did not handle. Containment cleanup completed.                                                                                                      |
+| `stage-a-20260921-a01-r3`      | Pre-session execution failed, but the sanitizer had discarded the operation identity. No more specific failure claim is supportable. Containment cleanup completed.                                                                                                                    |
+| `stage-a-20260921-a01-r4`      | The fixed secret-safe stage was `probe_secret_set_create`. Containment cleanup completed.                                                                                                                                                                                              |
+| `stage-a-20260921-a01-probe-1` | The disposable image built successfully in Pipecat Cloud and the deployment was created, but the CLI exited during deployment readiness monitoring. The discarded raw output prevents a narrower claim. Containment cleanup completed. See [`live-evidence.json`](live-evidence.json). |
 
-Across all four runs:
+Across all five runs:
 
 - provider sessions started: **0**;
 - calculated billed session usage: **0 minutes**;
@@ -110,6 +111,9 @@ node scripts/provider-contract/run.mjs live
 ```
 
 The runner fails closed unless the baseline is exact and no session is active.
+If probe deployment fails, evidence retains only the CLI exit code, an
+allowlisted failure category, and a salted build reference. Raw CLI output and
+provider identifiers are never written.
 It deploys the probe with min/max 0/1 and no secret set, applies and reads back
 the 600-second provider ceiling before case 1, performs at most six serial
 starts, never retries an ambiguous start, and caps the operator envelope at 720

@@ -70,6 +70,34 @@ export function safeRef(salt, value) {
     .slice(0, 24)
 }
 
+export function deployFailureDiagnostic(
+  output,
+  { code, timedOut = false, salt }
+) {
+  const plain = output.replace(/\x1b\[[0-?]*[ -/]*[@-~]/gu, "")
+  const buildId = plain.match(
+    /\bBuild (?:ID|started):\s*([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})\b/iu
+  )?.[1]
+  let category = "deploy_cli_exit"
+  if (timedOut) category = "deploy_cli_timeout"
+  else if (/Build failed:/iu.test(plain)) category = "cloud_build_failed"
+  else if (/Agent deployment failed/iu.test(plain))
+    category = "deployment_rejected"
+  else if (/Error checking deployment status/iu.test(plain))
+    category = "deployment_status_read_failed"
+  else if (/Deployment is degraded:/iu.test(plain))
+    category = "deployment_degraded"
+  else if (/Deployment did not become available/iu.test(plain))
+    category = "deployment_unavailable"
+  else if (/A problem occured during deployment/iu.test(plain))
+    category = "deployment_request_failed"
+  return {
+    category,
+    exitCode: Number.isInteger(code) ? code : null,
+    ...(buildId ? { buildRef: safeRef(salt, buildId) } : {}),
+  }
+}
+
 export function decodeClaims(token) {
   const parts = token?.split(".")
   if (!parts || parts.length < 2) throw new Error("daily_claims_invalid")
@@ -228,12 +256,14 @@ async function runCommand(
       }
     )
     let output = ""
+    let timedOut = false
     for (const stream of [child.stdout, child.stderr]) {
       stream.on("data", (chunk) => {
         if (output.length < 32_000) output += chunk.toString("utf8")
       })
     }
     const timer = setTimeout(() => {
+      timedOut = true
       try {
         process.kill(-child.pid, "SIGTERM")
       } catch {}
@@ -257,7 +287,7 @@ async function runCommand(
     child.once("exit", (code) => {
       clearTimeout(timer)
       signal?.removeEventListener("abort", abort)
-      if (code === 0 || allowFailure) resolvePromise({ code, output })
+      if (code === 0 || allowFailure) resolvePromise({ code, output, timedOut })
       else reject(new Error("cli_command_failed"))
     })
   })
@@ -540,27 +570,39 @@ async function stopExact(organization, sessionId, retry = false) {
   return retry ? 404 : 200
 }
 
-async function deployProbe(organization) {
-  await runCommand([
-    "cloud",
-    "deploy",
-    AGENT,
-    "--build-dir",
-    PROBE_ROOT,
-    "--dockerfile",
-    "Dockerfile",
-    "--min-agents",
-    "0",
-    "--max-agents",
-    "1",
-    "--profile",
-    "agent-1x",
-    "--organization",
-    organization,
-    "--no-credentials",
-    "--force",
-    "--yes",
-  ])
+async function deployProbe(organization, salt) {
+  const result = await runCommand(
+    [
+      "cloud",
+      "deploy",
+      AGENT,
+      "--build-dir",
+      PROBE_ROOT,
+      "--dockerfile",
+      "Dockerfile",
+      "--min-agents",
+      "0",
+      "--max-agents",
+      "1",
+      "--profile",
+      "agent-1x",
+      "--organization",
+      organization,
+      "--no-credentials",
+      "--force",
+      "--yes",
+    ],
+    { allowFailure: true }
+  )
+  if (result.code !== 0) {
+    const error = new Error("probe_deploy_failed")
+    error.deployDiagnostic = deployFailureDiagnostic(result.output, {
+      code: result.code,
+      timedOut: result.timedOut,
+      salt,
+    })
+    throw error
+  }
 }
 
 async function restoreBaseline(organization) {
@@ -653,6 +695,7 @@ async function main() {
   await chmod(scratch, 0o700)
   let finalStatus
   let finalReason
+  let failureDiagnostic = null
   let finalBaseline = false
   const controller = new AbortController()
   liveSignal = controller.signal
@@ -753,7 +796,7 @@ async function main() {
     stage = "probe_deploy"
     // Restore even when the CLI deploy succeeds but its response is lost.
     probeDeployed = true
-    await deployProbe(organization)
+    await deployProbe(organization, salt)
 
     stage = "probe_manifest_readback"
     let probeState = await waitForManifest(
@@ -1006,9 +1049,12 @@ async function main() {
     }
     finalStatus = "pass"
     finalReason = "six_cases_observed"
-  } catch {
+  } catch (error) {
     finalStatus = "blocked"
     finalReason = stage
+    if (stage === "probe_deploy" && error?.deployDiagnostic) {
+      failureDiagnostic = error.deployDiagnostic
+    }
   }
 
   liveSignal = null
@@ -1030,6 +1076,7 @@ async function main() {
       baselineRestored: finalBaseline,
       zeroKnownSessions: knownSessions.size === 0,
     },
+    ...(failureDiagnostic ? { diagnostic: failureDiagnostic } : {}),
   }
   try {
     await writeFile(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, {

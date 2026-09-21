@@ -9,6 +9,7 @@ import {
   acceptProbeCallback,
   assertBoundedClaims,
   decodeClaims,
+  deployFailureDiagnostic,
   isNotFoundStop,
   manifestFacts,
   safeRef,
@@ -75,6 +76,31 @@ test("session references are deterministic, salted, and non-reversible", () => {
     safeRef("salt-b", "raw-session")
   )
   assert.doesNotMatch(safeRef("salt-a", "raw-session"), /raw-session/u)
+})
+
+test("deploy failures retain only an allowlisted category, exit code, and safe build reference", () => {
+  const rawBuildId = "11111111-2222-4333-8444-555555555555"
+  const credentialCanary = "private-credential-canary"
+  const diagnostic = deployFailureDiagnostic(
+    `\u001b[36mBuild started: ${rawBuildId}\u001b[0m\nDeployment is degraded: ${credentialCanary}`,
+    { code: 1, salt: "test-salt" }
+  )
+  assert.deepEqual(diagnostic, {
+    category: "deployment_degraded",
+    exitCode: 1,
+    buildRef: safeRef("test-salt", rawBuildId),
+  })
+  const serialized = JSON.stringify(diagnostic)
+  assert.doesNotMatch(serialized, new RegExp(rawBuildId, "u"))
+  assert.doesNotMatch(serialized, new RegExp(credentialCanary, "u"))
+  assert.deepEqual(
+    deployFailureDiagnostic("unrecognized provider output secret-canary", {
+      code: null,
+      timedOut: true,
+      salt: "test-salt",
+    }),
+    { category: "deploy_cli_timeout", exitCode: null }
+  )
 })
 
 test("callback authentication binds run, case, boot, and exact session", () => {
