@@ -60,24 +60,75 @@ After each attempt, authenticated readback verified the same strict baseline:
 | Private API keys                    | 0                                                                         |
 | `duplexd-provider-proof` secret set | absent                                                                    |
 
-## Decision
+## Accepted replacement
 
-None of #60's acceptance claims were proven. Local tests and synthetic fixtures
-cannot close that gap, and adding probe activation, callbacks, collectors,
-provider adapters, or fault modes to the production agent would create a
-second platform rather than evidence. Those changes were removed.
+None of #60's acceptance claims have been proven yet. Local tests cannot close
+that gap. The accepted replacement is a purpose-built disposable image under
+`scripts/provider-contract/probe`; it does not import or modify the production
+agent. It exposes only the six deterministic case behaviors and exact-session
+callbacks needed above.
 
-**A01 is blocked, not passed. A03 remains blocked.** PR #67 references #60 and
-must not close it.
+The request-scoped run ID, case, boot ID, callback URL, and 256-bit callback
+secret are acceptable only because the image is separately released, runs on
+the existing no-traffic service for this bounded exercise, and is rolled back
+immediately. The collector rejects a callback unless its HMAC and exact
+run/case/boot/session correlation match. No provider secret set or temporary
+private API key is created.
 
-Before any new implementation, the technical design must choose one of two
-paths:
+`run.mjs` is the single operator program. It uses the authenticated official
+Pipecat CLI for build/deploy, exact-session stop, status and pinned-build
+rollback. Direct HTTP is limited to public-key start and exact machine-readable
+readbacks that the CLI does not provide. It also creates one runtime-only,
+mode-600 browser witness page using the actual room-scoped Daily token. The
+witness records only join/ejection booleans and timestamps; the token, room URL,
+callback secrets, raw session IDs and provider responses never enter evidence.
 
-1. explicitly authorize a purpose-built, disposable, non-production probe
-   image on the existing no-traffic test service, kept outside the production
-   agent and limited to the six evidence cases; or
-2. revise A03's lifecycle contract and #60 acceptance criteria to depend only
-   on guarantees observable through official Pipecat surfaces.
+## Offline and live commands
 
-Until that decision is accepted, there is no honest fifth run and no provider
-contract implementation to merge.
+Offline checks do not contact or mutate the provider:
+
+```sh
+node scripts/provider-contract/run.mjs plan
+node --test scripts/provider-contract/test/run.test.mjs
+cd scripts/provider-contract/probe
+PYTHONPATH=. ../../../agent/.venv/bin/python -m pytest test_bot.py -q
+```
+
+The live command remains blocked until the coordinator releases an exact
+committed head. At release time the operator supplies existing credentials with
+shell tracing disabled:
+
+```sh
+set +x
+export PROVIDER_PROOF_LIVE_RELEASE=stage-a-disposable-probe-release
+export PROVIDER_PROOF_RUN_ID=...
+export PROVIDER_PROOF_EVIDENCE_PATH=/absolute/mode-600/path.json
+export PIPECAT_API_KEY=...          # existing public start key
+export PIPECAT_OPERATOR_TOKEN=...  # existing CLI/OAuth operator token
+export PIPECAT_ORGANIZATION=...
+node scripts/provider-contract/run.mjs live
+```
+
+The runner fails closed unless the baseline is exact and no session is active.
+It deploys the probe with min/max 0/1 and no secret set, applies and reads back
+the 600-second provider ceiling before case 1, performs at most six serial
+starts, never retries an ambiguous start, and caps the operator envelope at 720
+seconds per case and calculated usage at 72 billed minutes. For the two ceiling
+cases it requires both agent and browser ejection plus independently stable
+provider ended-state/resource metrics. A second exact-session stop must report
+`404` and is accepted only after that reconciliation.
+
+On success, failure, or signal, cleanup stops every known exact session, uses
+the official CLI to redeploy the pinned baseline, and requires authenticated
+readback of the exact build/digest, min/max 0/3, `duplexd-agent-secrets`, absent
+duration override, zero active sessions, zero private keys, and absent
+`duplexd-provider-proof`. If cleanup cannot prove those facts, the result stays
+blocked and the safer 600-second containment remains visible.
+
+## Merge rule
+
+**A01 and A03 remain blocked until the released live exercise passes.** Offline
+tests prove only dispatch and safety logic. After live evidence and strict
+rollback are verified, remove the disposable Dockerfile, probe, runner and tests
+before merging; retain only this runbook plus sanitized evidence. If any case
+cannot prove the contract, keep #60 open and return to technical design.
