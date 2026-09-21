@@ -968,6 +968,57 @@ test("ControlPlaneClient uses exact management endpoints and normalized request 
   )
 })
 
+test("ControlPlaneClient normalizes OAuth key buckets and selects the exact private proof key for revocation", async () => {
+  const calls = []
+  const responses = [
+    jsonResponse(200, {
+      public: [
+        {
+          id: "public-key-id",
+          metadata: { name: "Existing public key" },
+          type: "public",
+        },
+      ],
+      private: [
+        {
+          id: "private/key-id",
+          metadata: { name: "Stage A provider proof" },
+          type: "private",
+        },
+      ],
+    }),
+    jsonResponse(204, null),
+  ]
+  const client = new ControlPlaneClient({
+    operatorToken: "operator-secret",
+    organization: "org-name",
+    fetchImpl: async (url, options) => {
+      calls.push({ url: String(url), options })
+      return responses.shift()
+    },
+  })
+
+  const keys = await client.listKeys()
+  assert.deepEqual(keys, [
+    { id: "public-key-id", name: "Existing public key", type: "public" },
+    {
+      id: "private/key-id",
+      name: "Stage A provider proof",
+      type: "private",
+    },
+  ])
+  const temporary = keys.filter(
+    (key) => key.name === "Stage A provider proof" && key.type === "private"
+  )
+  assert.equal(temporary.length, 1)
+  await client.revokeKey(temporary[0].id)
+  assert.equal(
+    calls[1].url,
+    "https://api.pipecat.daily.co/v1/organizations/org-name/apiKeys/private%2Fkey-id"
+  )
+  assert.equal(calls[1].options.method, "DELETE")
+})
+
 test("ProviderClient does not retry and redacts transport/provider failures", async () => {
   const credential = "credential-canary"
   const providerBody = "provider-body-canary"

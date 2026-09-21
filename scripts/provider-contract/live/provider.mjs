@@ -74,6 +74,26 @@ function digestFromImage(value) {
   return match?.[1]
 }
 
+function normalizeApiKey(value, expectedType) {
+  const metadata =
+    value?.metadata !== null && typeof value?.metadata === "object"
+      ? value.metadata
+      : {}
+  const type = requiredString(value, ["type"], "API key type")
+  if (expectedType !== undefined && type !== expectedType) {
+    throw new Error("Pipecat API-key type does not match its list")
+  }
+  return {
+    id: requiredString(value, ["id", "apiKeyId"], "API key ID"),
+    name: requiredString(
+      { name: value?.name ?? metadata.name },
+      ["name"],
+      "API key name"
+    ),
+    type,
+  }
+}
+
 export function normalizeManifest(value) {
   const source = serviceBody(value)
   const deployment =
@@ -352,13 +372,14 @@ export class ControlPlaneClient {
     })
     const root = value?.body ?? value
     const keys = root?.apiKeys ?? root?.keys
-    if (!Array.isArray(keys))
+    if (Array.isArray(keys)) return keys.map((key) => normalizeApiKey(key))
+    if (!Array.isArray(root?.public) || !Array.isArray(root?.private)) {
       throw new Error("Pipecat API-key response is invalid")
-    return keys.map((key) => ({
-      id: requiredString(key, ["id", "apiKeyId"], "API key ID"),
-      name: requiredString(key, ["name"], "API key name"),
-      type: requiredString(key, ["type"], "API key type"),
-    }))
+    }
+    return [
+      ...root.public.map((key) => normalizeApiKey(key, "public")),
+      ...root.private.map((key) => normalizeApiKey(key, "private")),
+    ]
   }
 
   async revokeKey(keyId) {
