@@ -17,16 +17,19 @@ const CASES = [
 function commands() {
   return {
     collector:
-      "node scripts/provider-contract/live/collector.mjs # with secret/run/cases in environment",
-    tunnel: "ngrok http http://127.0.0.1:<collector-port>",
+      "owned internally by node scripts/provider-contract/live/execute.mjs execute",
+    tunnel:
+      "owned internally by the same executable and destroyed during cleanup",
     probeDeploy:
-      "cd agent && uv run pipecat cloud deploy duplexd-agent --build-dir . --dockerfile Dockerfile --min-agents 0 --max-agents 1 --secrets duplexd-agent-secrets --profile agent-1x",
+      "cd agent && uv run pipecat cloud deploy duplexd-agent --build-dir . --dockerfile Dockerfile --min-agents 0 --max-agents 1 --secrets duplexd-provider-proof --profile agent-1x --organization $PIPECAT_ORGANIZATION --force --yes",
     setCeiling:
-      "Dashboard/private API: set maxSessionDuration=600; then read back maxSessionDurationSeconds=600 before starts",
+      "live executable sets maxSessionDuration=600 and requires maxSessionDurationSeconds=600 readback before starts",
     rollback:
-      "cd agent && uv run pipecat cloud deploy duplexd-agent --build-id 3010f496 --min-agents 0 --max-agents 3 --secrets duplexd-agent-secrets --profile agent-1x",
+      "authenticated control-plane restore uses full build 3010f496-fd84-4f39-a75c-c4a58a1bd922, min0/max3, and duplexd-agent-secrets",
     rollbackGate:
-      "Read back buildId/imageDigest/scaling, require maxSessionDurationSeconds absent, zero sessions, and temporary private key absent",
+      "Read back full buildId/imageDigest/scaling/original secret set, require duration absent, zero sessions, private key absent, and duplexd-provider-proof absent",
+    execute:
+      "node scripts/provider-contract/live/execute.mjs execute # only with all explicitly released environment gates",
   }
 }
 
@@ -38,17 +41,17 @@ async function main() {
     )
     return
   }
-  if (command === "verify-rollback" && paths.length === 3) {
-    const [manifest, sessions, keys] = await Promise.all(
+  if (command === "verify-rollback" && paths.length === 4) {
+    const [manifest, sessions, keys, secretSets] = await Promise.all(
       paths.map(async (path) => JSON.parse(await readFile(path, "utf8")))
     )
-    const result = verifyRollback({ manifest, sessions, keys })
+    const result = verifyRollback({ manifest, sessions, keys, secretSets })
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
     process.exitCode = result.ok ? 0 : 1
     return
   }
   throw new Error(
-    "Usage: preflight.mjs plan | verify-rollback <manifest.json> <sessions.json> <keys.json>"
+    "Usage: preflight.mjs plan | verify-rollback <manifest.json> <sessions.json> <keys.json> <secret-sets.json>"
   )
 }
 

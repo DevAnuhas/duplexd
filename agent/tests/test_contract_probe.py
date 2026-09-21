@@ -27,6 +27,21 @@ def _secret() -> str:
     return base64.urlsafe_b64encode(b"x" * 32).decode().rstrip("=")
 
 
+def _activation_secret() -> str:
+    return base64.urlsafe_b64encode(b"a" * 32).decode().rstrip("=")
+
+
+def _activation_environment(**overrides: str) -> dict[str, str]:
+    environment = {
+        "PROVIDER_CONTRACT_PROBE_ENABLED": "stage-a-provider-proof",
+        "PROVIDER_CONTRACT_PROBE_RUN_ID": "run-12345678",
+        "PROVIDER_CONTRACT_PROBE_CALLBACK_URL": "https://collector.example/probe-events",
+        "PROVIDER_CONTRACT_PROBE_ACTIVATION_SECRET": _activation_secret(),
+    }
+    environment.update(overrides)
+    return environment
+
+
 def _probe_body(**overrides: object) -> dict[str, object]:
     probe: dict[str, object] = {
         "version": 1,
@@ -38,7 +53,27 @@ def _probe_body(**overrides: object) -> dict[str, object]:
         "callbackSecret": _secret(),
     }
     probe.update(overrides)
+    message = "\n".join(
+        str(probe[field])
+        for field in (
+            "version",
+            "runId",
+            "caseId",
+            "bootId",
+            "mode",
+            "callbackUrl",
+            "callbackSecret",
+        )
+    ).encode()
+    probe.setdefault(
+        "activationProof",
+        hmac.new(b"a" * 32, message, hashlib.sha256).hexdigest(),
+    )
     return {"providerContractProbe": probe}
+
+
+def _parse(body: object) -> ContractProbeConfig | None:
+    return parse_contract_probe(body, environment=_activation_environment())
 
 
 def _runner_args(
@@ -68,10 +103,70 @@ def _jwt(properties: object) -> str:
 
 
 def test_probe_is_absent_unless_the_explicit_gate_is_present() -> None:
-    assert parse_contract_probe(None) is None
-    assert parse_contract_probe([]) is None
-    assert parse_contract_probe({}) is None
-    assert parse_contract_probe({"providerContractProbeUnrelated": {}}) is None
+    assert parse_contract_probe(None, environment={}) is None
+    assert parse_contract_probe([], environment={}) is None
+    assert parse_contract_probe({}, environment={}) is None
+    assert parse_contract_probe({"providerContractProbeUnrelated": {}}, environment={}) is None
+
+
+def test_probe_body_is_rejected_when_out_of_band_activation_is_absent() -> None:
+    with pytest.raises(AgentStartupError, match="not authorized"):
+        parse_contract_probe(_probe_body(), environment={})
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "PROVIDER_CONTRACT_PROBE_ENABLED",
+        "PROVIDER_CONTRACT_PROBE_RUN_ID",
+        "PROVIDER_CONTRACT_PROBE_CALLBACK_URL",
+        "PROVIDER_CONTRACT_PROBE_ACTIVATION_SECRET",
+    ],
+)
+def test_partial_out_of_band_activation_fails_closed(missing: str) -> None:
+    environment = _activation_environment()
+    del environment[missing]
+    with pytest.raises(AgentStartupError, match="not authorized"):
+        parse_contract_probe(_probe_body(), environment=environment)
+
+
+@pytest.mark.parametrize(
+    ("body_overrides", "environment_overrides"),
+    [
+        ({"runId": "other-run-1234"}, {}),
+        ({"callbackUrl": "https://attacker.example/probe-events"}, {}),
+        ({"caseId": "other_case"}, {}),
+        ({"bootId": "other-boot-1234"}, {}),
+        ({"mode": "no_register_join_wait"}, {}),
+        ({"callbackSecret": base64.urlsafe_b64encode(b"z" * 32).decode().rstrip("=")}, {}),
+        ({}, {"PROVIDER_CONTRACT_PROBE_ACTIVATION_SECRET": _secret()}),
+    ],
+)
+def test_activation_proof_binds_exact_config_and_out_of_band_values(
+    body_overrides: dict[str, object], environment_overrides: dict[str, str]
+) -> None:
+    body = _probe_body()
+    cast(dict[str, object], body["providerContractProbe"]).update(body_overrides)
+    with pytest.raises(AgentStartupError, match="not authorized"):
+        parse_contract_probe(
+            body,
+            environment=_activation_environment(**environment_overrides),
+        )
+
+
+def test_body_only_activation_cannot_authorize_an_ssrf_callback() -> None:
+    body = _probe_body(
+        callbackUrl="https://169.254.169.254/latest/meta-data",
+        callbackSecret=_activation_secret(),
+    )
+    with pytest.raises(AgentStartupError, match="not authorized") as captured:
+        parse_contract_probe(body, environment={})
+    rendered = "".join(
+        traceback.format_exception(
+            type(captured.value), captured.value, captured.value.__traceback__
+        )
+    )
+    assert _activation_secret() not in rendered
 
 
 @pytest.mark.parametrize(
@@ -94,7 +189,7 @@ def test_invalid_probe_configuration_fails_closed_without_echoing_secrets(
     with pytest.raises(
         AgentStartupError, match="provider contract probe configuration is invalid"
     ) as captured:
-        parse_contract_probe(_probe_body(**overrides))
+        _parse(_probe_body(**overrides))
 
     message = str(captured.value)
     if secret_canary is not None:
@@ -109,7 +204,7 @@ def test_invalid_probe_configuration_fails_closed_without_echoing_secrets(
 
 
 def test_valid_probe_configuration_is_parsed_and_decodes_exact_secret() -> None:
-    config = parse_contract_probe(_probe_body())
+    config = _parse(_probe_body())
 
     assert isinstance(config, ContractProbeConfig)
     assert config.mode == "register_pause_before_join"
@@ -124,7 +219,7 @@ async def test_callback_signs_canonical_body_and_sanitizes_daily_claims(event: s
         requests.append(request)
         return httpx.Response(204)
 
-    config = cast(ContractProbeConfig, parse_contract_probe(_probe_body()))
+    config = cast(ContractProbeConfig, _parse(_probe_body()))
     token = _jwt(
         {
             "exp": 1_900_000_000,
@@ -184,7 +279,7 @@ async def test_callback_failure_does_not_expose_secret_or_provider_body(
     monkeypatch.setattr("duplexd_agent.contract_probe.asyncio.sleep", no_sleep)
     config = cast(
         ContractProbeConfig,
-        parse_contract_probe(_probe_body(callbackSecret=secret)),
+        _parse(_probe_body(callbackSecret=secret)),
     )
     async with ProbeCallback(
         config,
@@ -215,7 +310,7 @@ async def test_pause_before_join_registers_without_creating_transport(
         raise AssertionError("pause-before-join must not create a transport")
 
     monkeypatch.setattr(ProbeCallback, "send", send)
-    config = cast(ContractProbeConfig, parse_contract_probe(_probe_body()))
+    config = cast(ContractProbeConfig, _parse(_probe_body()))
 
     with pytest.raises(RuntimeError, match="registered-and-paused"):
         await run_contract_probe(
@@ -242,7 +337,7 @@ async def test_no_registration_mode_skips_callback_before_transport(
     monkeypatch.setattr(ProbeCallback, "send", send)
     config = cast(
         ContractProbeConfig,
-        parse_contract_probe(_probe_body(mode="no_register_join_wait")),
+        _parse(_probe_body(mode="no_register_join_wait")),
     )
 
     with pytest.raises(RuntimeError, match="transport-boundary"):
@@ -266,7 +361,7 @@ async def test_probe_requires_provider_session_correlation_before_callback(
         send_called = True
 
     monkeypatch.setattr(ProbeCallback, "send", send)
-    config = cast(ContractProbeConfig, parse_contract_probe(_probe_body()))
+    config = cast(ContractProbeConfig, _parse(_probe_body()))
 
     with pytest.raises(AgentStartupError, match="requires runner session_id"):
         await run_contract_probe(
@@ -298,6 +393,8 @@ async def test_bootstrap_probe_bypasses_customer_and_model_surfaces(
         raise AssertionError("patched probe must bypass ordinary transport creation")
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    for key, value in _activation_environment().items():
+        monkeypatch.setenv(key, value)
     monkeypatch.setattr(bot_module, "run_contract_probe", run_probe)
     args = _runner_args(_probe_body())
 

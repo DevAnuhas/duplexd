@@ -1,5 +1,7 @@
 import { chmod, rename, writeFile } from "node:fs/promises"
 
+import { validateEvidence } from "../lib/contract.mjs"
+
 const SAFE_REFERENCE = /^sha256:[a-f0-9]{64}$/u
 const FORBIDDEN_KEYS = new Set([
   "authorization",
@@ -50,4 +52,62 @@ export async function writeSecretFreeEvidence(path, value, options) {
   })
   await chmod(temporary, 0o600)
   await rename(temporary, path)
+}
+
+export function buildLiveEvidence({
+  runId,
+  cases,
+  probeManifest,
+  recordedAt = new Date().toISOString(),
+}) {
+  const evidence = {
+    schemaVersion: 1,
+    runId,
+    observationMode: "live",
+    recordedAt,
+    sourceFacts: [
+      {
+        kind: "documented",
+        claim: "Pipecat start returns sessionId, dailyRoom, and dailyToken.",
+        source:
+          "https://docs.pipecat.ai/api-reference/pipecat-cloud/rest-reference/endpoint/start",
+        checkedAt: "2026-09-21T09:00:00.000Z",
+      },
+      {
+        kind: "documented",
+        claim: "Pipecat exposes exact-session status and resource metrics.",
+        source:
+          "https://docs.pipecat.ai/api-reference/pipecat-cloud/rest-reference/endpoint/agent-get-session",
+        checkedAt: "2026-09-21T09:00:00.000Z",
+      },
+      {
+        kind: "documented",
+        claim: "Pipecat supports a platform maximum session duration.",
+        source:
+          "https://docs.pipecat.ai/pipecat-cloud/fundamentals/active-sessions#session-duration-limits",
+        checkedAt: "2026-09-21T09:00:00.000Z",
+      },
+    ],
+    limits: {
+      startupSeconds: 120,
+      wholeTestSeconds: 600,
+      providerMaxSessionSeconds: 600,
+    },
+    prerequisites: {
+      publicStartKeyAvailable: true,
+      privateManagementKeyAvailable: true,
+      baseImageCeilingSupported: true,
+      deploymentCeilingVerified: true,
+      sessionStatusAccessAvailable: true,
+      usageEvidenceAccessAvailable: true,
+    },
+    ...(probeManifest === undefined ? {} : { probeManifest }),
+    cases,
+  }
+  assertSecretFreeEvidence(evidence)
+  const validation = validateEvidence(evidence)
+  if (!validation.ok || validation.verdict !== "pass") {
+    throw new Error(`live evidence is invalid: ${validation.errors.join("; ")}`)
+  }
+  return evidence
 }

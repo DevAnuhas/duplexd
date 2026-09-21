@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import hashlib
 import hmac
 import json
+import os
 import secrets
 import time
 from collections.abc import Awaitable, Callable
@@ -53,6 +55,7 @@ class ContractProbeConfig(BaseModel):
     mode: ProbeMode
     callback_url: HttpUrl = Field(alias="callbackUrl")
     callback_secret: str = Field(alias="callbackSecret", min_length=43, max_length=128, repr=False)
+    activation_proof: str = Field(alias="activationProof", pattern=r"^[a-f0-9]{64}$", repr=False)
 
     @field_validator("callback_url")
     @classmethod
@@ -66,7 +69,7 @@ class ContractProbeConfig(BaseModel):
     def require_256_bit_secret(cls, value: str) -> str:
         try:
             raw = base64.urlsafe_b64decode(f"{value}{'=' * (-len(value) % 4)}")
-        except ValueError as error:
+        except (ValueError, binascii.Error) as error:
             raise ValueError("contract probe secret must be base64url") from error
         if len(raw) != 32:
             raise ValueError("contract probe secret must decode to 32 bytes")
@@ -78,17 +81,60 @@ class ContractProbeConfig(BaseModel):
         )
 
 
-def parse_contract_probe(body: object) -> ContractProbeConfig | None:
-    """Return the gated probe config, or ``None`` for an ordinary call."""
+def _activation_message(config: ContractProbeConfig) -> bytes:
+    return "\n".join(
+        (
+            str(config.version),
+            config.run_id,
+            config.case_id,
+            config.boot_id,
+            config.mode,
+            str(config.callback_url),
+            config.callback_secret,
+        )
+    ).encode()
+
+
+def parse_contract_probe(
+    body: object, *, environment: dict[str, str] | os._Environ[str] = os.environ
+) -> ContractProbeConfig | None:
+    """Return an out-of-band-authorized probe config, or ``None`` for an ordinary call."""
 
     if not isinstance(body, dict) or "providerContractProbe" not in body:
         return None
     try:
-        return ContractProbeConfig.model_validate(body["providerContractProbe"])
+        config = ContractProbeConfig.model_validate(body["providerContractProbe"])
     except ValidationError:
         # Pydantic's diagnostic retains the rejected input, which can include
         # the one-time callback secret. Do not attach it to the exception chain.
         raise AgentStartupError("provider contract probe configuration is invalid") from None
+
+    activation_values = {
+        "enabled": environment.get("PROVIDER_CONTRACT_PROBE_ENABLED"),
+        "run_id": environment.get("PROVIDER_CONTRACT_PROBE_RUN_ID"),
+        "callback_url": environment.get("PROVIDER_CONTRACT_PROBE_CALLBACK_URL"),
+        "secret": environment.get("PROVIDER_CONTRACT_PROBE_ACTIVATION_SECRET"),
+    }
+    if (
+        activation_values["enabled"] != "stage-a-provider-proof"
+        or config.run_id != activation_values["run_id"]
+        or str(config.callback_url) != activation_values["callback_url"]
+        or not activation_values["secret"]
+    ):
+        raise AgentStartupError("provider contract probe is not authorized")
+    try:
+        encoded_secret = activation_values["secret"]
+        if encoded_secret is None:
+            raise ValueError("missing activation secret")
+        secret = base64.urlsafe_b64decode(f"{encoded_secret}{'=' * (-len(encoded_secret) % 4)}")
+    except (TypeError, ValueError, binascii.Error):
+        raise AgentStartupError("provider contract probe is not authorized") from None
+    if len(secret) != 32:
+        raise AgentStartupError("provider contract probe is not authorized")
+    expected = hmac.new(secret, _activation_message(config), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, config.activation_proof):
+        raise AgentStartupError("provider contract probe is not authorized")
+    return config
 
 
 def _token_claims(token: str | None) -> dict[str, object]:

@@ -57,19 +57,22 @@ Expected result: exit zero with `"verdict": "blocked_live_gate"`. Only
 These are names and access scopes, not authorization to obtain or configure
 them:
 
-| Prerequisite              | Minimum scope                                                                           |
-| ------------------------- | --------------------------------------------------------------------------------------- |
-| `PIPECAT_API_KEY`         | Public start key for the dedicated test agent only                                      |
-| `PIPECAT_PRIVATE_API_KEY` | Private management access to stop and list sessions for that same agent                 |
-| Test deployment           | `min_agents = 0`, `max_agents = 1`, no production traffic                               |
-| Platform ceiling          | `maxSessionDuration = 600` seconds, read back from the active deployment                |
-| Base image                | Pipecat Cloud base image `0.1.27` or later, verified rather than inferred from `latest` |
-| Daily settings            | Ability to inspect effective room and both participant token claims                     |
-| Evidence access           | Exact-session status plus provider usage/billing duration after teardown                |
+| Prerequisite              | Minimum scope                                                                               |
+| ------------------------- | ------------------------------------------------------------------------------------------- |
+| `PIPECAT_API_KEY`         | Existing public start key for the dedicated test agent only                                 |
+| `PIPECAT_OPERATOR_TOKEN`  | Existing authenticated operator token for the approved org; never written to evidence       |
+| `PIPECAT_ORGANIZATION`    | Exact existing organization containing `duplexd-agent`                                      |
+| Temporary private key     | One runner-created `Stage A provider proof` key; revoked and verified absent during cleanup |
+| Temporary activation set  | One four-value `duplexd-provider-proof` set; never modify `duplexd-agent-secrets`           |
+| Test deployment           | Existing service only, `min_agents = 0`, `max_agents = 1`, no production traffic            |
+| Platform ceiling          | `maxSessionDuration = 600` seconds, read back from the active deployment                    |
+| Base image                | Dockerfile pinned to Pipecat Cloud base image `0.1.29`                                      |
+| Daily and evidence access | Effective claims plus exact-session status/resource metrics after teardown                  |
 
-Changing `maxSessionDuration` triggers a deployment. Do not make that change,
-deploy the test agent, provision keys, or start sessions without separate
-authorization.
+The live envelope is authorized, but the reviewed commit is not released for
+execution. Do not create the key/secret set, deploy, open the tunnel, change
+duration, or start sessions until the coordinator explicitly releases the
+exact committed head after safety re-review.
 
 ## Bounded live plan
 

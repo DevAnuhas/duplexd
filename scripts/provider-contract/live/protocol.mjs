@@ -14,6 +14,19 @@ export function createRunSecret() {
   return randomBytes(32).toString("base64url")
 }
 
+export function signActivation({ secret, config }) {
+  const message = [
+    config.version,
+    config.runId,
+    config.caseId,
+    config.bootId,
+    config.mode,
+    config.callbackUrl,
+    config.callbackSecret,
+  ].join("\n")
+  return createHmac("sha256", secretBytes(secret)).update(message).digest("hex")
+}
+
 function secretBytes(secret) {
   if (typeof secret !== "string") {
     throw new TypeError("HMAC secret is required.")

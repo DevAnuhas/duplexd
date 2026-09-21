@@ -11,13 +11,14 @@ export const LIMITS = Object.freeze({
 
 export const BASELINE = Object.freeze({
   agentName: "duplexd-agent",
-  deploymentId: "95a4b2b4",
-  buildId: "3010f496",
+  deploymentId: "95a4b2b4-6fed-47c8-8539-e820347f35fe",
+  buildId: "3010f496-fd84-4f39-a75c-c4a58a1bd922",
   imageDigest:
     "sha256:032aa1f121bc91a22748c725966bfd21e6659daaf8b159d367fd6e0f7a745242",
   minAgents: 0,
   maxAgents: 3,
   privateKeyCount: 0,
+  secretSet: "duplexd-agent-secrets",
 })
 
 export class LiveRunState {
@@ -58,6 +59,7 @@ export class LiveRunState {
       caseId,
       startedAt: Date.now(),
       sessionId: null,
+      operatorSessionId: null,
       registrationSessionId: null,
       endedAt: null,
       ready: false,
@@ -86,10 +88,26 @@ export class LiveRunState {
     attempt.sessionId = sessionId
   }
 
+  recordOperatorWitness(caseId, sessionId) {
+    const attempt = this.#required(caseId)
+    if (
+      (attempt.sessionId !== null && attempt.sessionId !== sessionId) ||
+      (attempt.operatorSessionId !== null &&
+        attempt.operatorSessionId !== sessionId)
+    ) {
+      throw new Error("operator witness does not match provider session")
+    }
+    attempt.operatorSessionId = sessionId
+  }
+
   recordRegistration(caseId, sessionId) {
     const attempt = this.#required(caseId)
     attempt.registrationSessionId = sessionId
-    if (attempt.sessionId !== null && attempt.sessionId !== sessionId) {
+    if (
+      (attempt.sessionId !== null && attempt.sessionId !== sessionId) ||
+      (attempt.operatorSessionId !== null &&
+        attempt.operatorSessionId !== sessionId)
+    ) {
       throw new Error("runner registration does not match start session")
     }
   }
@@ -120,10 +138,12 @@ export class LiveRunState {
     this.#clearTimers(attempt)
     attempt.endedAt = endedAt
     this.#active.delete(caseId)
+    const effectiveSessionId =
+      attempt.sessionId ?? attempt.registrationSessionId
     return {
       caseId,
       sessionRef:
-        attempt.sessionId === null ? null : safeReference(attempt.sessionId),
+        effectiveSessionId === null ? null : safeReference(effectiveSessionId),
       registrationRef:
         attempt.registrationSessionId === null
           ? null
@@ -142,9 +162,17 @@ export class LiveRunState {
   }
 
   emergencySessionIds() {
-    return [...this.#active.values()]
-      .map((attempt) => attempt.sessionId ?? attempt.registrationSessionId)
-      .filter((value) => value !== null)
+    return [
+      ...new Set(
+        [...this.#active.values()].flatMap((attempt) =>
+          [
+            attempt.sessionId,
+            attempt.registrationSessionId,
+            attempt.operatorSessionId,
+          ].filter((value) => value !== null)
+        )
+      ),
+    ]
   }
 
   counters() {
@@ -174,7 +202,7 @@ export class LiveRunState {
   }
 }
 
-export function verifyRollback({ manifest, sessions, keys }) {
+export function verifyRollback({ manifest, sessions, keys, secretSets = [] }) {
   const errors = []
   if (manifest.agentName !== BASELINE.agentName) {
     errors.push("baseline agent mismatch")
@@ -190,6 +218,9 @@ export function verifyRollback({ manifest, sessions, keys }) {
   ) {
     errors.push("baseline scaling mismatch")
   }
+  if (manifest.secretSet !== BASELINE.secretSet) {
+    errors.push("baseline secret-set reference mismatch")
+  }
   if (Object.hasOwn(manifest, "maxSessionDurationSeconds")) {
     errors.push("duration override was not removed")
   }
@@ -204,6 +235,12 @@ export function verifyRollback({ manifest, sessions, keys }) {
   ) {
     errors.push("temporary private key still exists")
   }
+  if (
+    !Array.isArray(secretSets) ||
+    secretSets.some((set) => set?.name === "duplexd-provider-proof")
+  ) {
+    errors.push("temporary probe secret set still exists")
+  }
   return { ok: errors.length === 0, errors }
 }
 
@@ -212,37 +249,67 @@ export async function abortAndRestore({
   stopSession,
   restoreBaseline,
   revokePrivateKey,
+  deleteProbeSecretSet,
   readback,
 }) {
   state.abort()
   const cleanupErrors = []
-  for (const sessionId of new Set(state.emergencySessionIds())) {
+  const volatileKnownSessionIds = [...new Set(state.emergencySessionIds())]
+  const containment = {
+    knownSessionRefs: volatileKnownSessionIds.map(safeReference),
+    baselineRestored: false,
+    privateKeyRevoked: false,
+    probeSecretSetDeleted: false,
+  }
+  for (const sessionId of volatileKnownSessionIds) {
     try {
       await stopSession(sessionId)
-    } catch (error) {
-      cleanupErrors.push(`stop failed: ${String(error)}`)
+    } catch {
+      cleanupErrors.push("exact-session stop failed")
     }
   }
   try {
     await restoreBaseline()
-  } catch (error) {
-    cleanupErrors.push(`baseline restore failed: ${String(error)}`)
+    containment.baselineRestored = true
+  } catch {
+    cleanupErrors.push("baseline restore failed")
   }
   try {
     await revokePrivateKey()
-  } catch (error) {
-    cleanupErrors.push(`private-key revocation failed: ${String(error)}`)
+    containment.privateKeyRevoked = true
+  } catch {
+    cleanupErrors.push("private-key revocation failed")
+  }
+  if (containment.baselineRestored) {
+    try {
+      await deleteProbeSecretSet()
+      containment.probeSecretSetDeleted = true
+    } catch {
+      cleanupErrors.push("probe secret-set deletion failed")
+    }
+  } else {
+    cleanupErrors.push(
+      "probe secret-set deletion skipped because baseline restoration failed"
+    )
   }
   let verification = { ok: false, errors: ["readback did not run"] }
+  let volatileProviderState = null
   try {
-    verification = verifyRollback(await readback())
-  } catch (error) {
-    cleanupErrors.push(`rollback readback failed: ${String(error)}`)
+    volatileProviderState = await readback()
+    verification = verifyRollback(volatileProviderState)
+    containment.activeSessionRefs = (volatileProviderState.sessions ?? []).map(
+      (session) => safeReference(session.sessionId)
+    )
+  } catch {
+    cleanupErrors.push("rollback readback failed")
   }
   return {
     ok: cleanupErrors.length === 0 && verification.ok,
     cleanupErrors,
     verification,
+    containment,
+    volatileKnownSessionIds,
+    volatileProviderState,
   }
 }
 
@@ -251,10 +318,15 @@ export function createOperatorGuard({ state = new LiveRunState(), cleanup }) {
     throw new TypeError("operator cleanup function is required")
   }
   let cleanupPromise = null
+  let resolveAbort
+  const abortSignal = new Promise((resolve) => {
+    resolveAbort = resolve
+  })
 
   function abort(reason) {
     if (cleanupPromise === null) {
       state.abort()
+      resolveAbort(reason)
       cleanupPromise = Promise.resolve().then(() => cleanup(reason))
       void cleanupPromise.catch(() => {})
     }
@@ -283,6 +355,7 @@ export function createOperatorGuard({ state = new LiveRunState(), cleanup }) {
       }
     },
     abort,
+    abortSignal,
     cleanupResult() {
       return cleanupPromise
     },

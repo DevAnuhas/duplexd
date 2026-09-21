@@ -37,6 +37,7 @@ export function createCollector({
   const allowedCases = new Set(caseIds)
   const nonces = new Set()
   const events = new Map()
+  const waiters = new Map()
   let closed = false
 
   const server = createServer(async (request, response) => {
@@ -69,6 +70,7 @@ export function createCollector({
         response.writeHead(401).end()
         return
       }
+      nonces.add(nonce)
       const event = parseCallbackEvent(body, {
         runId,
         caseIds: allowedCases,
@@ -83,8 +85,9 @@ export function createCollector({
           .end()
         return
       }
-      nonces.add(nonce)
       events.set(key, event)
+      for (const resolve of waiters.get(key) ?? []) resolve(event)
+      waiters.delete(key)
       response.writeHead(204).end()
     } catch {
       response.writeHead(400).end()
@@ -117,6 +120,10 @@ export function createCollector({
     clearTimeout(expiry)
     events.clear()
     nonces.clear()
+    for (const pending of waiters.values()) {
+      for (const resolve of pending) resolve(null)
+    }
+    waiters.clear()
     if (server.listening) {
       await new Promise((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()))
@@ -129,6 +136,17 @@ export function createCollector({
     close,
     rawEvent(bootId, event) {
       return events.get(`${bootId}:${event}`) ?? null
+    },
+    waitFor(bootId, event) {
+      const key = `${bootId}:${event}`
+      const current = events.get(key)
+      if (current !== undefined) return Promise.resolve(current)
+      if (closed) return Promise.resolve(null)
+      return new Promise((resolve) => {
+        const pending = waiters.get(key) ?? []
+        pending.push(resolve)
+        waiters.set(key, pending)
+      })
     },
     sanitizedEvents() {
       return [...events.values()].map(sanitizeCallbackEvent)

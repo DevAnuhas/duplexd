@@ -1,125 +1,137 @@
 # A01 live operator sequence
 
-This runbook is executable only after the operator receives the separate live
-execution go-ahead. The current offline preflight does not authorize any of
-these mutations. Never enable shell tracing and never print either API key or
-the callback secret.
+This procedure is blocked until the coordinator sends a fresh live-release
+message after reviewing the exact commit. The approved resources are one
+temporary private key, one temporary secret set named
+`duplexd-provider-proof`, one temporary ngrok tunnel, one probe deployment on
+the existing `duplexd-agent`, and at most six serial sessions. Nothing here
+authorizes another service, phone traffic, production traffic, warm capacity,
+Boring Host, Vapi, or Twilio.
 
-## Fixed envelope
+The executable owns the entire mutation sequence and cleanup. Do not reproduce
+its steps manually. Never enable shell tracing or print credentials.
 
-- Existing agent only: `duplexd-agent`; do not provision another service.
-- Existing baseline: deployment `95a4b2b4`, build `3010f496`, digest
-  `sha256:032aa1f121bc91a22748c725966bfd21e6659daaf8b159d367fd6e0f7a745242`.
-- Six starts maximum, serial concurrency one, 12 billed minutes per session,
-  72 billed minutes total.
-- Probe deployment: `min=0`, `max=1`, duration ceiling 600 seconds.
-- Baseline restoration: `min=0`, `max=3`, duration field absent.
-- No production traffic, phone calls, recordings, transcripts, tenant data,
-  Boring Host, Vapi, or Twilio.
+## Fixed identities and limits
 
-## Offline preflight
+| Item                  | Exact value                                                               |
+| --------------------- | ------------------------------------------------------------------------- |
+| Agent                 | `duplexd-agent`                                                           |
+| Original deployment   | `95a4b2b4-6fed-47c8-8539-e820347f35fe`                                    |
+| Baseline build        | `3010f496-fd84-4f39-a75c-c4a58a1bd922`                                    |
+| Baseline digest       | `sha256:032aa1f121bc91a22748c725966bfd21e6659daaf8b159d367fd6e0f7a745242` |
+| Baseline secret set   | `duplexd-agent-secrets`                                                   |
+| Temporary secret set  | `duplexd-provider-proof`                                                  |
+| Temporary private key | `Stage A provider proof`                                                  |
+| Sessions              | Six maximum, concurrency one                                              |
+| Usage                 | 12 billed minutes per session, 72 total                                   |
+| Timers                | 120-second startup, 600-second whole session                              |
+| Probe scaling         | `min=0`, `max=1`                                                          |
+| Restored scaling      | `min=0`, `max=3`                                                          |
+
+The temporary secret set contains exactly four keys:
+
+- `PROVIDER_CONTRACT_PROBE_ENABLED`
+- `PROVIDER_CONTRACT_PROBE_RUN_ID`
+- `PROVIDER_CONTRACT_PROBE_CALLBACK_URL`
+- `PROVIDER_CONTRACT_PROBE_ACTIVATION_SECRET`
+
+The start body cannot activate the probe by itself. The agent requires the
+deployment-owned enabled value, exact approved run ID, exact callback URL, and
+a valid per-case HMAC activation proof. Ordinary calls continue down the normal
+path. Any body-only probe request fails closed without making a callback.
+
+## Offline gate
 
 From the repository root:
 
 ```sh
 node scripts/provider-contract/live/preflight.mjs plan
 node --test scripts/provider-contract/test/*.test.mjs
-node --check scripts/provider-contract/live/*.mjs
+for file in scripts/provider-contract/live/*.mjs; do node --check "$file"; done
 cd agent
 uv run ruff check duplexd_agent tests
 uv run mypy duplexd_agent
 uv run pytest
 ```
 
-The operator must then create one temporary private Pipecat key named
-`Stage A provider proof` without copying it to a file, command argument, log,
-or repository. Generate a 32-byte base64url callback secret in memory, start
-the loopback-only collector, and expose only its `/probe-events` endpoint:
+The branch must already contain current `origin/main`, the worktree must be
+clean, and PR #67 must remain draft.
+
+## Exact live command
+
+After the coordinator's separate release, use one terminal. Supply the
+existing public start key and existing authenticated Pipecat operator token
+only through the environment. The approved run ID comes from the coordinator.
+The evidence path contains sanitized JSON only. `ngrok` must already be
+installed and authenticated on this Mac; the executable owns its temporary
+process and never receives or prints the ngrok account token.
 
 ```sh
-export PROVIDER_CONTRACT_RUN_ID="stage-a-$(date -u +%Y%m%dT%H%M%SZ)"
-export PROVIDER_CONTRACT_CASE_IDS="cold_start,cancel_before_join,lost_start_response_registered,no_registration_startup,hung_runtime,known_session_stop_retry"
-export PROVIDER_CONTRACT_HMAC_SECRET="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')"
-node scripts/provider-contract/live/collector.mjs
-ngrok http http://127.0.0.1:<collector-port>
+export PIPECAT_API_KEY='<existing public start key>'
+export PIPECAT_OPERATOR_TOKEN='<existing OAuth/PAT operator token>'
+export PIPECAT_ORGANIZATION='<existing organization name>'
+export PROVIDER_CONTRACT_RUN_ID='<approved run ID>'
+export PROVIDER_CONTRACT_EVIDENCE_PATH="$(pwd)/scripts/provider-contract/fixtures/live-evidence.json"
+export PROVIDER_CONTRACT_SECRET_SET_APPROVED='duplexd-provider-proof'
+export PROVIDER_CONTRACT_LIVE_RELEASE='stage-a-provider-proof-live-release'
+node scripts/provider-contract/live/execute.mjs execute
 ```
 
-The probe callback URL is the temporary HTTPS ngrok URL plus `/probe-events`.
-The container start body may carry only that URL, the one-time HMAC secret,
-run/case/boot identifiers, and a probe mode. Destroy all of them after the
-gate.
+Do not set the last two release variables before the coordinator's explicit
+message. Missing or wrong values stop before any provider request.
 
-## Provider state transitions
-
-Each arrow is a gate. A failed read-back goes directly to abort cleanup.
+The executable performs this sequence:
 
 ```text
-baseline read-back
-  -> temporary private key present
-  -> probe deployment (min0/max1)
-  -> maxSessionDuration=600 read back
-  -> collector+tunnel ready
-  -> six serial cases
-  -> no active sessions
-  -> baseline build redeployed (min0/max3, no duration field)
-  -> temporary private key revoked
-  -> exact rollback read-back passes
-  -> tunnel stopped, environment unset, volatile state destroyed
+strict baseline + zero-session/key/secret-set preflight
+  -> loopback collector
+  -> owned ngrok HTTPS tunnel
+  -> create four-value temporary secret set
+  -> create one named private key
+  -> build/deploy probe with min0/max1 and temporary secret set
+  -> set and read back maxSessionDurationSeconds=600
+  -> run six cases serially with guarded starts and exact-session reconciliation
+  -> restore full baseline build/min0/max3/original secret-set reference
+  -> revoke every matching temporary private key
+  -> delete temporary secret set only after verified baseline restoration
+  -> verify full build/digest/scaling/secret-set, absent duration, zero active
+     sessions, zero private keys, and absent temporary secret set
+  -> close tunnel/collector and destroy raw join/token state
+  -> write sanitized evidence only when cleanup verifies
 ```
 
-Deploy the temporary probe and set the ceiling only inside the approved live
-window:
+For the cases that join Daily, the executable prints a path to a mode-600
+temporary HTML file. Open that local file in a visible browser, then type the
+exact witness phrase printed by the executable. No raw room URL, token, or
+session ID is printed. The file is deleted after the case. No microphone
+content or recording is required.
 
-```sh
-cd agent
-uv run pipecat cloud deploy duplexd-agent --build-dir . --dockerfile Dockerfile --min-agents 0 --max-agents 1 --secrets duplexd-agent-secrets --profile agent-1x
-```
+The six cases are fixed in code: cold start, cancel before join, lost response
+with registration, no application registration, hung runtime, and same-session
+stop retry with a reconciled 404. The executable never retries `start`.
 
-Then use the authenticated private deployment update path to set
-`maxSessionDuration=600`; require the active manifest to report
-`maxSessionDurationSeconds=600` before the first start.
+## Abort and containment
 
-Run these cases in order, never starting the next until exact-session status
-and billed usage for the prior case are reconciled:
+SIGINT, SIGTERM, a timeout, a seventh/concurrent start, an uncorrelatable
+callback, a response-shape mismatch, unstable usage, or any failed gate enters
+the same cleanup path. Cleanup waits for any in-flight mutation, stops every
+exactly known session, restores the baseline, revokes the temporary key, then
+deletes the temporary secret set. All readback errors are redacted.
 
-| Case                             | Probe mode                   | Operator fault                                                                                  | Required termination                           |
-| -------------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| `cold_start`                     | `register_join_wait`         | cold `min=0` start                                                                              | exact stop after readiness                     |
-| `cancel_before_join`             | `register_pause_before_join` | cancel before browser join                                                                      | exact stop                                     |
-| `lost_start_response_registered` | `register_pause_before_join` | discard response from application view; retain only volatile witness                            | stop registered exact session                  |
-| `no_registration_startup`        | `no_register_join_wait`      | discard response and suppress application registration; retain only volatile operator callbacks | 600-second provider ceiling                    |
-| `hung_runtime`                   | `register_join_wait`         | keep process alive after media ejection                                                         | 600-second provider ceiling                    |
-| `known_session_stop_retry`       | `register_pause_before_join` | repeat stop against same exact session                                                          | 200, then 404 plus ended-status reconciliation |
+If baseline restoration is not verified, the executable deliberately leaves
+the temporary secret set in place rather than deleting configuration still
+referenced by an uncertain deployment. It still attempts key revocation,
+closes the tunnel, and writes a mode-600 local containment record containing
+the exact volatile IDs needed for manual recovery. It emits no live-pass
+evidence. If the provider will not remove the duration override, leave the
+safer 600-second value, revoke the key, and report blocked; never substitute 7200.
 
-The runner aborts on a 120-second startup timer, 600-second whole-case timer,
-more than one active case, a seventh start, more than 12 billed minutes for one
-case, more than 72 total billed minutes, or any uncorrelatable session. Abort
-cleanup stops every exactly known session, restores baseline, revokes the
-temporary key, and performs the same read-back gate.
+The original deployment ID identifies the inspected baseline. A successful
+redeploy may receive a new deployment ID, so rollback compares the full build
+UUID, immutable digest, scaling, original secret-set reference, and omitted
+duration field instead of requiring the deployment ID to stay unchanged.
 
-## Exact rollback
-
-Always execute this sequence, including after a failed case:
-
-```sh
-cd agent
-uv run pipecat cloud deploy duplexd-agent --build-id 3010f496 --min-agents 0 --max-agents 3 --secrets duplexd-agent-secrets --profile agent-1x
-```
-
-Read back the active manifest, active sessions, and keys into volatile files,
-then run:
-
-```sh
-node scripts/provider-contract/live/preflight.mjs verify-rollback <manifest.json> <sessions.json> <keys.json>
-```
-
-The gate requires agent `duplexd-agent`, build `3010f496`, the pinned digest,
-`min=0`, `max=3`, no
-`maxSessionDurationSeconds` field, zero active sessions, and no private key.
-The provider may assign a new deployment ID when the baseline build is
-redeployed; `95a4b2b4` identifies the original read-only baseline and is not a
-valid equality check after restoration.
-If redeployment does not remove the duration field, leave the safer 600-second
-value in place, revoke the key, stop the run, and report blocked. Never write
-7200 as a substitute. Finally stop ngrok and the collector, unset all temporary
-environment variables, and delete volatile read-back/evidence staging files.
+After a successful run, unset all credentials and release variables. Before PR
+#67 can be marked ready, remove the temporary probe branch/module (or replace
+it with a permanent compile-time-disabled state) and rerun the ordinary agent
+suite. Live evidence alone does not make the temporary probe mergeable.

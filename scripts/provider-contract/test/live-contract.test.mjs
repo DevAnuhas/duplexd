@@ -2,11 +2,15 @@ import assert from "node:assert/strict"
 import { createHmac } from "node:crypto"
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { request } from "node:http"
+import { EventEmitter } from "node:events"
+import { PassThrough, Writable } from "node:stream"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { spawnSync } from "node:child_process"
 import test from "node:test"
 
+import { safeReference } from "../lib/contract.mjs"
+import { createDeployCommands, runCommand } from "../live/commands.mjs"
 import { createCollector } from "../live/collector.mjs"
 import {
   assertSecretFreeEvidence,
@@ -18,9 +22,15 @@ import {
   parseCallbackEvent,
   sanitizeCallbackEvent,
   signCallback,
+  signActivation,
   verifyCallback,
 } from "../live/protocol.mjs"
-import { ProviderClient } from "../live/provider.mjs"
+import {
+  ControlPlaneClient,
+  ProviderClient,
+  normalizeManifest,
+  normalizeSession,
+} from "../live/provider.mjs"
 import {
   BASELINE,
   LIMITS,
@@ -29,6 +39,12 @@ import {
   createOperatorGuard,
   verifyRollback,
 } from "../live/run-state.mjs"
+import { CASES, runLiveExercise } from "../live/execute.mjs"
+import { createNgrokTunnel } from "../live/tunnel.mjs"
+import {
+  createFileOperatorWitness,
+  decodeBrowserClaims,
+} from "../live/witness.mjs"
 
 const secret = Buffer.alloc(32, 0x78).toString("base64url")
 const nowSeconds = 1_800_000_000
@@ -114,6 +130,31 @@ test("callback HMAC binds timestamp, nonce and exact bytes", () => {
       ok: false,
       reason: "invalid_signature",
     })
+  }
+})
+
+test("activation HMAC binds the exact run, callback URL and probe configuration", () => {
+  const config = {
+    version: 1,
+    runId: "run-12345678",
+    caseId: "cold_start",
+    bootId: "boot-12345678",
+    mode: "register_join_wait",
+    callbackUrl: "https://collector.example/probe-events",
+  }
+  const signature = signActivation({ secret, config })
+  assert.match(signature, /^[a-f0-9]{64}$/u)
+  for (const changed of [
+    { runId: "run-other-12345" },
+    { callbackUrl: "https://attacker.example/probe-events" },
+    { caseId: "hung_runtime" },
+    { bootId: "boot-other-1234" },
+    { mode: "no_register_join_wait" },
+  ]) {
+    assert.notEqual(
+      signActivation({ secret, config: { ...config, ...changed } }),
+      signature
+    )
   }
 })
 
@@ -270,6 +311,20 @@ test("collector accepts exact duplicate idempotently but rejects nonce replay an
   const conflictBody = Buffer.from(
     JSON.stringify(event({ observedAt: nowSeconds + 1 }))
   )
+  assert.equal(
+    await callbackRequest({
+      port,
+      body: conflictBody,
+      requestNonce: retryNonce,
+      signature: `v1=${signCallback({
+        secret,
+        timestamp,
+        nonce: retryNonce,
+        body: conflictBody,
+      })}`,
+    }),
+    401
+  )
   const conflictNonce = "3".repeat(32)
   assert.equal(
     await callbackRequest({
@@ -325,6 +380,7 @@ test("LiveRunState enforces concurrency, six starts, timers and raw-id lifecycle
   assert.ok(clock.scheduled.every((timer) => timer.unrefCalled))
   assert.throws(() => state.beginCase("case-concurrent"), /concurrency/u)
 
+  state.recordOperatorWitness("case-1", "session-raw-1")
   state.recordStart("case-1", "session-raw-1")
   state.recordRegistration("case-1", "session-raw-1")
   state.markReady("case-1")
@@ -340,6 +396,16 @@ test("LiveRunState enforces concurrency, six starts, timers and raw-id lifecycle
     billedMinutes: 12,
     aborted: false,
   })
+
+  const witnessOnly = new LiveRunState()
+  witnessOnly.beginCase("lost-response")
+  witnessOnly.recordOperatorWitness("lost-response", "operator-only-session")
+  assert.deepEqual(witnessOnly.emergencySessionIds(), ["operator-only-session"])
+  witnessOnly.recordRegistration("lost-response", "operator-only-session")
+  assert.equal(
+    witnessOnly.finishCase("lost-response", { billedMinutes: 1 }).sessionRef,
+    safeReference("operator-only-session")
+  )
 
   for (let index = 2; index <= LIMITS.maxStarts; index += 1) {
     const caseId = `case-${index}`
@@ -390,18 +456,21 @@ test("abort cleanup is ordered, deduplicated and continues through errors", asyn
     state,
     stopSession: async (sessionId) => {
       order.push(`stop:${sessionId}`)
-      throw new Error("stop-canary")
+      throw new Error("stop provider-body-canary credential-canary")
     },
     restoreBaseline: async () => {
       order.push("restore")
     },
     revokePrivateKey: async () => {
       order.push("revoke")
-      throw new Error("revoke-canary")
+      throw new Error("revoke provider-body-canary credential-canary")
+    },
+    deleteProbeSecretSet: async () => {
+      order.push("delete-secret-set")
     },
     readback: async () => {
       order.push("readback")
-      return { manifest: BASELINE, sessions: [], keys: [] }
+      return { manifest: BASELINE, sessions: [], keys: [], secretSets: [] }
     },
   })
 
@@ -409,12 +478,18 @@ test("abort cleanup is ordered, deduplicated and continues through errors", asyn
     "stop:same-session",
     "restore",
     "revoke",
+    "delete-secret-set",
     "readback",
   ])
   assert.equal(result.ok, false)
   assert.equal(result.verification.ok, true)
-  assert.match(result.cleanupErrors.join("\n"), /stop-canary/u)
-  assert.match(result.cleanupErrors.join("\n"), /revoke-canary/u)
+  assert.deepEqual(result.cleanupErrors, [
+    "exact-session stop failed",
+    "private-key revocation failed",
+  ])
+  const serialized = JSON.stringify(result)
+  assert.equal(serialized.includes("provider-body-canary"), false)
+  assert.equal(serialized.includes("credential-canary"), false)
 })
 
 test("operator guard invokes one cleanup with the first abort reason", async (t) => {
@@ -484,8 +559,15 @@ test("operator guard invokes one cleanup with the first abort reason", async (t)
 })
 
 test("rollback verification requires the exact pinned baseline", async (t) => {
+  assert.match(BASELINE.deploymentId, /^[0-9a-f-]{36}$/u)
+  assert.match(BASELINE.buildId, /^[0-9a-f-]{36}$/u)
   assert.deepEqual(
-    verifyRollback({ manifest: { ...BASELINE }, sessions: [], keys: [] }),
+    verifyRollback({
+      manifest: { ...BASELINE },
+      sessions: [],
+      keys: [],
+      secretSets: [],
+    }),
     { ok: true, errors: [] }
   )
   assert.equal(
@@ -493,6 +575,7 @@ test("rollback verification requires the exact pinned baseline", async (t) => {
       manifest: { ...BASELINE, deploymentId: "new-redeploy-id" },
       sessions: [],
       keys: [],
+      secretSets: [],
     }).ok,
     true,
     "redeploy may allocate a new deployment ID"
@@ -510,6 +593,7 @@ test("rollback verification requires the exact pinned baseline", async (t) => {
         manifest: { ...BASELINE, [field]: value },
         sessions: [],
         keys: [],
+        secretSets: [],
       })
       assert.equal(result.ok, false)
       assert.match(result.errors.join("\n"), new RegExp(message, "u"))
@@ -524,7 +608,12 @@ test("rollback verification requires the exact pinned baseline", async (t) => {
     false
   )
   assert.equal(
-    verifyRollback({ manifest: BASELINE, sessions: [{}], keys: [] }).ok,
+    verifyRollback({
+      manifest: BASELINE,
+      sessions: [{}],
+      keys: [],
+      secretSets: [],
+    }).ok,
     false
   )
   assert.equal(
@@ -532,6 +621,7 @@ test("rollback verification requires the exact pinned baseline", async (t) => {
       manifest: BASELINE,
       sessions: [],
       keys: [{ name: "Stage A provider proof", type: "public" }],
+      secretSets: [],
     }).ok,
     false
   )
@@ -540,6 +630,16 @@ test("rollback verification requires the exact pinned baseline", async (t) => {
       manifest: BASELINE,
       sessions: [],
       keys: [{ name: "unrelated", type: "private" }],
+      secretSets: [],
+    }).ok,
+    false
+  )
+  assert.equal(
+    verifyRollback({
+      manifest: BASELINE,
+      sessions: [],
+      keys: [],
+      secretSets: [{ name: "duplexd-provider-proof", type: "user" }],
     }).ok,
     false
   )
@@ -556,6 +656,25 @@ function jsonResponse(status, value) {
 
 test("ProviderClient emits exact start and management request shapes", async () => {
   const calls = []
+  const session = {
+    sessionId: "session-123",
+    deploymentId: "deployment-123",
+    createdAt: "2026-09-21T00:00:00.000Z",
+    endedAt: "2026-09-21T00:01:00.000Z",
+    updatedAt: "2026-09-21T00:01:01.000Z",
+    completionStatus: "stopped",
+    resourceMetrics: { sampleCount: 2, timeseries: [{ t: 0 }, { t: 60 }] },
+  }
+  const manifest = {
+    serviceName: "duplexd-agent",
+    activeDeployment: {
+      id: "deployment-123",
+      build: { id: "build-123", image: { digest: "sha256:image" } },
+      autoScaling: { minAgents: 0, maxAgents: 1 },
+      secretSetName: "duplexd-provider-proof",
+      maxSessionDurationSeconds: 600,
+    },
+  }
   const responses = [
     jsonResponse(200, {
       sessionId: "session-123",
@@ -564,7 +683,9 @@ test("ProviderClient emits exact start and management request shapes", async () 
     }),
     jsonResponse(200, { stopped: true }),
     jsonResponse(404, { detail: "not found" }),
-    jsonResponse(200, { sessions: [{ id: "session-123" }] }),
+    jsonResponse(200, { sessions: [session] }),
+    jsonResponse(200, { session }),
+    jsonResponse(200, { service: manifest }),
     jsonResponse(200, { maxSessionDurationSeconds: 600 }),
   ]
   const fetchImpl = async (url, options) => {
@@ -589,7 +710,12 @@ test("ProviderClient emits exact start and management request shapes", async () 
   )
   assert.equal((await client.stop("session/123")).status, 200)
   assert.equal((await client.stop("session/123")).status, 404)
-  assert.deepEqual(await client.sessions("running"), [{ id: "session-123" }])
+  assert.equal((await client.sessions("running"))[0].billedMinutes, 1)
+  assert.equal((await client.session("session-123")).sessionId, "session-123")
+  assert.equal(
+    (await client.readManifest()).secretSet,
+    "duplexd-provider-proof"
+  )
   await client.setMaxSessionDuration(600)
 
   assert.equal(
@@ -622,10 +748,224 @@ test("ProviderClient emits exact start and management request shapes", async () 
     calls[3].url,
     "https://api.pipecat.daily.co/v1/agents/duplexd-agent/sessions?status=running&limit=100"
   )
-  assert.equal(calls[4].options.method, "POST")
-  assert.deepEqual(JSON.parse(calls[4].options.body), {
+  assert.equal(
+    calls[4].url,
+    "https://api.pipecat.daily.co/v1/agents/duplexd-agent/sessions/session-123"
+  )
+  assert.equal(calls[4].options.method, "GET")
+  assert.equal(
+    calls[5].url,
+    "https://api.pipecat.daily.co/v1/agents/duplexd-agent"
+  )
+  assert.equal(calls[6].options.method, "POST")
+  assert.deepEqual(JSON.parse(calls[6].options.body), {
     maxSessionDuration: 600,
   })
+})
+
+test("provider normalizers reject mismatched or malformed exact-session data", () => {
+  assert.deepEqual(
+    normalizeManifest({
+      body: {
+        name: "duplexd-agent",
+        deployment: {
+          deploymentId: "deployment-1",
+          buildId: "build-1",
+          imageDigest: "sha256:image",
+          minAgents: 0,
+          maxAgents: 3,
+          secretSet: "duplexd-agent-secrets",
+        },
+      },
+    }),
+    {
+      agentName: "duplexd-agent",
+      deploymentId: "deployment-1",
+      buildId: "build-1",
+      imageDigest: "sha256:image",
+      minAgents: 0,
+      maxAgents: 3,
+      secretSet: "duplexd-agent-secrets",
+    }
+  )
+  assert.deepEqual(
+    normalizeManifest({
+      body: {
+        name: "duplexd-agent",
+        activeDeploymentId: "deployment-2",
+        buildId: "build-2",
+        autoScaling: { minReplicas: 0, maxReplicas: 3 },
+        secretSet: "duplexd-agent-secrets",
+        maxSessionDuration: 600,
+        deployment: {
+          manifest: {
+            spec: {
+              image: `registry.example/duplexd@sha256:${"a".repeat(64)}`,
+            },
+          },
+        },
+      },
+    }),
+    {
+      agentName: "duplexd-agent",
+      deploymentId: "deployment-2",
+      buildId: "build-2",
+      imageDigest: `sha256:${"a".repeat(64)}`,
+      minAgents: 0,
+      maxAgents: 3,
+      secretSet: "duplexd-agent-secrets",
+      maxSessionDurationSeconds: 600,
+    }
+  )
+  const base = {
+    id: "session-1",
+    deploymentId: "deployment-1",
+    createdAt: "2026-09-21T00:00:00.000Z",
+    endedAt: null,
+    updatedAt: "2026-09-21T00:00:01.000Z",
+  }
+  assert.equal(
+    normalizeSession({ body: base }, "session-1").billedMinutes,
+    null
+  )
+  assert.throws(
+    () => normalizeSession(base, "other-session"),
+    /does not match/u
+  )
+  assert.throws(() => normalizeSession({ ...base, endedAt: 12 }), /endedAt/u)
+  assert.throws(
+    () => normalizeSession({ ...base, createdAt: "not-a-date" }),
+    /timestamps/u
+  )
+})
+
+test("ControlPlaneClient uses exact management endpoints and normalized request bodies", async () => {
+  const calls = []
+  const session = {
+    id: "session-1",
+    deploymentId: "deployment-1",
+    createdAt: "2026-09-21T00:00:00.000Z",
+    endedAt: null,
+    updatedAt: "2026-09-21T00:00:01.000Z",
+  }
+  const responses = [
+    jsonResponse(200, {
+      name: "duplexd-agent",
+      deploymentId: "deployment-1",
+      buildId: "build-1",
+      imageDigest: "sha256:image",
+      minAgents: 0,
+      maxAgents: 3,
+      secretSet: "duplexd-agent-secrets",
+    }),
+    jsonResponse(200, { sessions: [session] }),
+    jsonResponse(200, {
+      apiKey: {
+        apiKeyId: "key-1",
+        apiKey: "private-value",
+        name: "proof",
+        type: "private",
+      },
+    }),
+    jsonResponse(200, {
+      keys: [{ apiKeyId: "key-1", name: "proof", type: "private" }],
+    }),
+    jsonResponse(204, null),
+    jsonResponse(200, {}),
+    jsonResponse(200, {}),
+    jsonResponse(200, {}),
+    jsonResponse(200, {}),
+    jsonResponse(200, { sets: [{ name: "probe", type: "user" }] }),
+    jsonResponse(404, {}),
+    jsonResponse(200, { restored: true }),
+  ]
+  const client = new ControlPlaneClient({
+    operatorToken: " operator-secret ",
+    organization: "org/name",
+    fetchImpl: async (url, options) => {
+      calls.push({ url: String(url), options })
+      return responses.shift()
+    },
+  })
+  await client.readManifest()
+  await client.listSessions()
+  assert.equal((await client.createPrivateKey("proof")).key, "private-value")
+  await client.listKeys()
+  await client.revokeKey("key/1")
+  await client.createProbeSecretSet({
+    PROVIDER_CONTRACT_PROBE_ENABLED: "stage-a-provider-proof",
+    PROVIDER_CONTRACT_PROBE_RUN_ID: "run-12345678",
+    PROVIDER_CONTRACT_PROBE_CALLBACK_URL: "https://safe.example/probe-events",
+    PROVIDER_CONTRACT_PROBE_ACTIVATION_SECRET: "activation-secret",
+  })
+  await client.listSecretSets()
+  await client.deleteProbeSecretSet()
+  await client.restoreBaseline(BASELINE)
+
+  const origin = "https://api.pipecat.daily.co/v1/organizations/org%2Fname"
+  assert.deepEqual(
+    calls.map(({ url, options }) => [url, options.method]),
+    [
+      [`${origin}/services/duplexd-agent`, "GET"],
+      [`${origin}/services/duplexd-agent/sessions`, "GET"],
+      [`${origin}/apiKeys`, "POST"],
+      [`${origin}/apiKeys`, "GET"],
+      [`${origin}/apiKeys/key%2F1`, "DELETE"],
+      [`${origin}/secrets/duplexd-provider-proof`, "PUT"],
+      [`${origin}/secrets/duplexd-provider-proof`, "PUT"],
+      [`${origin}/secrets/duplexd-provider-proof`, "PUT"],
+      [`${origin}/secrets/duplexd-provider-proof`, "PUT"],
+      [`${origin}/secrets`, "GET"],
+      [`${origin}/secrets/duplexd-provider-proof`, "DELETE"],
+      [`${origin}/services`, "PUT"],
+    ]
+  )
+  assert.deepEqual(JSON.parse(calls[2].options.body), {
+    name: "proof",
+    type: "private",
+  })
+  assert.deepEqual(
+    calls.slice(5, 9).map(({ options }) => JSON.parse(options.body)),
+    [
+      {
+        name: "duplexd-provider-proof",
+        isImagePullSecret: false,
+        secretKey: "PROVIDER_CONTRACT_PROBE_ENABLED",
+        secretValue: "stage-a-provider-proof",
+      },
+      {
+        name: "duplexd-provider-proof",
+        isImagePullSecret: false,
+        secretKey: "PROVIDER_CONTRACT_PROBE_RUN_ID",
+        secretValue: "run-12345678",
+      },
+      {
+        name: "duplexd-provider-proof",
+        isImagePullSecret: false,
+        secretKey: "PROVIDER_CONTRACT_PROBE_CALLBACK_URL",
+        secretValue: "https://safe.example/probe-events",
+      },
+      {
+        name: "duplexd-provider-proof",
+        isImagePullSecret: false,
+        secretKey: "PROVIDER_CONTRACT_PROBE_ACTIVATION_SECRET",
+        secretValue: "activation-secret",
+      },
+    ]
+  )
+  assert.deepEqual(JSON.parse(calls[11].options.body), {
+    serviceName: "duplexd-agent",
+    buildId: BASELINE.buildId,
+    secretSet: BASELINE.secretSet,
+    autoScaling: { minAgents: 0, maxAgents: 3 },
+    agentProfile: "agent-1x",
+  })
+  assert.ok(
+    calls.every(
+      ({ options }) =>
+        options.headers.authorization === "Bearer operator-secret"
+    )
+  )
 })
 
 test("ProviderClient does not retry and redacts transport/provider failures", async () => {
@@ -663,6 +1003,585 @@ test("ProviderClient does not retry and redacts transport/provider failures", as
     assert.equal(String(error.cause).includes(credential), false)
     return true
   })
+})
+
+test("abort cleanup restores the original secret set before deleting temporary material", async () => {
+  const state = new LiveRunState(timers())
+  state.beginCase("active")
+  state.recordStart("active", "raw-session-canary")
+  const order = []
+  const result = await abortAndRestore({
+    state,
+    stopSession: async () => order.push("stop"),
+    restoreBaseline: async () => order.push(`restore:${BASELINE.secretSet}`),
+    revokePrivateKey: async () => order.push("revoke"),
+    deleteProbeSecretSet: async () => order.push("delete-secret-set"),
+    readback: async () => {
+      order.push("readback")
+      return { manifest: BASELINE, sessions: [], keys: [], secretSets: [] }
+    },
+  })
+  assert.deepEqual(order, [
+    "stop",
+    `restore:${BASELINE.secretSet}`,
+    "revoke",
+    "delete-secret-set",
+    "readback",
+  ])
+  assert.equal(result.ok, true)
+  assert.equal(
+    JSON.stringify(result.containment).includes("raw-session-canary"),
+    false
+  )
+  assert.deepEqual(result.containment, {
+    knownSessionRefs: [result.containment.knownSessionRefs[0]],
+    baselineRestored: true,
+    privateKeyRevoked: true,
+    probeSecretSetDeleted: true,
+    activeSessionRefs: [],
+  })
+})
+
+test("failed baseline restore preserves the probe secret set for containment", async () => {
+  const order = []
+  const result = await abortAndRestore({
+    state: new LiveRunState(timers()),
+    stopSession: async () => order.push("stop"),
+    restoreBaseline: async () => {
+      order.push("restore")
+      throw new Error("restore-failed")
+    },
+    revokePrivateKey: async () => order.push("revoke"),
+    deleteProbeSecretSet: async () => order.push("delete-secret-set"),
+    readback: async () => ({
+      manifest: { ...BASELINE, secretSet: "duplexd-provider-proof" },
+      sessions: [],
+      keys: [],
+      secretSets: [{ name: "duplexd-provider-proof" }],
+    }),
+  })
+  assert.deepEqual(order, ["restore", "revoke"])
+  assert.equal(result.ok, false)
+  assert.equal(result.containment.baselineRestored, false)
+  assert.equal(result.containment.probeSecretSetDeleted, false)
+  assert.match(result.cleanupErrors.join("\n"), /deletion skipped/u)
+})
+
+test("command, tunnel and browser-claim adapters are bounded and exact", async () => {
+  const spawnCalls = []
+  const spawnImpl = (command, args, options) => {
+    spawnCalls.push({ command, args, options })
+    const child = new EventEmitter()
+    queueMicrotask(() => child.emit("exit", 0, null))
+    return child
+  }
+  await runCommand("tool", ["arg"], { cwd: "/tmp", spawnImpl })
+  await createDeployCommands({
+    run: async (command, args, options) =>
+      spawnCalls.push({ command, args, options }),
+    environment: { PIPECAT_ORGANIZATION: "test-org" },
+  }).deployProbe()
+  assert.equal(spawnCalls[0].command, "tool")
+  assert.deepEqual(spawnCalls[0].args, ["arg"])
+  assert.equal(spawnCalls[1].command, "uv")
+  assert.deepEqual(spawnCalls[1].args.slice(0, 4), [
+    "run",
+    "pipecat",
+    "cloud",
+    "deploy",
+  ])
+  assert.ok(spawnCalls[1].args.includes("duplexd-provider-proof"))
+  assert.ok(spawnCalls[1].args.includes("test-org"))
+  assert.ok(spawnCalls[1].args.includes("--force"))
+  assert.ok(spawnCalls[1].args.includes("--yes"))
+
+  const process = new EventEmitter()
+  process.exitCode = null
+  process.kill = (signal) => {
+    process.exitCode = 0
+    queueMicrotask(() => process.emit("exit", 0, signal))
+  }
+  const tunnel = createNgrokTunnel({
+    spawnImpl: (...args) => {
+      spawnCalls.push({ tunnel: args })
+      return process
+    },
+    fetchImpl: async (url, options) => {
+      assert.equal(url, "http://127.0.0.1:4040/api/tunnels")
+      assert.ok(options.signal instanceof AbortSignal)
+      return jsonResponse(200, {
+        tunnels: [
+          {
+            public_url: "http://ignored.example",
+            config: { addr: "http://127.0.0.1:43123" },
+          },
+          {
+            public_url: "https://wrong.example/path",
+            config: { addr: "http://127.0.0.1:9999" },
+          },
+          {
+            public_url: "https://safe.example/path",
+            config: { addr: "http://127.0.0.1:43123" },
+          },
+        ],
+      })
+    },
+    pollDelay: async () => {},
+  })
+  assert.equal(await tunnel.open(43123), "https://safe.example/probe-events")
+  assert.equal(tunnel.publicUrl(), "https://safe.example")
+  assert.deepEqual(spawnCalls.at(-1).tunnel.slice(0, 2), [
+    "ngrok",
+    [
+      "http",
+      "http://127.0.0.1:43123",
+      "--log",
+      "stdout",
+      "--log-format",
+      "json",
+    ],
+  ])
+  await tunnel.close()
+  assert.equal(tunnel.publicUrl(), null)
+
+  const token = `header.${Buffer.from(
+    JSON.stringify({
+      properties: {
+        exp: 1_900_000_000,
+        eject_at_token_exp: true,
+        is_owner: false,
+        room_name: "synthetic-room",
+      },
+    })
+  ).toString("base64url")}.signature`
+  assert.deepEqual(decodeBrowserClaims(token), {
+    expiresAtEpochSeconds: 1_900_000_000,
+    ejectAtTokenExpiry: true,
+    isOwner: false,
+    roomScoped: true,
+  })
+  assert.throws(() => decodeBrowserClaims("not-a-jwt"), /invalid/u)
+})
+
+test("file witness writes mode-0600 volatile material, verifies input and destroys it", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "duplexd-witness-test-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const input = new PassThrough()
+  let outputText = ""
+  const output = new Writable({
+    write(chunk, _encoding, callback) {
+      outputText += chunk.toString()
+      callback()
+    },
+  })
+  const witness = await createFileOperatorWitness({
+    input,
+    output,
+    makeDirectory: async () => directory,
+  })
+  await witness.publishJoin("cold_start", {
+    dailyRoom: "room-canary",
+    dailyToken: "token-canary",
+  })
+  const joinPath = join(directory, "cold_start-join.html")
+  assert.equal((await stat(joinPath)).mode & 0o777, 0o600)
+  const expected = witness.expect("cold_start", "browser_joined")
+  input.write("cold_start:browser_joined\n")
+  assert.match(await expected, /^\d{4}-/u)
+  await witness.clearCase()
+  await assert.rejects(stat(joinPath))
+  const containment = await witness.preserveContainment({
+    reason: "cleanup-blocked",
+  })
+  assert.equal((await stat(containment)).mode & 0o777, 0o600)
+  assert.equal(outputText.includes("token-canary"), false)
+  await witness.close({ destroy: true })
+  await assert.rejects(stat(directory))
+})
+
+function liveHarness({
+  failRestore = false,
+  failStartAt = null,
+  missingUsageAt = null,
+} = {}) {
+  const order = []
+  let privateKeyPresent = false
+  let secretSetPresent = false
+  let probeActive = false
+  const sessions = new Map()
+  const callbacks = new Map()
+  let startCount = 0
+  const controlPlane = {
+    async readManifest() {
+      order.push("control:manifest")
+      return probeActive
+        ? {
+            ...BASELINE,
+            deploymentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            buildId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            imageDigest: `sha256:${"c".repeat(64)}`,
+            maxAgents: 1,
+            secretSet: "duplexd-provider-proof",
+            maxSessionDurationSeconds: 600,
+          }
+        : BASELINE
+    },
+    async listSessions() {
+      order.push("control:sessions")
+      return []
+    },
+    async listKeys() {
+      order.push("control:keys")
+      return privateKeyPresent
+        ? [{ id: "key-temp", name: "Stage A provider proof", type: "private" }]
+        : []
+    },
+    async listSecretSets() {
+      order.push("control:secret-sets")
+      return secretSetPresent
+        ? [{ name: "duplexd-provider-proof", type: "user" }]
+        : []
+    },
+    async createProbeSecretSet(values) {
+      order.push("create:secret-set")
+      assert.equal(
+        values.PROVIDER_CONTRACT_PROBE_ENABLED,
+        "stage-a-provider-proof"
+      )
+      assert.equal(values.PROVIDER_CONTRACT_PROBE_RUN_ID, "run-12345678")
+      assert.equal(
+        values.PROVIDER_CONTRACT_PROBE_CALLBACK_URL,
+        "https://safe.example/probe-events"
+      )
+      secretSetPresent = true
+    },
+    async createPrivateKey(name) {
+      order.push("create:key")
+      privateKeyPresent = true
+      return { id: "key-temp", key: "private-canary", name, type: "private" }
+    },
+    async revokeKey(id) {
+      order.push(`revoke:${id}`)
+      privateKeyPresent = false
+    },
+    async restoreBaseline(value) {
+      order.push(`restore:${value.secretSet}`)
+      if (failRestore) throw new Error("restore-canary")
+      probeActive = false
+    },
+    async deleteProbeSecretSet() {
+      order.push("delete:secret-set")
+      secretSetPresent = false
+    },
+  }
+  const provider = {
+    async readManifest() {
+      order.push("provider:manifest")
+      return {
+        ...BASELINE,
+        deploymentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        buildId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        imageDigest: `sha256:${"c".repeat(64)}`,
+        maxAgents: 1,
+        secretSet: "duplexd-provider-proof",
+        maxSessionDurationSeconds: 600,
+      }
+    },
+    async setMaxSessionDuration(seconds) {
+      order.push(`duration:${seconds}`)
+      probeActive = true
+    },
+    async start({ body }) {
+      startCount += 1
+      if (failStartAt === startCount)
+        throw new Error("start-ambiguous-canary private-canary")
+      const probe = body.providerContractProbe
+      const sessionId = `session-${startCount}-12345678`
+      sessions.set(sessionId, { stops: 0 })
+      callbacks.set(`${probe.bootId}:registered`, {
+        ...event({
+          caseId: probe.caseId,
+          bootId: probe.bootId,
+          sessionId,
+          event: "registered",
+          dailyClaims: {
+            ...event().dailyClaims,
+            expiresAtEpochSeconds: 1_800_000_300,
+          },
+        }),
+      })
+      callbacks.set(`${probe.bootId}:agent_joined`, {
+        ...event({
+          caseId: probe.caseId,
+          bootId: probe.bootId,
+          sessionId,
+          event: "agent_joined",
+          dailyClaims: {
+            ...event().dailyClaims,
+            expiresAtEpochSeconds: 1_800_000_300,
+          },
+        }),
+      })
+      callbacks.set(`${probe.bootId}:agent_left`, {
+        ...event({
+          caseId: probe.caseId,
+          bootId: probe.bootId,
+          sessionId,
+          event: "agent_left",
+          dailyClaims: {
+            ...event().dailyClaims,
+            expiresAtEpochSeconds: 1_800_000_300,
+          },
+        }),
+      })
+      const token = `header.${Buffer.from(
+        JSON.stringify({
+          properties: {
+            exp: 1_800_000_300,
+            eject_at_token_exp: true,
+            is_owner: false,
+            room_name: "synthetic-room",
+          },
+        })
+      ).toString("base64url")}.signature`
+      return {
+        sessionId,
+        dailyRoom: "https://daily.example/room",
+        dailyToken: token,
+      }
+    },
+    async stop(sessionId) {
+      order.push(`stop:${sessionId}`)
+      const current = sessions.get(sessionId)
+      current.stops += 1
+      return { status: current.stops === 1 ? 200 : 404 }
+    },
+    async session(sessionId) {
+      return {
+        sessionId,
+        endedAt: "2027-01-15T08:00:01.000Z",
+        updatedAt: "2027-01-15T08:00:02.000Z",
+        completionStatus: "stopped",
+        resourceMetrics:
+          sessionId === `session-${missingUsageAt}-12345678`
+            ? null
+            : {
+                sampleCount: 2,
+                timeseries: [{ t: 0 }, { t: 60 }],
+              },
+        billedMinutes: 0.01,
+      }
+    },
+  }
+  const collector = {
+    async listen() {
+      return { port: 43123 }
+    },
+    async close() {
+      order.push("close:collector")
+    },
+    async waitFor(bootId, callbackEvent) {
+      return callbacks.get(`${bootId}:${callbackEvent}`) ?? null
+    },
+  }
+  const tunnel = {
+    async open(port) {
+      assert.equal(port, 43123)
+      return "https://safe.example/probe-events"
+    },
+    async close() {
+      order.push("close:tunnel")
+    },
+  }
+  const containment = []
+  const witness = {
+    async publishJoin() {
+      order.push("witness:publish")
+    },
+    async expect(caseId, witnessEvent) {
+      order.push(`witness:${caseId}:${witnessEvent}`)
+      return "2027-01-15T08:00:00.000Z"
+    },
+    async clearCase() {
+      order.push("witness:clear")
+    },
+    async preserveContainment(value) {
+      containment.push(value)
+      return "/volatile/containment.json"
+    },
+    async close({ destroy }) {
+      order.push(`witness:close:${destroy}`)
+    },
+  }
+  return {
+    order,
+    controlPlane,
+    provider,
+    collector,
+    tunnel,
+    witness,
+    containment,
+    get startCount() {
+      return startCount
+    },
+  }
+}
+
+function liveEnvironment(path = "/tmp/provider-contract-evidence.json") {
+  return {
+    PROVIDER_CONTRACT_LIVE_RELEASE: "stage-a-provider-proof-live-release",
+    PROVIDER_CONTRACT_SECRET_SET_APPROVED: "duplexd-provider-proof",
+    PROVIDER_CONTRACT_RUN_ID: "run-12345678",
+    PROVIDER_CONTRACT_EVIDENCE_PATH: path,
+    PIPECAT_API_KEY: "public-canary",
+  }
+}
+
+test("live runner refuses missing release and credential gates before mutation", async () => {
+  for (const environment of [
+    {},
+    { PROVIDER_CONTRACT_LIVE_RELEASE: "stage-a-provider-proof-live-release" },
+    {
+      PROVIDER_CONTRACT_LIVE_RELEASE: "stage-a-provider-proof-live-release",
+      PROVIDER_CONTRACT_SECRET_SET_APPROVED: "duplexd-provider-proof",
+      PROVIDER_CONTRACT_RUN_ID: "run-12345678",
+      PROVIDER_CONTRACT_EVIDENCE_PATH: "/tmp/unused",
+    },
+  ]) {
+    const harness = liveHarness()
+    await assert.rejects(
+      runLiveExercise({
+        environment,
+        controlPlane: harness.controlPlane,
+        providerFactory: () => harness.provider,
+        collectorFactory: () => harness.collector,
+        tunnel: harness.tunnel,
+        witness: harness.witness,
+      }),
+      /release|approval|PIPECAT_API_KEY/u
+    )
+    assert.deepEqual(harness.order, [])
+  }
+})
+
+test("executable entry point rejects a missing release before allocating live resources", () => {
+  const executable = resolve("scripts/provider-contract/live/execute.mjs")
+  const result = spawnSync(process.execPath, [executable, "execute"], {
+    encoding: "utf8",
+    env: { PATH: process.env.PATH },
+    timeout: 2_000,
+  })
+  assert.equal(result.status, 1)
+  assert.equal(result.signal, null)
+  assert.match(result.stderr, /live provider release is not present/u)
+})
+
+test("fully injected live runner executes exactly six serial cases and sanitizes durable output", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "duplexd-live-runner-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const evidencePath = join(directory, "evidence.json")
+  const harness = liveHarness()
+  const result = await runLiveExercise({
+    environment: liveEnvironment(evidencePath),
+    controlPlane: harness.controlPlane,
+    providerFactory: ({ publicKey, privateKey }) => {
+      assert.equal(publicKey, "public-canary")
+      assert.equal(privateKey, "private-canary")
+      return harness.provider
+    },
+    deployCommands: {
+      async deployProbe() {
+        harness.order.push("deploy")
+      },
+    },
+    collectorFactory: () => harness.collector,
+    tunnel: harness.tunnel,
+    witness: harness.witness,
+    sleep: async () => {},
+    now: () => Date.parse("2027-01-15T08:00:00.000Z"),
+  })
+  assert.equal(harness.startCount, CASES.length)
+  assert.equal(result.evidence.cases.length, CASES.length)
+  assert.equal(result.cleanup.ok, true)
+  assert.ok(
+    harness.order.indexOf(`restore:${BASELINE.secretSet}`) <
+      harness.order.indexOf("delete:secret-set")
+  )
+  const serialized = await readFile(evidencePath, "utf8")
+  for (const canary of [
+    "private-canary",
+    "public-canary",
+    "daily.example",
+    "session-1-12345678",
+  ]) {
+    assert.equal(serialized.includes(canary), false)
+  }
+})
+
+test("ambiguous start failure cleans up and redacts volatile credentials from the surfaced error", async () => {
+  const harness = liveHarness({ failStartAt: 1 })
+  await assert.rejects(
+    runLiveExercise({
+      environment: liveEnvironment(),
+      controlPlane: harness.controlPlane,
+      providerFactory: () => harness.provider,
+      deployCommands: { async deployProbe() {} },
+      collectorFactory: () => harness.collector,
+      tunnel: harness.tunnel,
+      witness: harness.witness,
+      sleep: async () => {},
+      now: () => Date.parse("2027-01-15T08:00:00.000Z"),
+    }),
+    (error) => {
+      assert.match(error.message, /cleanup verified/u)
+      assert.equal(error.message.includes("private-canary"), false)
+      return true
+    }
+  )
+  assert.ok(harness.order.includes(`restore:${BASELINE.secretSet}`))
+  assert.ok(harness.order.includes("delete:secret-set"))
+})
+
+test("live runner blocks when exact-session resource usage is unavailable", async () => {
+  const harness = liveHarness({ missingUsageAt: 1 })
+  await assert.rejects(
+    runLiveExercise({
+      environment: liveEnvironment(),
+      controlPlane: harness.controlPlane,
+      providerFactory: () => harness.provider,
+      deployCommands: { async deployProbe() {} },
+      collectorFactory: () => harness.collector,
+      tunnel: harness.tunnel,
+      witness: harness.witness,
+      sleep: async () => {},
+      now: () => Date.parse("2027-01-15T08:00:00.000Z"),
+    }),
+    /cleanup verified/u
+  )
+  assert.ok(harness.order.includes(`restore:${BASELINE.secretSet}`))
+})
+
+test("failed live cleanup preserves a redacted containment record and temporary secret set", async () => {
+  const harness = liveHarness({ failRestore: true, failStartAt: 1 })
+  await assert.rejects(
+    runLiveExercise({
+      environment: liveEnvironment(),
+      controlPlane: harness.controlPlane,
+      providerFactory: () => harness.provider,
+      deployCommands: { async deployProbe() {} },
+      collectorFactory: () => harness.collector,
+      tunnel: harness.tunnel,
+      witness: harness.witness,
+      sleep: async () => {},
+    }),
+    /cleanup blocked/u
+  )
+  assert.equal(harness.order.includes("delete:secret-set"), false)
+  assert.equal(harness.containment.length, 1)
+  assert.equal(
+    JSON.stringify(harness.containment).includes("private-canary"),
+    false
+  )
 })
 
 test("secret-free evidence rejects forbidden fields, unsafe refs and raw canaries", async (t) => {
@@ -717,14 +1636,16 @@ test("preflight plan is offline and rollback command uses meaningful exits", asy
   const manifest = join(directory, "manifest.json")
   const sessions = join(directory, "sessions.json")
   const keys = join(directory, "keys.json")
+  const secretSets = join(directory, "secret-sets.json")
   await Promise.all([
     writeFile(manifest, JSON.stringify(BASELINE)),
     writeFile(sessions, "[]"),
     writeFile(keys, "[]"),
+    writeFile(secretSets, "[]"),
   ])
   const success = spawnSync(
     process.execPath,
-    [preflight, "verify-rollback", manifest, sessions, keys],
+    [preflight, "verify-rollback", manifest, sessions, keys, secretSets],
     { encoding: "utf8" }
   )
   assert.equal(success.status, 0, success.stderr)
@@ -733,11 +1654,27 @@ test("preflight plan is offline and rollback command uses meaningful exits", asy
   await writeFile(sessions, "[{}]")
   const failure = spawnSync(
     process.execPath,
-    [preflight, "verify-rollback", manifest, sessions, keys],
+    [preflight, "verify-rollback", manifest, sessions, keys, secretSets],
     { encoding: "utf8" }
   )
   assert.equal(failure.status, 1)
   assert.equal(JSON.parse(failure.stdout).ok, false)
+
+  await writeFile(sessions, "[]")
+  await writeFile(
+    secretSets,
+    JSON.stringify([{ name: "duplexd-provider-proof" }])
+  )
+  const secretSetFailure = spawnSync(
+    process.execPath,
+    [preflight, "verify-rollback", manifest, sessions, keys, secretSets],
+    { encoding: "utf8" }
+  )
+  assert.equal(secretSetFailure.status, 1)
+  assert.match(
+    JSON.parse(secretSetFailure.stdout).errors.join("\n"),
+    /secret set/u
+  )
 
   const usage = spawnSync(process.execPath, [preflight, "unknown"], {
     encoding: "utf8",
