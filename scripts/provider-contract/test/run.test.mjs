@@ -351,3 +351,15 @@ test("temporary service is absent before deploy, exclusively targeted, deleted, 
   assert.match(source, /process\.once\("SIGINT", onSignal\)/u)
   assert.match(source, /process\.once\("SIGTERM", onSignal\)/u)
 })
+
+test("temporary deploy pins the supported CLI and sets the provider ceiling exactly once", () => {
+  const source = readFileSync("scripts/provider-contract/run.mjs", "utf8")
+  assert.match(source, /"--with",\s+"pipecatcloud==0\.6\.0"/u)
+  assert.equal(source.match(/"--max-session-duration"/gu)?.length, 1)
+  assert.match(
+    source,
+    /manifest\.maxSessionDurationSeconds === LIMITS\.providerSeconds/u
+  )
+  assert.doesNotMatch(source, /provider_ceiling_set/u)
+  assert.doesNotMatch(source, /\/v1\/agents\/\$\{PROBE_AGENT\}/u)
+})

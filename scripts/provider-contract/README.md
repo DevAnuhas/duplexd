@@ -32,14 +32,15 @@ six starts, and no more than 72 billed session-minutes total.
 Five authorized runs were attempted on 2026-09-21. Every run stopped before
 case 1, so none produced a session-level acceptance observation.
 
-| Run ID                         | Last trustworthy observation                                                                                                                                                                                                                                                             |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `stage-a-20260921-a01`         | Pre-session control-plane handling failed on the provider's split public/private key-list shape. Containment cleanup completed.                                                                                                                                                          |
-| `stage-a-20260921-a01-r2`      | Pre-session aggregate readback failed. Read-only diagnosis found real manifest/build response shapes that the discarded normalizer did not handle. Containment cleanup completed.                                                                                                        |
-| `stage-a-20260921-a01-r3`      | Pre-session execution failed, but the sanitizer had discarded the operation identity. No more specific failure claim is supportable. Containment cleanup completed.                                                                                                                      |
-| `stage-a-20260921-a01-r4`      | The fixed secret-safe stage was `probe_secret_set_create`. Containment cleanup completed.                                                                                                                                                                                                |
-| `stage-a-20260921-a01-probe-1` | The disposable image built successfully in Pipecat Cloud and the deployment was created, but the CLI exited during deployment readiness monitoring. The discarded raw output prevents a narrower claim. Containment cleanup completed. See [`live-evidence.json`](live-evidence.json).   |
-| `stage-a-20260921-a01-probe-2` | The CLI reported success, but exact manifest reconciliation refused the deployment because same-service update semantics inherited `duplexd-agent-secrets`. No secret value was accessed or logged. Cleanup restored the exact baseline. See [`live-evidence.json`](live-evidence.json). |
+| Run ID                                | Last trustworthy observation                                                                                                                                                                                                                                                                                                          |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stage-a-20260921-a01`                | Pre-session control-plane handling failed on the provider's split public/private key-list shape. Containment cleanup completed.                                                                                                                                                                                                       |
+| `stage-a-20260921-a01-r2`             | Pre-session aggregate readback failed. Read-only diagnosis found real manifest/build response shapes that the discarded normalizer did not handle. Containment cleanup completed.                                                                                                                                                     |
+| `stage-a-20260921-a01-r3`             | Pre-session execution failed, but the sanitizer had discarded the operation identity. No more specific failure claim is supportable. Containment cleanup completed.                                                                                                                                                                   |
+| `stage-a-20260921-a01-r4`             | The fixed secret-safe stage was `probe_secret_set_create`. Containment cleanup completed.                                                                                                                                                                                                                                             |
+| `stage-a-20260921-a01-probe-1`        | The disposable image built successfully in Pipecat Cloud and the deployment was created, but the CLI exited during deployment readiness monitoring. The discarded raw output prevents a narrower claim. Containment cleanup completed. See [`live-evidence.json`](live-evidence.json).                                                |
+| `stage-a-20260921-a01-probe-2`        | The CLI reported success, but exact manifest reconciliation refused the deployment because same-service update semantics inherited `duplexd-agent-secrets`. No secret value was accessed or logged. Cleanup restored the exact baseline. See [`live-evidence.json`](live-evidence.json).                                              |
+| `stage-a-20260921-a01-temp-service-1` | The isolated service passed exact build/digest/min0/max1/empty-secret readback, then stopped before case 1 because the repository's Pipecat CLI 0.4.4 did not support the duration operation used by the runner. Cleanup deleted the probe service and production remained unchanged. See [`live-evidence.json`](live-evidence.json). |
 
 Across all five runs:
 
@@ -79,8 +80,9 @@ run/case/boot/session correlation match. No provider secret set or temporary
 private API key is created.
 
 `run.mjs` is the single operator program. It uses the authenticated official
-Pipecat CLI for build/deploy, exact-session stop, status and pinned-build
-rollback. Direct HTTP is limited to public-key start and exact machine-readable
+Pipecat CLI through an isolated `pipecatcloud==0.6.0` uv overlay for
+build/deploy, exact-session stop, status and deletion. Direct HTTP is limited
+to public-key start and exact machine-readable
 readbacks that the CLI does not provide. It also creates one runtime-only,
 mode-600 browser witness page using the actual room-scoped Daily token. The
 witness records only join/ejection booleans and timestamps; the token, room URL,

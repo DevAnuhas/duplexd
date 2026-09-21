@@ -280,7 +280,15 @@ async function runCommand(
     const signal = liveSignal
     const child = spawn(
       "uv",
-      ["run", "--project", "agent", "pipecat", ...args],
+      [
+        "run",
+        "--project",
+        "agent",
+        "--with",
+        "pipecatcloud==0.6.0",
+        "pipecat",
+        ...args,
+      ],
       {
         cwd: ROOT,
         detached: true,
@@ -621,6 +629,8 @@ async function deployProbe(organization, salt) {
       "1",
       "--profile",
       "agent-1x",
+      "--max-session-duration",
+      String(LIMITS.providerSeconds),
       "--organization",
       organization,
       "--no-credentials",
@@ -880,6 +890,7 @@ async function main() {
           PROBE_AGENT,
           (manifest) =>
             verifyProbeManifest(manifest, probeBuildId) &&
+            manifest.maxSessionDurationSeconds === LIMITS.providerSeconds &&
             /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(
               manifest.deploymentId
             ),
@@ -887,24 +898,10 @@ async function main() {
         )
       },
     })
-    let probeState = reconciledDeploy.state
+    const probeState = reconciledDeploy.state
     if (reconciledDeploy.diagnostic.exitCode !== 0) {
       failureDiagnostic = reconciledDeploy.diagnostic
     }
-    stage = "provider_ceiling_set"
-    await requestJson(`${ORIGIN}/v1/agents/${PROBE_AGENT}`, {
-      token: operatorToken,
-      method: "POST",
-      body: { maxSessionDuration: LIMITS.providerSeconds },
-    })
-    probeState = await waitForManifest(
-      operatorToken,
-      organization,
-      PROBE_AGENT,
-      (manifest) =>
-        manifest.maxSessionDurationSeconds === LIMITS.providerSeconds,
-      Date.now() + 120_000
-    )
     probeDeploymentId = probeState.manifest.deploymentId
 
     for (const definition of CASES) {
