@@ -2,11 +2,6 @@ name: CI
 
 on:
   pull_request:
-    # A normal opened PR is already ready for review. Draft creations and
-    # draft updates still reach this workflow on `opened`/`synchronize`, but
-    # every job below skips them. GitHub Actions has no trigger-level draft
-    # filter, and keeping `synchronize` means a ready PR is checked at its
-    # current head after later pushes.
     types: [opened, ready_for_review, synchronize, reopened]
   push:
     branches: [main]
