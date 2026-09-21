@@ -44,6 +44,7 @@ const { getAssistantForAccount, listAssistantsForAccount } =
 const { signUpNewAccount } = await import("./helpers/auth.ts")
 const { withTestPool } = await import("./helpers/database.ts")
 const { isDatabaseConfigured } = await import("./helpers/environment.ts")
+const { PRACTICE_DRAFT_2020_TOOL } = await import("./helpers/practice.ts")
 const {
   ACCEPTED_PORTS,
   ACCEPTED_SERVER_URLS,
@@ -270,7 +271,11 @@ describeDatabase("the server URL matrix, through the real save path", () => {
 
     const result = await updateAssistantAction(
       String(saved?.id),
-      formDataFor({ name, serverUrl: url })
+      formDataFor({
+        name,
+        serverUrl: url,
+        expectedRevision: String(saved?.revision),
+      })
     )
 
     expect(result.ok).toBe(false)
@@ -317,6 +322,24 @@ describeDatabase("tool-list rejection, through the real save path", () => {
     // already knows the shape from Vapi and OpenAI. A translation layer here
     // would be a second thing to learn and a mapping to get wrong.
     expect(stored).toStrictEqual(tools)
+  })
+
+  it("saves a tool with an advisory draft-2020-12 marker unchanged", async () => {
+    const name = `draft 2020 tool ${randomUUID()}`
+
+    expect(
+      await createAssistantAction(
+        formDataFor({
+          name,
+          tools: JSON.stringify([PRACTICE_DRAFT_2020_TOOL]),
+        })
+      )
+    ).toStrictEqual({ ok: true, assistantId: expect.any(String) })
+
+    const saved = (await listAssistantsForAccount(account.accountId)).find(
+      (assistant) => assistant.name === name
+    )
+    expect(saved?.tools).toStrictEqual([PRACTICE_DRAFT_2020_TOOL])
   })
 
   it.each([
@@ -423,6 +446,7 @@ describeDatabase("tool-list rejection, through the real save path", () => {
       String(saved?.id),
       formDataFor({
         name,
+        expectedRevision: String(saved?.revision),
         tools: JSON.stringify([
           {
             ...VALID_TOOL,
@@ -538,8 +562,11 @@ describeDatabase("an assistant round-trips every field", () => {
     }
 
     expect(
-      await updateAssistantAction(String(saved?.id), formDataFor(edited))
-    ).toStrictEqual({ ok: true })
+      await updateAssistantAction(
+        String(saved?.id),
+        formDataFor({ ...edited, expectedRevision: String(saved?.revision) })
+      )
+    ).toMatchObject({ ok: true, revision: 2 })
 
     const after = await getAssistantForAccount(
       account.accountId,
@@ -571,7 +598,7 @@ describeDatabase("an assistant round-trips every field", () => {
 
     expect(saved, "the assistant to archive was not created").toBeDefined()
 
-    await archiveAssistantAction(String(saved?.id))
+    await archiveAssistantAction(String(saved?.id), saved?.revision ?? 0)
 
     expect(
       (await listAssistantsForAccount(account.accountId)).map((row) => row.name)
@@ -595,11 +622,14 @@ describeDatabase("an assistant round-trips every field", () => {
       (row) => row.name === name
     )
 
-    await archiveAssistantAction(String(saved?.id))
+    await archiveAssistantAction(String(saved?.id), saved?.revision ?? 0)
 
     const result = await updateAssistantAction(
       String(saved?.id),
-      formDataFor({ name: `${name} edited` })
+      formDataFor({
+        name: `${name} edited`,
+        expectedRevision: String(saved?.revision),
+      })
     )
 
     expect(result.ok).toBe(false)

@@ -160,6 +160,10 @@ describeDatabase("agent configuration contract", () => {
       account.userId
     )
     const first = await startCall(assistantId, key.raw)
+    const assistant = (await listAssistantsForAccount(account.accountId)).find(
+      (candidate) => candidate.id === assistantId
+    )
+    expect(assistant).toBeDefined()
 
     requestHeaders.current = new Headers({ cookie: account.cookie })
     const updated = {
@@ -176,9 +180,13 @@ describeDatabase("agent configuration contract", () => {
     expect(
       await updateAssistantAction(
         assistantId,
-        assistantFormData({ name: "updated snapshot assistant", ...updated })
+        assistantFormData({
+          name: "updated snapshot assistant",
+          ...updated,
+          expectedRevision: String(assistant?.revision),
+        })
       )
-    ).toStrictEqual({ ok: true })
+    ).toMatchObject({ ok: true, revision: 2 })
 
     const firstResponse = await fetchConfig(
       agentRequest(first.callId, "config", first.agentToken, "GET"),
