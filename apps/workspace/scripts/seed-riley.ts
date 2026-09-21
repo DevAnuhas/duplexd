@@ -5,7 +5,7 @@ import { eq, sql } from "drizzle-orm"
 
 import { closeDb, getDb } from "../src/db/client.ts"
 import { assistants, users } from "../src/db/schema.ts"
-import { validateTools } from "../src/lib/validate.ts"
+import { validateServerUrl, validateTools } from "../src/lib/validate.ts"
 import { rileyDemo, rileyDemoId } from "./riley-demo.ts"
 
 class SeedInputError extends Error {}
@@ -29,6 +29,11 @@ export function parseSeedArgs(args: string[]) {
     )
   }
   const ownerEmail = values["owner-email"]?.trim().toLowerCase()
+  if (!values.help && !values.apply && values["owner-email"] !== undefined) {
+    throw new SeedInputError(
+      "--owner-email requires --apply. Omit both to preview."
+    )
+  }
   if (!values.help && values.apply && !ownerEmail) {
     throw new SeedInputError(
       "--apply requires --owner-email for an existing workspace user."
@@ -37,12 +42,21 @@ export function parseSeedArgs(args: string[]) {
   return { apply: values.apply, help: values.help, ownerEmail }
 }
 
-/** Insert only. An edited, connected, or archived seed is never overwritten. */
-export async function seedRiley(ownerEmail: string) {
+export function validatedRileyDemo() {
   const config = rileyDemo()
   const validation = validateTools(config.tools)
+  const urlIssue = validateServerUrl(config.serverUrl)
+  if (urlIssue) validation.push(urlIssue)
   if (validation.length > 0)
-    throw new SeedInputError("The demo tool schema is invalid.")
+    throw new SeedInputError(
+      `The demo configuration is invalid: ${validation.map((issue) => issue.message).join(" ")}`
+    )
+  return config
+}
+
+/** Insert only. An edited, connected, or archived seed is never overwritten. */
+export async function seedRiley(ownerEmail: string) {
+  const config = validatedRileyDemo()
 
   return getDb().transaction(async (tx) => {
     const owners = await tx
@@ -50,9 +64,14 @@ export async function seedRiley(ownerEmail: string) {
       .from(users)
       .where(sql`lower(${users.email}) = ${ownerEmail.trim().toLowerCase()}`)
       .limit(2)
-    if (owners.length !== 1) {
+    if (owners.length === 0) {
       throw new SeedInputError(
-        "Expected exactly one existing workspace user. Sign up first and check --owner-email."
+        "No workspace user matches --owner-email. Sign up first or check the email and target database."
+      )
+    }
+    if (owners.length > 1) {
+      throw new SeedInputError(
+        "Multiple workspace users match this email ignoring case. Resolve the account ambiguity before seeding."
       )
     }
     const accountId = owners[0]!.accountId
@@ -62,9 +81,13 @@ export async function seedRiley(ownerEmail: string) {
       .values({ ...config, id, accountId, serverSecrets: [] })
       .onConflictDoNothing({ target: assistants.id })
       .returning({ id: assistants.id })
+    let archived = false
     if (inserted.length === 0) {
       const existing = await tx
-        .select({ accountId: assistants.accountId })
+        .select({
+          accountId: assistants.accountId,
+          archivedAt: assistants.archivedAt,
+        })
         .from(assistants)
         .where(eq(assistants.id, id))
         .limit(1)
@@ -73,12 +96,17 @@ export async function seedRiley(ownerEmail: string) {
           "The demo identifier is already owned by another account."
         )
       }
+      archived = existing[0].archivedAt !== null
     }
     return {
-      status: inserted.length ? "created" : "already_exists",
+      status: inserted.length
+        ? "created"
+        : archived
+          ? "already_exists_archived"
+          : "already_exists",
       assistantId: id,
       accountId,
-      editorPath: `/assistants/${id}`,
+      editorPath: archived ? null : `/assistants/${id}`,
     }
   })
 }
@@ -101,7 +129,7 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
           mode: "preview",
           connected: false,
           note: "Proposed demo configuration only; no Boring Host integration or live call. Apply requires an existing workspace owner.",
-          assistant: rileyDemo(),
+          assistant: validatedRileyDemo(),
         },
         null,
         2

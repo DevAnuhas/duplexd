@@ -133,8 +133,8 @@ The fastest way to inspect a Riley configuration is:
 pnpm seed:riley
 ```
 
-This prints a **disconnected demo preview**, without connecting to a database or
-provider. It includes separate voice/backend instructions and one proposed
+This validates and prints a **disconnected demo preview**, without connecting to
+a database or provider. It includes separate voice/backend instructions and one proposed
 `get_property_information` tool for parking, checkout, and amenities. It contains
 no real property facts, guest data, phone numbers, Vapi credentials, or webhook
 secret. Voice/model values are starting points, not a claim of live compatibility.
@@ -155,7 +155,10 @@ does not create users, accounts, API keys, or calls. Run it only against the
 database you intend to change; the script cannot infer the environment from a
 connection string. Reruns preserve the existing record, including manual edits,
 connections, and archived state. Edit the assistant through the UI; an archived
-seed is not silently recreated or restored.
+seed is not silently recreated or restored. An archived rerun reports
+`already_exists_archived` with no editor link, because archived assistants are
+not accessible in the editor. `--owner-email` requires `--apply`; preview does not
+look up or select a workspace.
 
 **This is configuration preparation, not a working Boring Host integration.**
 The saved assistant intentionally has no server URL or signing secret, so call
