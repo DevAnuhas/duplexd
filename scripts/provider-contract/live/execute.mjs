@@ -61,6 +61,24 @@ export const CASES = Object.freeze([
   },
 ])
 
+const OPERATION_STAGE = Object.freeze({
+  baselineManifestPreflight: "baseline_manifest_preflight",
+  sessionPreflight: "session_preflight",
+  keyPreflight: "key_preflight",
+  secretSetPreflight: "secret_set_preflight",
+  collectorStart: "collector_start",
+  tunnelStart: "tunnel_start",
+  probeSecretSetCreate: "probe_secret_set_create",
+  privateKeyCreate: "private_key_create",
+  privateProviderClientCreate: "private_provider_client_create",
+  probeDeploy: "probe_deploy",
+  providerDurationUpdate: "provider_duration_update",
+  probeManifestReadback: "probe_manifest_readback",
+  liveEvidenceBuild: "live_evidence_build",
+  finalCleanup: "final_cleanup",
+  evidenceWrite: "evidence_write",
+})
+
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
@@ -697,6 +715,7 @@ export async function runLiveExercise({
   let probeManifest = null
   let inFlightMutation = Promise.resolve()
   const containment = { unknownAcceptedStart: false }
+  let operationStage = OPERATION_STAGE.baselineManifestPreflight
 
   function mutate(task) {
     assertRunActive(state)
@@ -804,6 +823,7 @@ export async function runLiveExercise({
 
   try {
     assertRunActive(state)
+    operationStage = OPERATION_STAGE.baselineManifestPreflight
     const baseline = await controlPlane.readManifest()
     if (
       baseline.agentName !== BASELINE.agentName ||
@@ -816,12 +836,12 @@ export async function runLiveExercise({
     ) {
       throw new Error("provider baseline does not match the pinned preflight")
     }
-    const [preflightSessions, preflightKeys, preflightSecretSets] =
-      await Promise.all([
-        controlPlane.listSessions(),
-        controlPlane.listKeys(),
-        controlPlane.listSecretSets(),
-      ])
+    operationStage = OPERATION_STAGE.sessionPreflight
+    const preflightSessions = await controlPlane.listSessions()
+    operationStage = OPERATION_STAGE.keyPreflight
+    const preflightKeys = await controlPlane.listKeys()
+    operationStage = OPERATION_STAGE.secretSetPreflight
+    const preflightSecretSets = await controlPlane.listSecretSets()
     if (preflightSessions.some((session) => session.endedAt === null)) {
       throw new Error("provider preflight found an active session")
     }
@@ -834,10 +854,13 @@ export async function runLiveExercise({
       throw new Error("provider preflight found a stale probe secret set")
     }
     assertRunActive(state)
+    operationStage = OPERATION_STAGE.collectorStart
     const address = await mutate(() => collector.listen())
+    operationStage = OPERATION_STAGE.tunnelStart
     const callbackUrl = await mutate(() => tunnel.open(address.port))
     assertRunActive(state)
     secretSetCreated = true
+    operationStage = OPERATION_STAGE.probeSecretSetCreate
     await mutate(() =>
       controlPlane.createProbeSecretSet({
         PROVIDER_CONTRACT_PROBE_ENABLED: "stage-a-provider-proof",
@@ -847,6 +870,7 @@ export async function runLiveExercise({
       })
     )
     assertRunActive(state)
+    operationStage = OPERATION_STAGE.privateKeyCreate
     const key = await mutate(() =>
       controlPlane.createPrivateKey("Stage A provider proof")
     )
@@ -855,18 +879,23 @@ export async function runLiveExercise({
     }
     privateKey = key.key
     privateKeyId = key.id
+    operationStage = OPERATION_STAGE.privateProviderClientCreate
     provider = providerFactory({ publicKey, privateKey })
     assertRunActive(state)
     probeDeployed = true
+    operationStage = OPERATION_STAGE.probeDeploy
     await mutate(() => deployCommands.deployProbe({ signal: guard.signal }))
     assertRunActive(state)
+    operationStage = OPERATION_STAGE.providerDurationUpdate
     await mutate(() => provider.setMaxSessionDuration(600))
+    operationStage = OPERATION_STAGE.probeManifestReadback
     probeManifest = await waitForProbeManifest(controlPlane, guard, { sleep })
     assertRunActive(state)
 
     const cases = []
     for (const definition of CASES) {
       assertRunActive(state)
+      operationStage = `case_${definition.caseId}`
       cases.push(
         await runCase({
           definition,
@@ -887,6 +916,7 @@ export async function runLiveExercise({
         })
       )
     }
+    operationStage = OPERATION_STAGE.liveEvidenceBuild
     const evidence = buildLiveEvidence({
       runId,
       cases,
@@ -897,18 +927,21 @@ export async function runLiveExercise({
         maxSessionDurationSeconds: probeManifest.maxSessionDurationSeconds,
       },
     })
+    operationStage = OPERATION_STAGE.finalCleanup
     const restored = await guard.abort("completed")
     if (!restored.ok)
       throw new Error("rollback verification failed; containment preserved")
+    operationStage = OPERATION_STAGE.evidenceWrite
     await writeSecretFreeEvidence(
       environment.PROVIDER_CONTRACT_EVIDENCE_PATH,
       evidence
     )
     return { evidence, cleanup: restored }
   } catch (error) {
+    const failedStage = operationStage
     const restored = await guard.abort("error")
     throw new Error(
-      `live provider exercise failed; cleanup ${restored.ok ? "verified" : "blocked"}`,
+      `live provider exercise failed at ${failedStage}; cleanup ${restored.ok ? "verified" : "blocked"}`,
       { cause: null }
     )
   } finally {

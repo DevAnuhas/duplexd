@@ -1747,6 +1747,32 @@ test("ambiguous start failure cleans up and redacts volatile credentials from th
   )
 })
 
+test("live runner reports a fixed secret-safe operation stage", async () => {
+  const harness = liveHarness()
+  harness.controlPlane.createPrivateKey = async () => {
+    throw new Error("private-key-stage-canary credential-canary")
+  }
+  await assert.rejects(
+    runLiveExercise({
+      environment: liveEnvironment(),
+      controlPlane: harness.controlPlane,
+      providerFactory: () => harness.provider,
+      deployCommands: { async deployProbe() {} },
+      collectorFactory: () => harness.collector,
+      tunnel: harness.tunnel,
+      witness: harness.witness,
+      sleep: async () => {},
+    }),
+    (error) => {
+      assert.match(error.message, /failed at private_key_create/u)
+      assert.match(error.message, /cleanup verified/u)
+      assert.equal(error.message.includes("stage-canary"), false)
+      assert.equal(error.message.includes("credential-canary"), false)
+      return true
+    }
+  )
+})
+
 test("ambiguous start without registration waits through the provider ceiling before zero-active restore", async () => {
   const harness = liveHarness({
     failStartAt: 1,
