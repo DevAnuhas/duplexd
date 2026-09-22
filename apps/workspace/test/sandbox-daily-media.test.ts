@@ -1,103 +1,9 @@
-import type { DailyCall, DailyFactoryOptions } from "@daily-co/daily-js"
-import { afterEach, describe, expect, it, vi } from "vitest"
-import { DailySandboxMedia } from "@/sandbox/client/daily-media"
-import type { SandboxJoin } from "@/sandbox/protocol"
+import type { DailyCall } from "@daily-co/daily-js"
+import { describe, expect, it, vi } from "vitest"
+import { deferred, harness, join } from "./helpers/sandbox-media/harness.ts"
 
 vi.mock("@daily-co/daily-js", () => {
   throw new Error("The injected adapter must not load the Daily SDK")
-})
-
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  let reject!: (error: Error) => void
-  const promise = new Promise<T>((yes, no) => {
-    resolve = yes
-    reject = no
-  })
-  return { promise, resolve, reject }
-}
-class Track extends EventTarget {
-  enabled = true
-  readyState = "live"
-  stop = vi.fn(() => {
-    this.readyState = "ended"
-  })
-}
-class Stream {
-  constructor(readonly tracks: Track[]) {}
-  getTracks() {
-    return this.tracks
-  }
-  getAudioTracks() {
-    return this.tracks
-  }
-}
-const join: SandboxJoin = {
-  sessionId: "synthetic-session",
-  dailyRoom: "https://synthetic.daily.co/test",
-  dailyToken: "synthetic-token",
-  expiresAt: "2026-09-22T12:10:00Z",
-}
-function harness() {
-  const track = new Track()
-  const stream = new Stream([track])
-  const context = Object.assign(new EventTarget(), {
-    state: "running",
-    destination: {},
-    resume: vi.fn(async () => {}),
-    close: vi.fn(async () => {
-      context.state = "closed"
-    }),
-    createMediaStreamSource: vi.fn(() => ({
-      connect: vi.fn(),
-      disconnect: vi.fn(),
-    })),
-  })
-  const listeners = new Map<string, Set<(event?: unknown) => void>>()
-  const call = {
-    on: vi.fn((type: string, listener: (event?: unknown) => void) => {
-      const set = listeners.get(type) ?? new Set()
-      set.add(listener)
-      listeners.set(type, set)
-    }),
-    off: vi.fn((type: string, listener: (event?: unknown) => void) => {
-      listeners.get(type)?.delete(listener)
-    }),
-    join: vi.fn<(options: unknown) => Promise<void>>(async () => {}),
-    destroy: vi.fn(async () => {}),
-    setLocalAudio: vi.fn<(enabled: boolean) => void>(() => {}),
-    participants: vi.fn((): Record<string, unknown> => ({})),
-  }
-  // Deliberately partial browser/SDK implementations, confined to the injection seam.
-  const capture = vi.fn(async () => stream as unknown as MediaStream)
-  const createCall = vi.fn<
-    (options: DailyFactoryOptions) => Promise<DailyCall>
-  >(async () => call as unknown as DailyCall)
-  const makeContext = vi.fn(() => context as unknown as AudioContext)
-  const report = vi.fn()
-  const media = new DailySandboxMedia(report, {
-    capture,
-    context: makeContext,
-    createCall,
-  })
-  return {
-    media,
-    track,
-    stream,
-    context,
-    call,
-    listeners,
-    capture,
-    createCall,
-    makeContext,
-    report,
-    emit(type: string, event?: unknown) {
-      listeners.get(type)?.forEach((fn) => fn(event))
-    },
-  }
-}
-afterEach(() => {
-  vi.unstubAllGlobals()
 })
 
 describe("Daily adapter with injected browser and SDK boundaries", () => {
@@ -240,7 +146,9 @@ describe("Daily adapter with injected browser and SDK boundaries", () => {
     h.media.stop()
   })
 
-  it("rejects late join success after stop without reconnecting output", async () => {
+  // The output half of this scenario — that no sink is attached either — is
+  // asserted in `sandbox-remote-audio.test.ts`, where a sink is observable.
+  it("rejects late join success after stop", async () => {
     const h = harness()
     await h.media.prepare()
     const joining = deferred<void>()
@@ -251,46 +159,37 @@ describe("Daily adapter with injected browser and SDK boundaries", () => {
     await outcome
     expect(h.call.destroy).toHaveBeenCalledOnce()
     expect(h.call.setLocalAudio).not.toHaveBeenCalled()
-    expect(h.context.createMediaStreamSource).not.toHaveBeenCalled()
   })
 
-  it("owns remote nodes once per track and releases all tracks, listeners, context and client once", async () => {
-    vi.stubGlobal("MediaStream", Stream)
+  /**
+   * Remote output is no longer this file's business. Playing a remote track
+   * needs a media element, and this suite runs on Node's globals with no
+   * `document` — a playable remote participant here would crash `attach()` and
+   * be reported as a failure rather than exercising anything. Everything about
+   * sinks lives in `sandbox-remote-audio.test.ts`, which installs a DOM.
+   */
+  it("releases tracks, listeners, context and client exactly once, then goes quiet", async () => {
     const h = harness()
-    const remote = new Track()
-    const replacement = new Track()
-    const participant = (track: Track, local = false) => ({
-      local,
-      session_id: local ? "local" : "remote",
-      tracks: { audio: { state: "playable", persistentTrack: track } },
-    })
-    h.call.participants.mockReturnValue({
-      local: participant(h.track, true),
-      remote: participant(remote),
-    })
     const trackRemove = vi.spyOn(h.track, "removeEventListener")
     const contextRemove = vi.spyOn(h.context, "removeEventListener")
     await h.media.prepare()
     await h.media.join(join)
-    h.emit("participant-updated")
-    expect(h.context.createMediaStreamSource).toHaveBeenCalledOnce()
-    const first = h.context.createMediaStreamSource.mock.results[0]!.value
-    expect(first.connect).toHaveBeenCalledWith(h.context.destination)
-    h.call.participants.mockReturnValue({ remote: participant(replacement) })
-    h.emit("participant-updated")
-    expect(first.disconnect).toHaveBeenCalledOnce()
-    expect(h.context.createMediaStreamSource).toHaveBeenCalledTimes(2)
-    const second = h.context.createMediaStreamSource.mock.results[1]!.value
-    h.call.participants.mockReturnValue({})
-    h.emit("participant-left")
-    expect(second.disconnect).toHaveBeenCalledOnce()
     h.track.dispatchEvent(new Event("mute"))
     h.track.dispatchEvent(new Event("ended"))
     h.context.state = "suspended"
     h.context.dispatchEvent(new Event("statechange"))
     h.emit("error")
     h.emit("left-meeting")
-    expect(h.report).toHaveBeenCalledTimes(5)
+    // One report per failure signal, in order: mute, ended, statechange, error,
+    // left-meeting. Asserting the types rather than a count keeps the number
+    // derived from the events above instead of tuned to whatever went green.
+    expect(h.report.mock.calls.map(([event]) => event.type)).toEqual([
+      "failed",
+      "failed",
+      "failed",
+      "failed",
+      "failed",
+    ])
     h.media.stop()
     h.media.stop()
     expect(h.track.stop).toHaveBeenCalledOnce()
@@ -310,6 +209,5 @@ describe("Daily adapter with injected browser and SDK boundaries", () => {
     h.context.dispatchEvent(new Event("statechange"))
     h.emit("error")
     expect(h.report).toHaveBeenCalledTimes(5)
-    expect(remote.stop).not.toHaveBeenCalled()
   })
 })

@@ -21,7 +21,8 @@ const browser: Dependencies = {
   },
 }
 
-/** Uses caller-owned input and a gesture-unlocked Web Audio output graph.
+/** Uses caller-owned input, a gesture-unlocked AudioContext, and one media
+ * element per remote speaker.
  * No SDK import, capture, network or audio work occurs in the constructor.
  */
 export class DailySandboxMedia implements SandboxMedia {
@@ -31,8 +32,9 @@ export class DailySandboxMedia implements SandboxMedia {
   private call: DailyCall | null = null
   private outputs = new Map<
     string,
-    { track: MediaStreamTrack; node: MediaStreamAudioSourceNode }
+    { track: MediaStreamTrack; sink: HTMLAudioElement }
   >()
+  private released = new WeakSet<HTMLAudioElement>()
   private interrupted = new Set<string>()
   private joined = false
   private joining = false
@@ -120,7 +122,7 @@ export class DailySandboxMedia implements SandboxMedia {
     }
   }
   private connectOutputs() {
-    if (!this.call || !this.context || this.stopped) return
+    if (!this.call || this.stopped) return
     const tracks = new Map<string, MediaStreamTrack>()
     for (const participant of Object.values(this.call.participants())) {
       if (participant.local) continue
@@ -130,18 +132,49 @@ export class DailySandboxMedia implements SandboxMedia {
     }
     for (const [id, output] of this.outputs) {
       if (tracks.get(id) !== output.track) {
-        output.node.disconnect()
+        this.release(output.sink)
         this.outputs.delete(id)
       }
     }
     for (const [id, track] of tracks) {
       if (this.outputs.has(id)) continue
-      const node = this.context.createMediaStreamSource(
-        new MediaStream([track])
-      )
-      node.connect(this.context.destination)
-      this.outputs.set(id, { track, node })
+      this.outputs.set(id, { track, sink: this.attach(track) })
     }
+  }
+  /** Remote audio needs a media element, not a Web Audio node.
+   *
+   * Chromium does not run the decoder for a remote WebRTC track that is only
+   * consumed by a MediaStreamAudioSourceNode. Measured on a loopback peer
+   * connection against this exact graph: 1224 packets and 98 KB arrived,
+   * `totalSamplesReceived` stayed at 0, and the analyser read a peak RMS of
+   * 0.000 — while the same graph fed by a *local* track read 0.355, so the
+   * measurement was sound. Attaching an element to the same stream moved it to
+   * 158,400 samples and 0.357. That is the whole of the outage on 2026-09-22:
+   * every layer reported success and nobody could hear the agent.
+   *
+   * So the element is the sink and the remote Web Audio path is gone rather
+   * than kept alongside — two sinks on one stream would play the agent twice.
+   */
+  private attach(track: MediaStreamTrack) {
+    const sink = document.createElement("audio")
+    sink.autoplay = true
+    sink.srcObject = new MediaStream([track])
+    // Held by the document so the element cannot be collected mid-call.
+    document.body.append(sink)
+    // `play()` returns nothing under jsdom, and a promise in a browser.
+    void Promise.resolve(sink.play()).catch(() => {
+      // Tearing a sink down while its `play()` is still pending rejects that
+      // promise with AbortError. That is an ordinary release, not a refusal.
+      // A genuine refusal is silence, and silence must not read as success.
+      if (!this.released.has(sink)) this.failed()
+    })
+    return sink
+  }
+  private release(sink: HTMLAudioElement) {
+    this.released.add(sink)
+    sink.pause()
+    sink.srcObject = null
+    sink.remove()
   }
   async join(join: SandboxJoin) {
     if (!this.call || this.stopped || this.joined || this.joining)
@@ -177,7 +210,7 @@ export class DailySandboxMedia implements SandboxMedia {
       track.stop()
     })
     this.stream = null
-    this.outputs.forEach(({ node }) => node.disconnect())
+    this.outputs.forEach(({ sink }) => this.release(sink))
     this.outputs.clear()
     const context = this.context
     this.context = null
