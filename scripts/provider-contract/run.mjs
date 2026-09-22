@@ -1462,6 +1462,7 @@ export async function startCollector({ store, scratch }) {
         response.writeHead(200, {
           "content-type": "text/html; charset=utf-8",
           "cache-control": "no-store",
+          "permissions-policy": "camera=(), microphone=()",
         })
         response.end(await readFile(witness.file))
         return

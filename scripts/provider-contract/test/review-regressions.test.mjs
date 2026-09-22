@@ -436,6 +436,13 @@ test("two sequential browser witnesses do not collide and retain mode 0600", asy
   assert.equal(result.error, null)
   assert.ok(result.witnesses.length > 0)
   for (const witness of result.witnesses) assert.equal(witness.mode, 0o600)
+  assert.equal(result.responses.length, 2)
+  for (const response of result.responses) {
+    assert.equal(response.status, 200)
+    assert.equal(response.contentType, "text/html; charset=utf-8")
+    assert.equal(response.cacheControl, "no-store")
+    assert.equal(response.permissionsPolicy, "camera=(), microphone=()")
+  }
 })
 
 // Review 10: both stop paths spend from the same persisted envelope.

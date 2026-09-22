@@ -7,6 +7,7 @@ import { join } from "node:path"
 const [mode, runDir] = process.argv.slice(2)
 let heldRead = false
 let releaseRead
+let witnessUrl
 if (mode === "lock") {
   const readFile = fs.readFile
   fs.readFile = async (...args) => {
@@ -22,8 +23,9 @@ if (mode === "lock") {
   }
 }
 if (mode === "witness")
-  childProcess.spawn = (command) => {
+  childProcess.spawn = (command, args) => {
     if (command !== "open") throw new Error("unexpected_test_process")
+    witnessUrl = args[0]
     const child = new EventEmitter()
     setImmediate(() => child.emit("exit", 0))
     return child
@@ -53,13 +55,26 @@ if (mode === "lock") {
   })
   const collector = await startCollector({ store, scratch: runDir })
   let error = null
+  const responses = []
   try {
-    for (const caseId of ["cold_start", "no_registration_startup"])
+    for (const caseId of ["cold_start", "no_registration_startup"]) {
       await collector.openWitness({
         caseId,
         dailyRoom: "https://synthetic.invalid",
         dailyToken: "runtime-only-token-canary",
       })
+      const url = new URL(witnessUrl)
+      if (url.hostname !== "127.0.0.1" || url.port !== String(collector.port))
+        throw new Error("unexpected_non_loopback_witness")
+      const response = await fetch(url, { signal: AbortSignal.timeout(2000) })
+      responses.push({
+        status: response.status,
+        permissionsPolicy: response.headers.get("permissions-policy"),
+        cacheControl: response.headers.get("cache-control"),
+        contentType: response.headers.get("content-type"),
+      })
+      await response.text()
+    }
   } catch (caught) {
     error = caught.code ?? caught.message
   }
@@ -72,6 +87,6 @@ if (mode === "lock") {
     })
   await collector.close()
   await store.close()
-  process.send({ type: "witnesses", error, witnesses })
+  process.send({ type: "witnesses", error, witnesses, responses })
   process.disconnect()
 }
