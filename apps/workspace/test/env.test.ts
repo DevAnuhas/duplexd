@@ -730,6 +730,16 @@ describe("the Sandbox provider binding is absent-safe", () => {
     saved.clear()
   })
 
+  /**
+   * Do not delete this for looking redundant among eight `false` assertions.
+   *
+   * It is the only case here that expects `true`, and that is the point: the
+   * other eight would all pass against a `sandboxExecutionConfigured()` that
+   * always returned `false`. Without this, the block would be decorative and
+   * would stay decorative until someone shipped a reader that never reports a
+   * configured provider. Verified by mutation — forcing the predicate to
+   * `false` fails this test and no other.
+   */
   it("CONTROL: reports execution configured while the whole binding is present", () => {
     expect(
       sandboxExecutionConfigured(),

@@ -88,13 +88,26 @@ function countdown(remaining: number) {
     : `${total}s`
 }
 
-/** Ticks once a second, and only while something is actually counting down. */
+/**
+ * Ticks once a second, and only while something is actually counting down.
+ *
+ * `performance.now()`, not `Date.now()`, and it is not a preference. The
+ * controller's deadlines are computed against its own clock, which is
+ * `performance.now()` — milliseconds since the page loaded, not a Unix epoch.
+ * Subtracting one from the other is off by about fifty-six years, and the
+ * symptom is not a subtle drift: every live call renders "Call time limit
+ * reached" the instant it connects.
+ *
+ * It is also the right clock on its own merits. A countdown wants a monotonic
+ * source, so that a system clock correction mid-call cannot make the remaining
+ * time jump backwards or stall.
+ */
 function useNow(active: boolean) {
-  const [now, setNow] = useState(() => Date.now())
+  const [now, setNow] = useState(() => performance.now())
   useEffect(() => {
     if (!active) return
-    setNow(Date.now())
-    const timer = setInterval(() => setNow(Date.now()), 1_000)
+    setNow(performance.now())
+    const timer = setInterval(() => setNow(performance.now()), 1_000)
     return () => clearInterval(timer)
   }, [active])
   return now
@@ -632,7 +645,12 @@ export function Sandbox({ assistant }: SandboxProps) {
                         : "Call time limit reached."}
                   </p>
                 )}
-                {endedReason !== null && state.mediaPhase === "off" && (
+                {/* Not gated on `mediaPhase === "off"`. Hiding the tab ends the
+                    call *through* cleanup, so the panel sits in `finishing`
+                    for a while — which is exactly when someone is staring at
+                    it wondering what went wrong. Gating on "off" hid this
+                    message during the only moments it was needed. */}
+                {endedReason !== null && panelPhase !== "live" && (
                   <p className="rounded-md border p-3 break-words">
                     {endedReason}
                   </p>

@@ -55,9 +55,22 @@ function prepared(): SandboxBrowserAttempt {
     readyAt: null,
   }
 }
-async function render(observe = false) {
+/**
+ * `readyOnPresenceCall` decides when the agent becomes ready, because both
+ * answers are real and the panel has to be right about each.
+ *
+ * The controller primes presence once inside `start()` and then renews every
+ * 15 seconds, and that priming response is how readiness first reaches the
+ * browser. An agent that is already up is ready on call 1; a cold one is not,
+ * and the panel sits in "Waiting for agent readiness" — the window the owner
+ * spent two minutes staring at with no indication of progress. Passing
+ * `Infinity` holds it in that window for as long as the test needs, which is
+ * the only way to assert the panel does not announce Ready early.
+ */
+async function render(observe = false, readyOnPresenceCall = 1) {
   let current: SandboxBrowserAttempt | null = observe ? prepared() : null
   const requests: string[] = []
+  let presenceCalls = 0
   vi.stubGlobal(
     "fetch",
     vi.fn<typeof fetch>(async (url, init) => {
@@ -102,13 +115,15 @@ async function render(observe = false) {
       // real route does. Without its own branch it fell into the generic POST
       // case below and reset the attempt to a fresh reservation.
       else if (path.endsWith("/presence")) {
+        presenceCalls += 1
         current = {
           ...current!,
           // The real route hands back the attempt as it stands, so an agent
           // that became ready shows up here. Returning a permanently
           // "starting" attempt made readiness reachable only by pressing
           // Refresh status, which is not how anyone uses this.
-          ...(current?.state === "starting"
+          ...(current?.state === "starting" &&
+          presenceCalls >= readyOnPresenceCall
             ? { state: "active" as const, readyAt: iso() }
             : {}),
           serverTime: iso(),
@@ -213,15 +228,11 @@ it("keeps enabled media behind a gesture, waits for readiness, mutes and ends lo
   await click(button("Prepare test"))
   expect(button("Start voice call").disabled).toBe(false)
   await click(button("Start voice call"))
-  expect(container!.textContent).toContain("Waiting for agent readiness")
   expect(container!.textContent).not.toContain("synthetic-token")
-  // Readiness arrives on its own, through presence renewal. Nobody should have
-  // to press anything to stop waiting.
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 450))
-  })
+  // Readiness arrives on its own, through presence. Nobody should have to press
+  // anything to stop waiting — the old flow only left this state when the
+  // person clicked Refresh status.
   expect(container!.textContent).toContain("Ready")
-  expect(container!.textContent).not.toContain("Waiting for agent readiness")
   await click(button("Mute microphone"))
   expect(fixture.media.mute).toHaveBeenCalledWith(true)
   expect(button("Unmute microphone").getAttribute("aria-pressed")).toBe("true")
@@ -258,6 +269,31 @@ it("offers one action while a call is live, and never a second reservation", asy
   // The stale notice that rendered above all of it, from an else-branch a
   // dispatched attempt also reached.
   expect(container!.textContent).not.toContain("resource cleanup remains")
+})
+
+it("counts down the readiness wait instead of leaving hung and working identical", async () => {
+  // The agent never reports ready, so the panel stays in the window the owner
+  // sat through for two minutes with nothing on screen changing.
+  await render(false, Infinity)
+  await click(button("Prepare test"))
+  await click(button("Start voice call"))
+
+  expect(container!.textContent).toContain("Waiting for agent readiness")
+  // It must not claim readiness the server has not reported.
+  expect(container!.textContent).not.toContain("Ready.")
+  // The whole point: a number that moves, so waiting is distinguishable from
+  // hung. 120 s startup deadline, rendered at seconds resolution.
+  expect(container!.textContent).toMatch(/up to \d+:\d\d left/)
+
+  // One action, and it is the one that stops a call.
+  expect(button("End call")).toBeDefined()
+  expectAbsent(
+    "Prepare test",
+    "Start voice call",
+    "Cancel preparation",
+    "Refresh status",
+    "Mute microphone"
+  )
 })
 
 it("says the tab was hidden, rather than letting it look like an agent failure", async () => {
