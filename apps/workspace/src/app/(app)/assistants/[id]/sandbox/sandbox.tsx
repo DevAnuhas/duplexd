@@ -27,6 +27,12 @@ import {
   type LocalAudioState,
 } from "@/sandbox/client/local-audio"
 import { sandboxReleased } from "@/sandbox/client/controller"
+import {
+  preparationBlock,
+  preparationBlockMessage,
+  sandboxPanelPhase,
+  type SandboxPanelPhase,
+} from "@/sandbox/client/panel-phase"
 import { DailySandboxMedia } from "@/sandbox/client/daily-media"
 import { LiveSandboxTimeline } from "@/components/sandbox/timeline"
 import { AssistantNavigation } from "../../assistant-navigation"
@@ -70,6 +76,50 @@ const scenarios: Array<{
       "Return a controlled delivery failure, without inventing a result.",
   },
 ]
+
+/** Seconds resolution, never sub-second: a deadline two minutes away is not
+ * known to the millisecond and animating it would claim precision we do not
+ * have. */
+function countdown(remaining: number) {
+  const total = Math.ceil(remaining / 1000)
+  const minutes = Math.floor(total / 60)
+  return minutes > 0
+    ? `${minutes}:${String(total % 60).padStart(2, "0")}`
+    : `${total}s`
+}
+
+/** Ticks once a second, and only while something is actually counting down. */
+function useNow(active: boolean) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!active) return
+    setNow(Date.now())
+    const timer = setInterval(() => setNow(Date.now()), 1_000)
+    return () => clearInterval(timer)
+  }, [active])
+  return now
+}
+
+const CONNECTING_LABEL: Record<string, string> = {
+  checking: "Checking local audio",
+  starting: "Starting agent",
+  joining: "Connecting audio",
+  waiting: "Waiting for agent readiness",
+}
+
+/** The headline for each phase. One phase, one thing the panel is for. */
+const PHASE_HEADLINE: Record<SandboxPanelPhase, string> = {
+  loading: "Checking existing tests…",
+  idle: "No test prepared",
+  prepared: "Test prepared · voice not started",
+  connecting: "Connecting",
+  live: "Ready",
+  reconnecting: "Reconnecting to the same call",
+  finishing: "Finishing · cleanup not yet confirmed",
+  cleanup: "Test resources still need cleanup",
+  finished: "Test resources released · review the record",
+  error: "Preparation could not continue",
+}
 
 export function Sandbox({ assistant }: SandboxProps) {
   const {
@@ -122,24 +172,67 @@ export function Sandbox({ assistant }: SandboxProps) {
   const unavailableCount = samples.filter((sample) =>
     sample.overrides.some((override) => override.name === "unavailable")
   ).length
+  const [endedReason, setEndedReason] = useState<string | null>(null)
+  const panelPhase = sandboxPanelPhase(state)
+  // Validation pending is "checking", not "broken": `issues` carries a
+  // placeholder entry until the draft validates, and calling that a
+  // configuration fault would tell people to fix something that is fine.
+  const validating = draft.validation == null
+  const previewIssues =
+    draft.source === "preview" ? readPreview(draft.fields).issues.length : 0
+  // One predicate, both consumers — the button's disabled state and the click
+  // handler's own guard read this single value.
+  const block = preparationBlock({
+    canRetryPreparation: state.canRetryPreparation,
+    busy: busy || validating,
+    unresolved,
+    locked,
+    saving: draft.saving,
+    conflict,
+    configurationIssues: draft.validation?.issues.length ?? 0,
+    sampleIssues: parsedSamples.issues.length,
+    previewIssues,
+  })
+  const counting = ["prepared", "connecting", "live", "reconnecting"].includes(
+    panelPhase
+  )
+  const now = useNow(counting)
+  const left = (deadline: number) => (deadline > 0 ? deadline - now : null)
+  const reservationLeft = left(state.deadlines.reservation)
+  const startupLeft = left(state.deadlines.startup)
+  const executionLeft = left(state.deadlines.execution)
 
   useEffect(() => {
-    const release = () => {
+    const release = (reason: string | null) => {
       audio.stop()
       controller.leave()
+      if (reason !== null) setEndedReason(reason)
       setAudioState({
         kind: "stopped",
         message: "Local audio stopped. No voice call is connected.",
         level: 0,
       })
     }
+    const leaving = () => release(null)
+    /**
+     * Say that the tab being hidden is what did it.
+     *
+     * This is not only tab-switching: the browser reports a tab as hidden when
+     * another window covers it, so a call can end because a different
+     * application was brought to the front. Without naming the cause it is
+     * indistinguishable on screen from the agent failing, which is how an
+     * attempt was lost and blamed on the product.
+     */
     const visibility = () => {
-      if (document.hidden) release()
+      if (document.hidden)
+        release(
+          "This test stopped because the browser reported this tab as hidden. Switching tabs, minimising, or another window covering this one will all do it — keep this window visible and in front for the whole call."
+        )
     }
-    window.addEventListener("pagehide", release)
+    window.addEventListener("pagehide", leaving)
     document.addEventListener("visibilitychange", visibility)
     return () => {
-      window.removeEventListener("pagehide", release)
+      window.removeEventListener("pagehide", leaving)
       document.removeEventListener("visibilitychange", visibility)
       audio.stop()
       controller.leave()
@@ -147,6 +240,10 @@ export function Sandbox({ assistant }: SandboxProps) {
   }, [audio, controller])
 
   async function prepare() {
+    // Before any side effect. This used to stop local audio and *then* decide
+    // it could not continue, which looked exactly like a dead button.
+    if (block !== null) return
+    setEndedReason(null)
     audio.stop()
     setAudioState({
       kind: "stopped",
@@ -178,15 +275,6 @@ export function Sandbox({ assistant }: SandboxProps) {
       overrides,
     }
     const preview = readPreview(draft.fields)
-    if (
-      !state.canRetryPreparation &&
-      (locked ||
-        conflict ||
-        issues.length > 0 ||
-        parsedSamples.issues.length > 0 ||
-        (draft.source === "preview" && preview.issues.length > 0))
-    )
-      return
     await controller.prepare({
       assistantId: assistant.id,
       baseRevision: draft.baseRevision,
@@ -221,7 +309,11 @@ export function Sandbox({ assistant }: SandboxProps) {
       </header>
       <AssistantNavigation assistantId={assistant.id} active="sandbox" />
 
-      {state.attempt?.execution !== "enabled" && (
+      {/* Only claim voice is unavailable when the server actually said so. The
+          condition used to be `!== "enabled"`, which is also true when there is
+          no attempt yet — so a fresh page announced that voice calls were
+          disabled before it had asked. */}
+      {state.attempt !== null && state.attempt.execution !== "enabled" && (
         <section
           aria-labelledby="availability-title"
           className="flex items-start gap-3 rounded-lg border bg-muted/30 p-5"
@@ -514,28 +606,49 @@ export function Sandbox({ assistant }: SandboxProps) {
                 aria-live="polite"
                 className="space-y-2 text-sm"
               >
-                {state.phase === "loading" && <p>Checking existing tests…</p>}
-                {state.phase === "preparing" && (
-                  <p>Preparing the selected snapshot…</p>
+                <p className="font-medium">{PHASE_HEADLINE[panelPhase]}</p>
+                {panelPhase === "prepared" && reservationLeft !== null && (
+                  <p className="text-muted-foreground">
+                    {reservationLeft > 0
+                      ? `Reservation expires in ${countdown(reservationLeft)}. Start the call before then.`
+                      : "Reservation expired. Prepare another test."}
+                  </p>
                 )}
-                {state.phase === "canceling" && <p>Canceling preparation…</p>}
+                {panelPhase === "connecting" && (
+                  <p className="text-muted-foreground">
+                    {CONNECTING_LABEL[state.mediaPhase] ?? "Connecting"}
+                    {startupLeft !== null &&
+                      (startupLeft > 0
+                        ? ` · up to ${countdown(startupLeft)} left`
+                        : " · the agent did not become ready in time")}
+                  </p>
+                )}
+                {(panelPhase === "live" || panelPhase === "reconnecting") && (
+                  <p className="text-muted-foreground">
+                    {executionLeft === null
+                      ? "Practice uses sample data."
+                      : executionLeft > 0
+                        ? `${countdown(executionLeft)} of call time left. Practice uses sample data.`
+                        : "Call time limit reached."}
+                  </p>
+                )}
+                {endedReason !== null && state.mediaPhase === "off" && (
+                  <p className="rounded-md border p-3 break-words">
+                    {endedReason}
+                  </p>
+                )}
                 {state.message !== null && (
                   <p className="break-words">{state.message}</p>
                 )}
-                {state.attempt !== null && (
-                  <div className="rounded-md border p-4">
-                    <p className="font-medium">
-                      {state.attempt.state === "prepared"
-                        ? "Test prepared · voice not started"
-                        : state.attempt.state === "canceled"
-                          ? "Preparation canceled"
-                          : state.attempt.state === "expired"
-                            ? "Preparation expired"
-                            : sandboxReleased(state.attempt)
-                              ? "Test resources released · review the record"
-                              : "Existing call · resource cleanup remains required"}
+                {block !== null &&
+                  ["idle", "finished", "error"].includes(panelPhase) && (
+                    <p className="text-muted-foreground">
+                      {preparationBlockMessage[block]}
                     </p>
-                    <p className="mt-2 text-muted-foreground">
+                  )}
+                {state.attempt !== null && panelPhase !== "finished" && (
+                  <div className="rounded-md border p-4">
+                    <p className="text-muted-foreground">
                       {state.attempt.assistantId !== assistant.id
                         ? "This test belongs to another assistant. You can inspect or cancel it here."
                         : "This is a saved Practice attempt, not a completed voice call."}
@@ -550,27 +663,51 @@ export function Sandbox({ assistant }: SandboxProps) {
                   </div>
                 )}
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  className="min-h-11"
-                  disabled={
-                    busy ||
-                    unresolved ||
-                    (!state.canRetryPreparation &&
-                      (issues.length > 0 || conflict || draft.saving)) ||
-                    (state.phase === "error" &&
-                      state.attempt === null &&
-                      !state.canRetryPreparation)
-                  }
-                  onClick={() => {
-                    void prepare()
-                  }}
-                >
-                  {state.canRetryPreparation
-                    ? "Retry same preparation"
-                    : "Prepare test"}
-                </Button>
-                {unresolved && (
+
+              {/* The primary slot. Always occupies the same place, and holds
+                  only non-destructive actions, so End call can never inherit
+                  the coordinates Start voice call had a moment earlier. */}
+              <div className="min-h-11">
+                {(panelPhase === "idle" || panelPhase === "error") && (
+                  <Button
+                    className="min-h-11 w-full"
+                    disabled={block !== null}
+                    onClick={() => {
+                      void prepare()
+                    }}
+                  >
+                    {state.canRetryPreparation
+                      ? "Retry same preparation"
+                      : "Prepare test"}
+                  </Button>
+                )}
+                {panelPhase === "prepared" && (
+                  <Button
+                    className="min-h-11 w-full"
+                    disabled={!controller.canStart()}
+                    onClick={() => {
+                      setEndedReason(null)
+                      audio.stop()
+                      void controller.start(
+                        (report) => new DailySandboxMedia(report)
+                      )
+                    }}
+                  >
+                    Start voice call
+                  </Button>
+                )}
+                {panelPhase === "finished" && state.attempt !== null && (
+                  <Button asChild className="min-h-11 w-full">
+                    <Link href={`/calls/${state.attempt.callId}`}>
+                      View test record
+                    </Link>
+                  </Button>
+                )}
+              </div>
+
+              {/* Secondary region. This is what reflows between phases. */}
+              <div className="flex flex-wrap gap-2 empty:hidden">
+                {panelPhase === "prepared" && (
                   <Button
                     variant="outline"
                     className="min-h-11"
@@ -583,92 +720,69 @@ export function Sandbox({ assistant }: SandboxProps) {
                     Cancel preparation
                   </Button>
                 )}
-                <Button
-                  variant="ghost"
-                  className="min-h-11"
-                  disabled={busy}
-                  onClick={() => {
-                    void controller.refresh()
-                  }}
-                >
-                  Refresh status
-                </Button>
+                {(panelPhase === "live" || panelPhase === "reconnecting") && (
+                  <Button
+                    variant="outline"
+                    className="min-h-11"
+                    aria-pressed={state.muted}
+                    onClick={() => controller.mute()}
+                  >
+                    {state.muted ? "Unmute microphone" : "Mute microphone"}
+                  </Button>
+                )}
+                {panelPhase === "finished" && (
+                  <Button
+                    variant="outline"
+                    className="min-h-11"
+                    disabled={block !== null}
+                    onClick={() => {
+                      void prepare()
+                    }}
+                  >
+                    Prepare another test
+                  </Button>
+                )}
+                {["cleanup", "finishing", "error"].includes(panelPhase) && (
+                  <Button
+                    variant="ghost"
+                    className="min-h-11"
+                    disabled={busy}
+                    onClick={() => {
+                      void controller.refresh()
+                    }}
+                  >
+                    Refresh status
+                  </Button>
+                )}
               </div>
-              {state.mediaPhase !== "off" && (
-                <section
-                  aria-label="Voice connection"
-                  className="space-y-3 rounded-md border p-4"
-                >
-                  <p role="status" className="font-medium">
-                    {
-                      {
-                        checking: "Checking local audio",
-                        starting: "Starting agent",
-                        joining: "Connecting audio",
-                        waiting: "Waiting for agent readiness",
-                        ready: "Ready",
-                        reconnecting: "Reconnecting to the same call",
-                        finishing: "Finishing · cleanup not yet confirmed",
-                      }[state.mediaPhase]
-                    }
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    {state.mediaPhase === "ready"
-                      ? "Local audio is connected and agent readiness is persisted. Practice uses sample data."
-                      : "Audio connection alone does not mean the agent is ready. Ending stops local audio immediately."}
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {["ready", "waiting", "reconnecting"].includes(
-                      state.mediaPhase
-                    ) && (
-                      <Button
-                        variant="outline"
-                        className="min-h-11"
-                        aria-pressed={state.muted}
-                        onClick={() => controller.mute()}
-                      >
-                        {state.muted ? "Unmute microphone" : "Mute microphone"}
-                      </Button>
-                    )}
-                    <Button
-                      variant="destructive"
-                      className="min-h-11"
-                      onClick={() => {
-                        void controller.end()
-                      }}
-                    >
-                      {state.mediaPhase === "finishing"
-                        ? "Retry stop"
-                        : "End call"}
-                    </Button>
-                  </div>
-                </section>
+
+              {/* Danger region: always last, always separated, never merged
+                  into the row above. */}
+              {["connecting", "live", "reconnecting", "finishing", "cleanup"].includes(
+                panelPhase
+              ) && (
+                <div className="border-t pt-4">
+                  <Button
+                    variant="destructive"
+                    className="min-h-11"
+                    onClick={() => {
+                      void controller.end()
+                    }}
+                  >
+                    {panelPhase === "finishing" || panelPhase === "cleanup"
+                      ? "Retry stop"
+                      : "End call"}
+                  </Button>
+                </div>
               )}
-              <div className="border-t pt-4">
-                <Button
-                  className="min-h-11 w-full"
-                  disabled={!controller.canStart()}
-                  onClick={() => {
-                    audio.stop()
-                    void controller.start(
-                      (report) => new DailySandboxMedia(report)
-                    )
-                  }}
-                  aria-describedby="voice-disabled"
-                >
-                  Start voice call
-                </Button>
-                <p
-                  id="voice-disabled"
-                  className="mt-2 text-sm text-muted-foreground"
-                >
-                  {state.attempt?.execution !== "enabled"
-                    ? "Voice execution is disabled. No microphone stream is attached to this test."
-                    : !state.ownsController
-                      ? "This tab can observe or stop this test. Only its original controller can start or join it."
-                      : "Start checks microphone and playback before dispatch. Calls are limited to 10 minutes. Keep this tab visible; hiding or leaving stops local audio."}
+
+              {panelPhase === "prepared" && (
+                <p className="text-sm text-muted-foreground">
+                  {!state.ownsController
+                    ? "This tab can observe or stop this test. Only its original controller can start or join it."
+                    : "Start checks microphone and playback before dispatch. Calls are limited to 10 minutes. Keep this window visible and in front; hiding it or switching away stops the call."}
                 </p>
-              </div>
+              )}
             </CardContent>
           </Card>
           {state.attempt && (

@@ -25,6 +25,15 @@ export type SandboxClientState = {
     | "finishing"
   muted: boolean
   ownsController: boolean
+  /** Bounds already enforced by this controller, republished on the *client*
+   * clock so the panel can count down to them without trusting the laptop's
+   * clock or hardcoding a duration. `0` means "does not apply yet".
+   *
+   * These are the same skew-corrected, monotonically clamped values the
+   * controller acts on — not a second estimate that could disagree with the
+   * deadline that actually fires. A countdown that disagreed with the thing it
+   * counts down to would be worse than no countdown. */
+  deadlines: { reservation: number; startup: number; execution: number }
 }
 
 const messages: Record<string, string> = {
@@ -156,6 +165,7 @@ export class SandboxController {
     mediaPhase: "off",
     muted: false,
     ownsController: false,
+    deadlines: { reservation: 0, startup: 0, execution: 0 },
   }
   private listeners = new Set<() => void>()
   private busy = false
@@ -500,6 +510,13 @@ export class SandboxController {
       600_000
     )
     this.observePresence(attempt.presenceExpiresAt, server, startedAt)
+    this.update({
+      deadlines: {
+        reservation: this.expires.reservation,
+        startup: this.expires.startup,
+        execution: this.expires.execution,
+      },
+    })
     if (sandboxReleased(attempt)) {
       this.releaseMedia()
       this.ownership = null

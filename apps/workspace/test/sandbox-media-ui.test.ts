@@ -104,6 +104,13 @@ async function render(observe = false) {
       else if (path.endsWith("/presence")) {
         current = {
           ...current!,
+          // The real route hands back the attempt as it stands, so an agent
+          // that became ready shows up here. Returning a permanently
+          // "starting" attempt made readiness reachable only by pressing
+          // Refresh status, which is not how anyone uses this.
+          ...(current?.state === "starting"
+            ? { state: "active" as const, readyAt: iso() }
+            : {}),
           serverTime: iso(),
           presenceExpiresAt: iso(60000),
         }
@@ -169,12 +176,30 @@ async function render(observe = false) {
   })
   return requests
 }
-function button(label: string) {
-  const node = Array.from(container!.querySelectorAll("button")).find(
+function maybeButton(label: string) {
+  return Array.from(container!.querySelectorAll("button")).find(
     (e) => e.textContent === label
   )
+}
+function button(label: string) {
+  const node = maybeButton(label)
   if (!node) throw new Error(`Missing ${label}`)
   return node
+}
+/**
+ * Absent, not merely disabled.
+ *
+ * The panel used to render every control in every phase and vary only
+ * `disabled`, which is how a live call came to offer "Prepare test" — a second
+ * reservation — next to "End call". Asserting `disabled === true` would pass
+ * against that panel, so these assert the control is not in the document.
+ */
+function expectAbsent(...labels: string[]) {
+  for (const label of labels)
+    expect(
+      maybeButton(label),
+      `${label} should not be in the document`
+    ).toBeUndefined()
 }
 afterEach(() => {
   act(() => root?.unmount())
@@ -190,10 +215,13 @@ it("keeps enabled media behind a gesture, waits for readiness, mutes and ends lo
   await click(button("Start voice call"))
   expect(container!.textContent).toContain("Waiting for agent readiness")
   expect(container!.textContent).not.toContain("synthetic-token")
-  await click(button("Refresh status"))
-  expect(
-    container!.querySelector('[aria-label="Voice connection"]')!.textContent
-  ).toContain("Ready")
+  // Readiness arrives on its own, through presence renewal. Nobody should have
+  // to press anything to stop waiting.
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 450))
+  })
+  expect(container!.textContent).toContain("Ready")
+  expect(container!.textContent).not.toContain("Waiting for agent readiness")
   await click(button("Mute microphone"))
   expect(fixture.media.mute).toHaveBeenCalledWith(true)
   expect(button("Unmute microphone").getAttribute("aria-pressed")).toBe("true")
@@ -202,8 +230,53 @@ it("keeps enabled media behind a gesture, waits for readiness, mutes and ends lo
   expect(container!.textContent).toContain(
     "Finishing · cleanup not yet confirmed"
   )
-  expect(button("Prepare test").disabled).toBe(true)
+  expectAbsent("Prepare test", "Start voice call", "Cancel preparation")
   expect(requests.filter((p) => p.endsWith("/start"))).toHaveLength(1)
+})
+
+it("offers one action while a call is live, and never a second reservation", async () => {
+  await render()
+  await click(button("Prepare test"))
+  await click(button("Start voice call"))
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 450))
+  })
+  expect(container!.textContent).toContain("Ready")
+  // The complaint this ticket started from: mid-call the panel showed Prepare
+  // test, Cancel preparation, Refresh status, Start voice call, Mute and End
+  // call at once, and offered to prepare another test during a live call.
+  expectAbsent(
+    "Prepare test",
+    "Start voice call",
+    "Cancel preparation",
+    "Refresh status",
+    "Retry same preparation",
+    "Prepare another test"
+  )
+  expect(button("End call")).toBeDefined()
+  expect(button("Mute microphone")).toBeDefined()
+  // The stale notice that rendered above all of it, from an else-branch a
+  // dispatched attempt also reached.
+  expect(container!.textContent).not.toContain("resource cleanup remains")
+})
+
+it("says the tab was hidden, rather than letting it look like an agent failure", async () => {
+  await render()
+  await click(button("Prepare test"))
+  await click(button("Start voice call"))
+  await act(async () => {
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      get: () => true,
+    })
+    document.dispatchEvent(new Event("visibilitychange"))
+  })
+  expect(fixture.media.stop).toHaveBeenCalled()
+  expect(container!.textContent).toContain("reported this tab as hidden")
+  Object.defineProperty(document, "hidden", {
+    configurable: true,
+    get: () => false,
+  })
 })
 it("observes another tab without taking over or enabling Start", async () => {
   const requests = await render(true)
@@ -222,5 +295,9 @@ it("stops the injected capture on page hide without reconnecting on return", asy
   expect(fixture.media.stop).toHaveBeenCalledOnce()
   await act(async () => window.dispatchEvent(new Event("focus")))
   expect(fixture.media.prepare).toHaveBeenCalledOnce()
-  expect(button("Start voice call").disabled).toBe(true)
+  // The attempt was dispatched and is not confirmed stopped, so what is owed
+  // is cleanup — not another call. Asserting a *disabled* Start button would
+  // have accepted a panel that still offered one.
+  expectAbsent("Start voice call", "Prepare test")
+  expect(button("Retry stop")).toBeDefined()
 })
