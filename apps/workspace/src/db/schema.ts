@@ -452,9 +452,38 @@ export const callEvents = pgTable(
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
     type: text("type").notNull(),
     payload: jsonb("payload"),
+    ingestCursor: integer("ingest_cursor"),
+    contentDigest: text("content_digest"),
+    byteLength: integer("byte_length"),
   },
-  (table) => [primaryKey({ columns: [table.callId, table.seq] })]
+  (table) => [
+    primaryKey({ columns: [table.callId, table.seq] }),
+    uniqueIndex("call_events_ingest_cursor_idx").on(
+      table.callId,
+      table.ingestCursor
+    ),
+  ]
 )
+
+/** Sandbox-only delivery ledger; legacy Integration events remain untouched. */
+export const sandboxEvidence = pgTable("sandbox_evidence", {
+  callId: text("call_id")
+    .primaryKey()
+    .references(() => calls.id, { onDelete: "cascade" }),
+  lastCursor: integer("last_cursor").notNull().default(0),
+  totalEvents: integer("total_events").notNull().default(0),
+  totalBytes: integer("total_bytes").notNull().default(0),
+  contiguousSeq: integer("contiguous_seq").notNull().default(0),
+  finalSeq: integer("final_seq"),
+  completionDigest: text("completion_digest"),
+  producerLoss: boolean("producer_loss").notNull().default(false),
+  truncated: boolean("truncated").notNull().default(false),
+  integrityConflict: boolean("integrity_conflict").notNull().default(false),
+  reconciled: boolean("reconciled").notNull().default(false),
+  lastEmptyAt: timestamp("last_empty_at", { withTimezone: true }),
+  invalidWindowAt: timestamp("invalid_window_at", { withTimezone: true }),
+  invalidCount: integer("invalid_count").notNull().default(0),
+})
 
 /**
  * Atomic fixed-window counters for call creation.

@@ -1,3 +1,11 @@
+import { mkdtemp, readFile, writeFile, copyFile, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { fileURLToPath } from "node:url"
+import { randomUUID } from "node:crypto"
+import { drizzle } from "drizzle-orm/node-postgres"
+import { migrate } from "drizzle-orm/node-postgres/migrator"
+
 import { beforeAll, describe, expect, it } from "vitest"
 
 import { applyMigrations as applyApplicationMigrations } from "@/db/migrate"
@@ -317,3 +325,93 @@ async function snapshot(): Promise<{
     }
   })
 }
+
+describeDatabase(
+  "additive A04 migration over existing Integration data",
+  () => {
+    it("preserves legacy call/event records and leaves new event metadata nullable", async () => {
+      const source = fileURLToPath(new URL("../drizzle/", import.meta.url))
+      const staging = await mkdtemp(join(tmpdir(), "duplexd-a04-migration-"))
+      const journal = JSON.parse(
+        await readFile(join(source, "meta/_journal.json"), "utf8")
+      ) as {
+        entries: Array<{ tag: string; idx: number; when: number }>
+      }
+      const a04 = journal.entries.findIndex(
+        (entry) => entry.tag === "0007_famous_iron_man"
+      )
+      expect(a04).toBe(7)
+      const old = { ...journal, entries: journal.entries.slice(0, a04) }
+      const { mkdir } = await import("node:fs/promises")
+      await mkdir(join(staging, "meta"))
+      await writeFile(join(staging, "meta/_journal.json"), JSON.stringify(old))
+      for (const entry of old.entries)
+        await copyFile(
+          join(source, `${entry.tag}.sql`),
+          join(staging, `${entry.tag}.sql`)
+        )
+      const accountId = randomUUID()
+      const callId = randomUUID()
+      try {
+        await withTestPool(async (pool) => {
+          await pool.query("DROP SCHEMA IF EXISTS drizzle CASCADE")
+          await pool.query("DROP SCHEMA IF EXISTS public CASCADE")
+          await pool.query("CREATE SCHEMA public")
+          await migrate(drizzle(pool), { migrationsFolder: staging })
+          await pool.query(
+            "INSERT INTO accounts (id, name) VALUES ($1, 'synthetic migration account')",
+            [accountId]
+          )
+          await pool.query(
+            `INSERT INTO calls (id, account_id, assistant_snapshot, state, duration_secs)
+          VALUES ($1, $2, '{}', 'ended', 12.345)`,
+            [callId, accountId]
+          )
+          await pool.query(
+            `INSERT INTO call_events (call_id, seq, at, type, payload)
+          VALUES ($1, 1, '2026-09-22T00:00:00Z', 'transcript_user', '{"text":"synthetic historical event"}')`,
+            [callId]
+          )
+        })
+        expect(await applyApplicationMigrations()).toEqual({
+          before: 7,
+          after: 8,
+          applied: 1,
+        })
+        await withTestPool(async (pool) => {
+          const call = await pool.query(
+            "SELECT state, source, duration_secs FROM calls WHERE id = $1",
+            [callId]
+          )
+          expect(call.rows).toEqual([
+            { state: "ended", source: "integration", duration_secs: "12.345" },
+          ])
+          const events = await pool.query(
+            "SELECT seq, payload, ingest_cursor, content_digest, byte_length FROM call_events WHERE call_id = $1",
+            [callId]
+          )
+          expect(events.rows).toEqual([
+            {
+              seq: 1,
+              payload: { text: "synthetic historical event" },
+              ingest_cursor: null,
+              content_digest: null,
+              byte_length: null,
+            },
+          ])
+          expect(
+            (
+              await pool.query(
+                "SELECT * FROM sandbox_evidence WHERE call_id = $1",
+                [callId]
+              )
+            ).rows
+          ).toEqual([])
+        })
+        expect((await applyApplicationMigrations()).applied).toBe(0)
+      } finally {
+        await rm(staging, { recursive: true, force: true })
+      }
+    })
+  }
+)

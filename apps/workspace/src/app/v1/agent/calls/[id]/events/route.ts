@@ -2,6 +2,8 @@ import { AGENT_EVENT_TYPES, AGENT_SEQUENCE_LIMIT } from "@/control/constants"
 import { agentAuthProblem, requireAgentToken } from "@/control/agent-http"
 import { json, problem, readJsonObject } from "@/control/http"
 import { ingestAgentEvents, type AgentEventInput } from "@/data/calls"
+import { handleSandboxEvidence } from "@/sandbox/evidence-http"
+import { SANDBOX_PROTOCOL_HEADER } from "@/sandbox/protocol"
 
 const acceptedTypes = new Set(AGENT_EVENT_TYPES)
 const RFC3339_TIMESTAMP =
@@ -71,6 +73,8 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ): Promise<Response> {
+  if (request.headers.has(SANDBOX_PROTOCOL_HEADER))
+    return handleSandboxEvidence(request, (await params).id, "events")
   const credential = requireAgentToken(request)
   if (!credential.ok) {
     return credential.response

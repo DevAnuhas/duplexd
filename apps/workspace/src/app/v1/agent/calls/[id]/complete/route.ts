@@ -2,6 +2,8 @@ import { AGENT_END_REASONS, type AgentEndReason } from "@/control/constants"
 import { agentAuthProblem, requireAgentToken } from "@/control/agent-http"
 import { json, problem, readJsonObject } from "@/control/http"
 import { completeAgentCall } from "@/data/calls"
+import { handleSandboxEvidence } from "@/sandbox/evidence-http"
+import { SANDBOX_PROTOCOL_HEADER } from "@/sandbox/protocol"
 
 const acceptedReasons = new Set<string>(AGENT_END_REASONS)
 
@@ -9,6 +11,8 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ): Promise<Response> {
+  if (request.headers.has(SANDBOX_PROTOCOL_HEADER))
+    return handleSandboxEvidence(request, (await params).id, "complete")
   const credential = requireAgentToken(request)
   if (!credential.ok) {
     return credential.response

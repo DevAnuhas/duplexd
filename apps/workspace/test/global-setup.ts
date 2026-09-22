@@ -60,6 +60,7 @@ export const DATABASE_BACKED_FILES = [
   // A03 Sandbox foundations.
   "sandbox-foundation",
   "sandbox-lifecycle",
+  "sandbox-evidence",
   // Riley demo seed.
   "riley-seed-database",
 ] as const
