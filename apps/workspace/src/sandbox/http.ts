@@ -1,6 +1,10 @@
+import { noStoreJson, requireWorkspaceMutation } from "@/lib/workspace-mutation"
+
 import {
   hashSandboxControllerProof,
   SANDBOX_CONTROLLER_HEADER,
+  SANDBOX_EXECUTION_DISABLED_CODE,
+  type SandboxAttemptDto,
 } from "./admission"
 
 export function sandboxProblem(
@@ -131,4 +135,103 @@ export async function requireEmptyJsonBody(
           "This Sandbox request body must be empty."
         ),
       }
+}
+
+/**
+ * The browser-owned preamble every execution route shares: an authenticated
+ * mutation, a tab controller proof, an empty body, and the attempt id.
+ *
+ * Start, join and presence used to be one exported handler because all three
+ * did the same thing — refuse. Now that they do three different things, the
+ * part that is genuinely identical is this, and it is the part worth sharing:
+ * duplicating the proof and body checks per route is how one of them
+ * eventually stops checking.
+ */
+export async function requireSandboxBrowserOwner(
+  request: Request,
+  params: Promise<{ id: string }>
+): Promise<
+  | {
+      ok: true
+      owner: {
+        accountId: string
+        userId: string
+        attemptId: string
+        controllerProofHash: string
+      }
+    }
+  | { ok: false; response: Response }
+> {
+  const session = await requireWorkspaceMutation(request)
+  if (!session.ok) return { ok: false, response: session.response }
+  const controller = controllerProofHashFromRequest(request)
+  if (!controller.ok) return controller
+  const body = await requireEmptyJsonBody(request)
+  if (!body.ok) return body
+  const { id } = await params
+  return {
+    ok: true,
+    owner: {
+      accountId: session.account.accountId,
+      userId: session.account.userId,
+      attemptId: id,
+      controllerProofHash: controller.hash,
+    },
+  }
+}
+
+/**
+ * The response for an execution result that is not the success this route
+ * wanted. Each route checks its own success kind first, so this never has to
+ * guess which kind counted as success.
+ *
+ * `disabled` is the configuration boundary and keeps its 503 and its attempt
+ * body, so the browser can distinguish "this deployment does not do voice
+ * calls" from "your attempt is no longer usable". Everything else is a
+ * conflict: the attempt exists and belongs to the caller, but its state does
+ * not permit the operation — `unavailable`, `expired`, `unchanged`,
+ * `already_claimed`, `identity_conflict`. The `kind` is returned verbatim as
+ * the code because the client maps unknown codes to a generic message anyway,
+ * and an invented code would make the server log and the client disagree.
+ */
+export function sandboxExecutionProblem(
+  result: { kind: string; attempt?: SandboxAttemptDto },
+  action: "start" | "join" | "renew"
+): Response {
+  switch (result.kind) {
+    case "not_found":
+      return sandboxProblem(
+        404,
+        "attempt_not_found",
+        "The attempt was not found."
+      )
+    case "not_owner":
+      return sandboxProblem(
+        403,
+        "attempt_not_owned",
+        `Only the initiating user can ${action} this attempt.`
+      )
+    case "invalid_controller":
+      return sandboxProblem(
+        403,
+        "invalid_controller_proof",
+        "The Sandbox tab controller proof is invalid."
+      )
+    case "disabled":
+      return noStoreJson(
+        {
+          code: SANDBOX_EXECUTION_DISABLED_CODE,
+          detail:
+            "This deployment is not configured to run Sandbox voice calls.",
+          attempt: result.attempt,
+        },
+        503
+      )
+    default:
+      return sandboxProblem(
+        409,
+        result.kind,
+        "The attempt is no longer in a state that allows this request."
+      )
+  }
 }

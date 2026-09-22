@@ -1,6 +1,6 @@
 # 014: Develop the Sandbox lifecycle offline behind a closed production boundary
 
-Status: accepted
+Status: accepted; one sentence superseded by [015](015-server-configured-sandbox-execution.md)
 Date: 2026-09-22
 
 ## Context

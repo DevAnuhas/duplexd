@@ -164,22 +164,25 @@ function normalizeRead(
 }
 
 /**
- * Production exports the no-transport instance below. No environment variable,
- * browser argument or route can opt into dispatch. Explicit dependency injection
- * exercises the durable offline protocol, not provider capability or admission.
+ * Without a provider this refuses every execution-bearing operation, and that
+ * is still the shape production has until it is configured — see ADR 015 and
+ * `sandbox/provider.ts`, the one module allowed to read the environment and
+ * supply one. No browser argument or route can opt into dispatch, and nothing
+ * in here reads `process.env`; a test injecting a fake provider exercises the
+ * durable protocol, not provider capability or admission.
  */
-export function createSandboxLifecycle(offline?: {
+export function createSandboxLifecycle(provider?: {
   transport: SandboxTransport
   binding: SandboxBinding
   apiBase: string
   now?: () => Date
 }) {
-  if (offline && !Object.values(offline.binding).every(validSandboxIdentity))
+  if (provider && !Object.values(provider.binding).every(validSandboxIdentity))
     throw new Error("Invalid independent Sandbox binding.")
-  const now = () => offline?.now?.() ?? new Date()
+  const now = () => provider?.now?.() ?? new Date()
 
   async function dispatch(input: BrowserOwner) {
-    if (!offline) return refuseDisabledSandboxExecution(input)
+    if (!provider) return refuseDisabledSandboxExecution(input)
     await expireSandboxReservations(now())
     const decision = await getDb().transaction(async (tx) => {
       const row = await locked(tx, input.attemptId)
@@ -230,10 +233,10 @@ export function createSandboxLifecycle(offline?: {
       result = normalizeStart(
         // Abort remote work at its deadline, but never detach an observed
         // identity's transaction. Settlement owns the original admission slot.
-        await offline.transport.start(
+        await provider.transport.start(
           {
             callId: decision.callId,
-            apiBase: offline.apiBase,
+            apiBase: provider.apiBase,
             agentToken: decision.agentToken,
           },
           dispatchController.signal,
@@ -576,7 +579,7 @@ export function createSandboxLifecycle(offline?: {
     | { kind: "ok"; join: SandboxJoin }
     | Awaited<ReturnType<typeof refuseDisabledSandboxExecution>>
   > {
-    if (!offline) return refuseDisabledSandboxExecution(input)
+    if (!provider) return refuseDisabledSandboxExecution(input)
     return getDb().transaction(async (tx) => {
       const row = await locked(tx, input.attemptId)
       const denied = browserFailure(row, input)
@@ -613,7 +616,7 @@ export function createSandboxLifecycle(offline?: {
   }
 
   async function presence(input: BrowserOwner) {
-    if (!offline) return refuseDisabledSandboxExecution(input)
+    if (!provider) return refuseDisabledSandboxExecution(input)
     return getDb().transaction(async (tx) => {
       const row = await locked(tx, input.attemptId)
       const denied = browserFailure(row, input)
@@ -661,7 +664,15 @@ export function createSandboxLifecycle(offline?: {
       attemptId: input.attemptId,
       now: now(),
     })
-    return { ...canceled, attempt: attempt ?? canceled.attempt }
+    // The kind is about what this deployment could actually do about the
+    // provider's copy of the call, not about what the row now says. With a
+    // provider, `reconcile` has already asked it to terminate the session and
+    // recorded what came back, so reporting "cleanup disabled" would be a
+    // stale claim from the era when there was nothing to ask.
+    return {
+      kind: provider ? ("stopped" as const) : canceled.kind,
+      attempt: attempt ?? canceled.attempt,
+    }
   }
 
   async function reconcile(attemptId: string): Promise<void> {
@@ -675,7 +686,7 @@ export function createSandboxLifecycle(offline?: {
           .where(eq(sandboxAttempts.id, attemptId))
       }
     })
-    if (!offline) return
+    if (!provider) return
     const references = await getDb()
       .select()
       .from(sandboxSessions)
@@ -708,7 +719,7 @@ export function createSandboxLifecycle(offline?: {
       try {
         evidence = normalizeRead(
           await bounded((signal) =>
-            offline.transport.read(reference.sessionId, signal)
+            provider.transport.read(reference.sessionId, signal)
           )
         )
       } catch {
@@ -717,10 +728,10 @@ export function createSandboxLifecycle(offline?: {
       const matched =
         evidence.kind === "session" &&
         evidence.sessionId === reference.sessionId &&
-        evidence.binding.organizationId === offline.binding.organizationId &&
-        evidence.binding.serviceId === offline.binding.serviceId &&
-        evidence.binding.deploymentId === offline.binding.deploymentId &&
-        evidence.binding.agentName === offline.binding.agentName
+        evidence.binding.organizationId === provider.binding.organizationId &&
+        evidence.binding.serviceId === provider.binding.serviceId &&
+        evidence.binding.deploymentId === provider.binding.deploymentId &&
+        evidence.binding.agentName === provider.binding.agentName
       const blocked =
         evidence.kind === "forbidden" ||
         (evidence.kind === "session" && !matched)
@@ -766,7 +777,7 @@ export function createSandboxLifecycle(offline?: {
       if (retryDelay !== null) {
         try {
           await bounded((signal) =>
-            offline.transport.stop(reference.sessionId, signal)
+            provider.transport.stop(reference.sessionId, signal)
           )
         } catch {
           /* Never infer termination from the DELETE result. */
@@ -874,5 +885,3 @@ export function createSandboxLifecycle(offline?: {
     current,
   }
 }
-
-export const sandboxLifecycle = createSandboxLifecycle()

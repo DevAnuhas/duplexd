@@ -14,7 +14,7 @@ Tool webhooks are called from the agent, not from the developer's machine, so a 
 
 **Workspace and control API: Vercel.** Next.js pages and route handlers run as serverless functions; the live media path belongs to the Pipecat agent, so the platform has no long-lived socket that justifies a permanent server. [ADR 011](decisions/011-vercel-hosting.md) records the decision and supersedes ADR 005 for this layer.
 
-**Agent: Pipecat Cloud.** The agent image is built and deployed by `pipecat cloud deploy`, with the provider key and the platform token held in a Pipecat Cloud secret set. `min_agents = 0` at launch, with `max_agents` set as a cost guard; cold start is measured on a real call rather than paid for in advance. Self-hosted regions are available if pricing or data residency demands them.
+**Agent: Pipecat Cloud.** The agent image is built and deployed by `pipecat cloud deploy` from `agent/`, which uses Pipecat Cloud Build when `pcc-deploy.toml` names no image, with the provider key and the platform token held in the `duplexd-agent-secrets` secret set. `min_agents = 0` and `max_agents = 1`; cold start is measured on a real call rather than paid for in advance. Every deploy produces a new deployment UUID, which must be written back to `PIPECAT_DEPLOYMENT_ID` wherever the workspace runs — see [DEPLOYMENT.md](DEPLOYMENT.md). Self-hosted regions are available if pricing or data residency demands them.
 
 **Database: Neon.** Postgres with Drizzle migrations. The Neon-Managed Vercel integration gives each preview an isolated branch; production migration is staged before promotion. See [DEPLOYMENT.md](DEPLOYMENT.md).
 
@@ -54,6 +54,24 @@ The platform's own `call_id` is the join key across call records, agent logs, Pi
 **The database layer enforces the last part of that rule rather than trusting it.** A failing query carries its bound parameters into the error it throws, so `src/db/redact.ts` wraps the client and strips every bound value from the error's message, its stack, and its own properties before anything can log it — keeping the parameterised SQL and pg's diagnostics, which carry no values. It strips _all_ parameters rather than secret-shaped ones, because from P05 the payloads written to `call_events` are transcripts, and a failing insert there would otherwise put a caller's own words into the log aggregator. If you add a database client rather than using `getDb()`, you leave that protection behind.
 
 An API key cannot be recovered. The row holds a prefix and a hash, so support cannot read a customer's key back to them — a lost key is replaced by minting a new one and revoking the old. Revocation is a soft delete: the row survives so calls already made with it stay attributable.
+
+## What bounds a Sandbox voice call
+
+Sandbox execution is enabled by server configuration ([ADR 015](decisions/015-server-configured-sandbox-execution.md)). The bound on a running call is operational, and it is worth being precise about which parts are enforced where, because three of the five are ours and only two belong to the provider:
+
+| Bound | Enforced by | Effect |
+| --- | --- | --- |
+| Execution deadline, 600 s from dispatch | Platform, durable on the call row | `advanceSandboxExecution` requests a stop; the call ends `execution_deadline` |
+| Daily room expiry, set to the same instant with `eject_at_room_exp` | Provider | The browser and the agent are ejected from the room |
+| Presence lease, 60 s, renewed every 15 s by the tab | Platform | A closed or hidden tab ends the call rather than leaving it running |
+| Startup deadline, 120 s | Platform | An agent that never reaches readiness ends the call `startup_deadline` |
+| Watchdog, polling control every 3 s | Agent | The agent stops itself when the platform says stop |
+| Sweep, every five minutes | Platform + provider private API | Unresolved sessions get a session `DELETE`, up to three attempts |
+| `max_agents = 1`, spend cap | Provider | A bug cannot fan out into many paid sessions |
+
+**Pipecat's deploy configuration has no session-duration field.** `pcc-deploy.toml` accepts `min_agents`, `max_agents`, the secret set, the profile and the region, and nothing else that bounds a session's length. Anything claiming a provider-enforced session ceiling is describing the room expiry above, which is a Daily room property this platform sets per start — so the ceiling holds because the start request sets it, not because the deployment does.
+
+Termination is never inferred. A `DELETE` acknowledgement, a 404, an empty listing or elapsed time are all non-evidence; only a session read reporting `endedAt` with a completion status marks a resource confirmed stopped.
 
 ## Call liveness and recovery
 

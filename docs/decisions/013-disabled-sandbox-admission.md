@@ -1,6 +1,6 @@
 # 013: Sandbox admission is durable and execution is gated server-side
 
-Status: accepted
+Status: accepted; one requirement superseded by [015](015-server-configured-sandbox-execution.md)
 Date: 2026-09-21
 
 ## Context

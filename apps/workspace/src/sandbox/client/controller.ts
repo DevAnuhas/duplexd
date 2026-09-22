@@ -753,7 +753,18 @@ export class SandboxController {
       const remaining = Date.parse(expiry) - Date.parse(server)
       if (!Number.isFinite(remaining) || remaining <= 0)
         throw new Error("lease")
-      this.observePresence(expiry, Date.parse(server), response.startedAt)
+      // The renewal carries the attempt, which is the only thing that observes
+      // readiness once audio is connected: nothing else polls while a call is
+      // running, and a call whose `readyAt` is never seen here is torn down by
+      // `validExecution` at the startup deadline. `observe` renews the lease on
+      // the way through, so this is the renewal, not an extra step after it.
+      const attempt = attemptFrom(response.data?.attempt)
+      if (attempt !== null && attempt.attemptId === owner.attemptId) {
+        this.update({ attempt, statusKnown: true })
+        this.observe(attempt, response.startedAt)
+      } else {
+        this.observePresence(expiry, Date.parse(server), response.startedAt)
+      }
     } catch {
       if (epoch === this.generation)
         void this.end(

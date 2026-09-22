@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { and, count, eq, inArray, isNull, lt, lte, sql } from "drizzle-orm"
 
 import { getDb } from "@/db/client"
+import { sandboxExecutionConfigured } from "@/db/env"
 import {
   accounts,
   assistantSamples,
@@ -20,7 +21,6 @@ import {
 } from "@/practice/configuration"
 import { parsePracticeSampleDefinitions } from "@/practice/samples"
 
-export const SANDBOX_EXECUTION_ENABLED = false as const
 export const SANDBOX_EXECUTION_DISABLED_CODE =
   "sandbox_execution_disabled" as const
 export const SANDBOX_CONTROLLER_HEADER = "x-duplexd-controller-proof"
@@ -63,7 +63,7 @@ export type SandboxAttemptDto = {
   canceledAt: string | null
   expiredAt: string | null
   stopRequestedAt: string | null
-  execution: "disabled"
+  execution: "disabled" | "enabled"
   resourceState: string
   startupDeadline: string | null
   executionDeadline: string | null
@@ -275,7 +275,10 @@ function projectAttempt(
     canceledAt: row.canceledAt?.toISOString() ?? null,
     expiredAt: row.expiredAt?.toISOString() ?? null,
     stopRequestedAt: row.attemptStopRequestedAt?.toISOString() ?? null,
-    execution: "disabled",
+    // The browser offers Start on "enabled" alone, so this must report what
+    // the routes will actually do rather than a constant. Both read the one
+    // predicate in `db/env.ts`; see ADR 015.
+    execution: sandboxExecutionConfigured() ? "enabled" : "disabled",
     resourceState: row.resourceState,
     startupDeadline: row.startupDeadline?.toISOString() ?? null,
     executionDeadline: row.executionDeadline?.toISOString() ?? null,

@@ -69,7 +69,33 @@ export function loadTestEnvironment(): void {
       process.env[name] = value
     }
   }
+
+  for (const name of SANDBOX_PROVIDER_VARIABLES) {
+    delete process.env[name]
+  }
 }
+
+/**
+ * The variables that decide whether Sandbox execution exists, cleared above so
+ * the suite always starts from "not configured".
+ *
+ * Unlike `DATABASE_URL`, these do not select *where* a test runs — they change
+ * *what the code does*, and a developer who has configured a real provider in
+ * `.env.local` to place a live call would otherwise run a different suite from
+ * CI: Start offered instead of refused, dispatch attempted instead of 503. The
+ * two would disagree about which behaviour is correct and the disagreement
+ * would surface as a flaky-looking failure on someone else's machine.
+ *
+ * A test that wants the configured path says so with `vi.stubEnv`, which is
+ * also the only way to assert both halves in one file.
+ */
+const SANDBOX_PROVIDER_VARIABLES = [
+  "PIPECAT_PRIVATE_API_KEY",
+  "PIPECAT_ORGANIZATION_ID",
+  "PIPECAT_SERVICE_ID",
+  "PIPECAT_DEPLOYMENT_ID",
+  "SANDBOX_AGENT_API_BASE",
+] as const
 
 /**
  * Just the variables these predicates read.

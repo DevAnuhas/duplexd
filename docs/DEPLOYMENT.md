@@ -40,8 +40,30 @@ Writing these steps does not prove the dashboards are configured. The first prev
 | `BETTER_AUTH_URL`           | Production, matching the public origin; leave **unset** on Preview | Auth callback/cookie origin                                               |
 | `ASSISTANT_SECRET_KEY`      | Preview and Production, different values                         | AES-256-GCM key for webhook secrets                                       |
 | `PIPECAT_API_KEY`           | Preview and Production                                           | Starts the Pipecat agent; previews must not receive a customer credential |
+| `PIPECAT_PRIVATE_API_KEY`   | Preview and Production — **all-or-nothing with the three below** | Reads and terminates provider sessions; must differ from `PIPECAT_API_KEY` |
+| `PIPECAT_ORGANIZATION_ID`   | Preview and Production                                           | Organization **UUID**, not the CLI namespace slug                         |
+| `PIPECAT_SERVICE_ID`        | Preview and Production                                           | `duplexd-agent` service UUID                                              |
+| `PIPECAT_DEPLOYMENT_ID`     | Preview and Production                                           | Active deployment UUID; re-set it after every `pipecat cloud deploy`      |
+| `SANDBOX_AGENT_API_BASE`    | Local development only — **optional**                            | HTTPS origin the agent calls back on when it differs from `BETTER_AUTH_URL` |
 | `RESEND_API_KEY`            | Preview and Production, different values — **optional**          | Sends the password reset email                                            |
 | `EMAIL_FROM`                | Preview and Production — **optional**, e.g. `duplexd <auth@example.com>` | From-address on the password reset email                          |
+
+### Why the Sandbox provider variables are all-or-nothing
+
+`PIPECAT_API_KEY`, `PIPECAT_PRIVATE_API_KEY`, `PIPECAT_ORGANIZATION_ID`, `PIPECAT_SERVICE_ID` and `PIPECAT_DEPLOYMENT_ID` are what enable Sandbox voice calls ([ADR 015](decisions/015-server-configured-sandbox-execution.md)). `readSandboxProviderEnvironment()` in `src/db/env.ts` reads all five or returns `null`; on `null` the composed lifecycle has no transport and Sandbox start, join and presence answer 503, which is also what the workspace shows the tenant.
+
+A partial configuration is a mistake rather than a half-enabled feature, and the failure it would otherwise cause is the expensive one: a start that reaches the provider, creates a paid session, and then cannot prove the session is ours — so it can neither be joined nor terminated.
+
+Read the three UUIDs from the private API rather than the dashboard, because the dashboard shows names:
+
+```
+GET https://api.pipecat.daily.co/v1/agents                 # organizationId, service id
+GET https://api.pipecat.daily.co/v1/agents/duplexd-agent   # activeDeploymentId
+```
+
+`PIPECAT_ORGANIZATION` — the value a Pipecat CLI profile holds — is a **namespace slug, not a UUID**. Putting it in `PIPECAT_ORGANIZATION_ID` is refused at read time, because every ownership comparison against a provider session would otherwise fail and every session would look like someone else's.
+
+`PIPECAT_DEPLOYMENT_ID` changes on every deploy. A stale value does not fail loudly: starts still succeed, and then reconciliation refuses to recognise the sessions they created.
 
 ### Why the email variables are optional
 
