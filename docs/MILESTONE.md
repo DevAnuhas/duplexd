@@ -34,7 +34,7 @@ P04 and P05 can overlap: the agent can be exercised from the CLI before the cont
 
 ## Sandbox increment status
 
-The server-only #62 continuation adds an offline-testable lifecycle and frozen Sandbox runtime protocol behind the unchanged closed production gate. A04 consumes this protocol next; no Python/runtime evidence or live provider capability is claimed here. See the [server handoff](architecture/sandbox-protocol.md).
+The #62/#63 server/runtime pair adds an offline-testable lifecycle, independent lease/watchdog enforcement, readiness barriers and bounded replayable evidence behind the unchanged closed production gate. The safe ingestion-cursor API is available for the next UI timeline slice. Required real-provider readiness, stop and killed-agent acceptance are NOT RUN/BLOCKED; fixtures do not close #63 or prove provider capability. See the [protocol handoff](architecture/sandbox-protocol.md).
 
 The accepted #29 launch surface is the in-workspace Sandbox before later separately authorized real-backend acceptance. The current UI increment covers saved Practice preparation, Riley sample creation, local audio checks, cancellation/current state and labeled call history. It does not complete the voice Sandbox or #29. Start/join remain disabled pending provider safety proof and runtime lifecycle/readiness work. Unsaved preview, custom sample editing, media reconnect, evidence reconciliation and durable observations remain unfinished. See [Sandbox usage](ENGINEERING.md#workspace-sandbox-preparation); do not count local audio or preparation as a real call.
 

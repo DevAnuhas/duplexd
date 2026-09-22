@@ -1,6 +1,6 @@
 # Gated Sandbox server protocol
 
-Status: implemented server-side for offline testing. Production voice admission is hard-disabled. This is not provider capability proof, runtime integration, or completion of #62. [ADR 014](../decisions/014-gated-sandbox-protocol.md) explains the staged rollout.
+Status: paired server/runtime implementation for offline testing. Production voice admission is hard-disabled. Real-provider readiness, cancellation, private resource behavior and audible acceptance are unverified; neither #62 nor #63 is complete. [ADR 014](../decisions/014-gated-sandbox-protocol.md) explains the staged rollout.
 
 ## Ownership and source
 
@@ -8,7 +8,7 @@ The typed contract is [sandbox/protocol.ts](../../apps/workspace/src/sandbox/pro
 
 An attempt row lock serializes dispatch, registration, claim, stop and result reconciliation. Dispatch commits `dispatching`, the token hash and absolute deadlines before one transport request; raw token exists only in the unchanged runner body `{callId, apiBase, agentToken}`. A duplicate start never remints or resends. Process loss between commit and request is unknown, not permission to retry.
 
-## Runtime handoff to A04
+## Runtime ownership and control
 
 Every new-protocol request sends `Authorization: Bearer <call token>` and `x-duplexd-protocol: sandbox-v1`. Session and boot IDs are opaque strings of 1–128 ASCII letters, digits, `_` or `-`.
 
@@ -20,15 +20,13 @@ Every new-protocol request sends `Authorization: Bearer <call token>` and `x-dup
 
 Protocol and registered owner cannot be replaced. Same-owner registration is idempotent while execution is valid. Conflicting identity stops execution and preserves observed session references for exact cleanup, including further authenticated identities received after the first conflict while reporting remains permitted. Every retained reference must independently become terminal before capacity is released. An authenticated late registration may reveal the lost start's exact target, but cannot claim configuration or reconstruct a missing join token. Registration after confirmed cleanup or the reporting deadline is refused.
 
-`config` has the existing camelCase runtime configuration keys. It uses the frozen Practice snapshot, a new per-call encrypted Practice secret and internal `/v1/practice/calls/:id/tools` URL; no customer endpoint or webhook secret is read. Owner, stop intent and deadlines are checked before minting/returning plaintext. Claim is atomic and one-time: retry returns 409, never plaintext. Claim is not readiness. A04 must call the authenticated internal `markReady` hook only after backend, transport and voice-session barriers pass; this slice adds no readiness/evidence HTTP acceptance.
+`config` has the existing camelCase runtime configuration keys. It uses the frozen Practice snapshot, a new per-call encrypted Practice secret and internal `/v1/practice/calls/:id/tools` URL; no customer endpoint or webhook secret is read. Owner, stop intent and deadlines are checked before minting/returning plaintext. Claim is atomic and one-time: retry returns 409, never plaintext. Claim is not readiness. Authenticated evidence ingestion updates readiness under the same lifecycle lock, only while execution remains valid.
 
 `control` contains `stopRequested`, `stopReason`, `startupDeadline`, `executionDeadline`, `presenceExpiresAt`, `serverTime`, `pollIntervalMs`, `controlLossTimeoutMs`, `gracefulStopMs` and `reportingGraceMs`. Dates are ISO strings. Poll interval is 3 seconds; control loss stops execution after 30 seconds; graceful stop allows 10 seconds; reporting-only grace is 60 seconds. Polling does not extend startup, execution or browser presence. A late request applies the original earliest due deadline rather than starting a fresh grace period.
 
-Legacy Integration requests retain their exact config, ACK and completion shapes. Legacy config/events/completion reject Sandbox credentials before mutation. New-protocol evidence ACK/completion and Python changes belong to A04; they are not silently accepted by old handlers. No path in this slice writes a clean `ended` state. Unclaimed termination is `failed`; claimed termination without authenticated completion is `incomplete`.
+Legacy Integration requests retain their exact config, ACK and completion shapes. Legacy config/events/completion reject Sandbox credentials before mutation. Versioned completion is the only Sandbox path that writes `ended`, based on the original runtime owner's observed reason and measured duration. Unclaimed termination is `failed`; claimed termination without authenticated completion is `incomplete`. A bounded late completion can correct that record, retains the original reporting deadline and adds a platform reconciliation event. Neither completion nor telemetry releases unresolved private resources.
 
-## Browser and deadlines
-
-## A04 wire contract (implementation in progress)
+## A04 evidence wire contract
 
 The following contract is frozen for the paired runtime/server implementation; it is not live capability evidence. `GET /v1/agent/calls/:id/protocol` authenticates the call token without claiming configuration and returns `{protocol: "sandbox-v1"}` or `{protocol: "integration-v1"}`. The runner body remains exactly `{callId, apiBase, agentToken}`. Sandbox uses the runner's exact session ID and a per-process boot ID for registration before its single configuration claim. A runtime talking to an older server may use the legacy Integration path only when negotiation is absent (404), never after a Sandbox negotiation or registration failure.
 
@@ -37,6 +35,16 @@ Versioned `POST events` requires the owner headers and `{events: [{seq, at, type
 Versioned completion requires exactly `{endedReason, durationSecs, finalSeq, producerLoss, truncated}`. The server computes a canonical completion digest and returns it in the ACK; identical retries acknowledge the existing completion, conflicts never replace it. `finalSeq` seals the agent namespace. Platform observations have a separate namespace and do not affect the final watermark. Reporting grace admits missing historical events through that watermark, including late readiness, without renewing execution or making a stopped attempt active. Evidence is `unknown` before a seal, `partial` for gaps/loss/truncation/conflicts, and `complete` only when every emitted sequence through the seal is accounted for without those flags. This is delivery completeness, not proof of all spoken audio or model correctness.
 
 The future timeline consumes authenticated, account-scoped `GET /api/workspace/sandbox/calls/:id/events?after=<cursor>`. Its typed `SandboxEventPage` contains `events`, `nextCursor`, `hasMore` and an `evidence` summary. Each safe event carries an opaque ingestion cursor, `namespace`, producer `seq`, `at`, `type` and allowlisted `payload`. The cursor orders ingestion rather than producer sequence, so a late sequence 7 remains visible after sequence 8. A cursor is never authorization. Pages are bounded to 100 events / 128 KiB. Transcripts are user content and can contain sensitive spoken text; neither polling nor logs promise PII-free text. The UI may display explicit loss or reconciliation but must not treat absence of telemetry as a clean ending.
+
+## Runtime shutdown and evidence ownership
+
+The Python client negotiates without changing the legacy runner body, registers the runner session plus one boot identity, then claims once. Negotiation/registration/claim share a 20-second local startup bound. Once claimed, independent control and monotonic-watchdog tasks start before the Responses capability probe. Absolute server deadlines are conservatively anchored to request-start monotonic time; delayed control cannot revive an expired lease or extend startup/execution. Tool admission consults the watchdog before dispatch and never retries an unknown-effect webhook.
+
+After the backend probe succeeds, Daily's `on_connected` and OpenAI Live's `on_session_started` jointly release the one-shot readiness marker. The first browser `on_client_connected` queues the initial `LLMRunFrame`; duplicate participant callbacks cannot repeat the greeting. SDK websocket setup is not treated as a started voice session, and neither transport readiness nor telemetry proves audible browser playback.
+
+The bounded queue retains immutable event content until a valid contiguous ACK; a lost response resends the same bytes. Overflow or an oversized event records producer loss (and truncation when oversized) and requests shutdown through the independent watchdog, never by cancelling from inside the reporter task. The pipeline and its child backend worker stop before the reporter seals its final watermark. Reporting drains for at most 15 seconds after costly work stops; measured duration excludes that drain. An unobserved process exit produces no synthetic clean completion. No live readiness/cancellation measurement is claimed by this offline implementation.
+
+The additive `sandbox_evidence` ledger and nullable `call_events` ingestion/digest/byte columns leave legacy records unchanged. The attempt/call lock serializes the ledger, duplicate checks, readiness and completion. A persisted integrity flag cannot be erased by a later retry. Malformed authenticated evidence is separately limited to ten errors per minute; empty evidence heartbeats are limited to one per three seconds. Valid replay and control polling do not consume those limits. Event payload nesting is bounded to sixteen levels. Safe tool projections can include `practiceScenario` and `practiceSelectedStatus` from the server's signed invocation selection; these mean the synthetic response selected by Practice, not proof it reached the model or a generic interpretation of business success.
 
 ## Browser and deadlines
 
