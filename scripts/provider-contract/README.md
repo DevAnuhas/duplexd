@@ -12,20 +12,24 @@ an ambiguous start. Each case must correlate the start response and runtime
 registration by exact provider session ID; timestamp-based ownership guesses
 are forbidden.
 
-| Case                                       | Evidence required                                                                                                 |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| Cold start                                 | Start response fields, exact runtime registration, and readiness inside the startup bound                         |
-| Cancel before join                         | An exact-session stop and independent process and usage cessation                                                 |
-| Lost start response, registration received | Stop only the exact session learned from registration; never retry start                                          |
-| Lost start response, no registration       | No guessed stop; provider ceiling followed by zero active probe sessions                                          |
-| Hung runtime                               | Effective room and token expiry/ejection for both participants, plus independent process and usage cessation      |
-| Repeated stop                              | Both stops address the same session; a `404` counts only after exact-session ended-state and usage reconciliation |
+| Case                                       | Evidence required                                                                                                  |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| Cold start                                 | Start response fields, exact runtime registration, and readiness inside the startup bound                          |
+| Cancel before join                         | An exact private-key session stop and independent terminal/resource evidence                                       |
+| Lost start response, registration received | Stop only the exact session learned from registration; never retry start                                           |
+| Lost start response, no registration       | No guessed stop; provider ceiling followed by zero active probe sessions                                           |
+| Hung runtime                               | Effective room and token expiry/ejection for both participants, plus independent terminal/resource evidence        |
+| Repeated stop                              | Both stops address the same session; a `404` counts only with independent exact-session terminal/resource evidence |
 
 Room ejection alone cannot prove stopped compute or billing. The proof must
 also establish that unknown-start, no-registration, and hung-runtime paths have
 a finite resource bound. The authorized envelope was concurrency one, a
 600-second provider ceiling, a 720-second operator bound per case, no more than
-six starts, and no more than 72 billed session-minutes total.
+six starts, and no more than 72 reserved session-minutes total. Each dispatch
+reserves its full 12-minute allowance before its start intent and POST. An
+ambiguous start consumes that allowance; recovery never refunds, resets or
+redispatches it. Reservations are conservative admission accounting, not
+observed usage or proof that a provider bound actually worked.
 
 ## What was observed
 
@@ -86,9 +90,17 @@ private API key is created.
 
 `run.mjs` is the single operator program. It uses the authenticated official
 Pipecat CLI through an isolated `pipecatcloud==0.6.0` uv overlay for
-build/deploy, exact-session stop and deletion. Direct HTTP is limited to
-public-key start and exact machine-readable readbacks that the CLI does not
-provide. It also creates a unique runtime-only, mode-600 browser witness page per joined case using
+build/deploy and service deletion. Public-key start and operator control-plane
+readbacks remain distinct from server-only private-key session management.
+Exact GET/DELETE use the documented
+`https://api.pipecat.daily.co/v1/agents/{agentName}/sessions/{sessionId}`
+route with `PIPECAT_PRIVATE_API_KEY`, never an OAuth or public-key substitute.
+GET must match the retained session, service, organization and deployment IDs,
+including the resource-metrics session ID. DELETE must acknowledge that exact
+session. A successful DELETE is not terminal/resource proof; an independent
+GET must establish it. The private scoped active list must return HTTP 200,
+`total_count: 0` and an empty `sessions` array for the retained deployment.
+It also creates a unique runtime-only, mode-600 browser witness page per joined case using
 the actual room-scoped Daily token. The witness records only join/ejection
 booleans and timestamps.
 
@@ -102,7 +114,7 @@ system's temporary directory. It is created mode 700 and contains:
   journal and recovery state.
 
 The private checkpoint is the only local file allowed to contain exact session,
-build, deployment, service, and organization identifiers. It never contains an
+build, deployment, service, organization and private-key inventory identifiers. It never contains an
 API key, OAuth token, callback secret or URL, Daily credential, provider response
 body, log, audio, or customer data. The journal and summary use salted stable
 references. A single-writer lock prevents live and recovery processes from
@@ -133,18 +145,22 @@ set +x
 export PROVIDER_PROOF_LIVE_RELEASE=stage-a-disposable-probe-release
 export PROVIDER_PROOF_RUN_ID=...
 export PIPECAT_API_KEY=...          # existing public start key
+export PIPECAT_PRIVATE_API_KEY=...  # separately authorized existing server management key
 export PIPECAT_OPERATOR_TOKEN=...  # existing CLI/OAuth operator token
 export PIPECAT_ORGANIZATION=...
 node scripts/provider-contract/run.mjs live --run-dir \
   "$HOME/.local/state/duplexd/provider-proof/$PROVIDER_PROOF_RUN_ID"
 ```
 
-If the live process is killed or its cleanup is interrupted, supply only the
-existing operator credentials and reopen the same directory:
+Missing the private key refuses both commands before mutations. This runbook
+does not authorize provisioning, retrieving or using real credentials.
+If the live process is killed or its cleanup is interrupted, supply the
+authorized existing operator and private management credentials and reopen the same directory:
 
 ```sh
 set +x
 export PIPECAT_OPERATOR_TOKEN=...
+export PIPECAT_PRIVATE_API_KEY=...
 export PIPECAT_ORGANIZATION=...
 node scripts/provider-contract/run.mjs recover --run-dir \
   "$HOME/.local/state/duplexd/provider-proof/$PROVIDER_PROOF_RUN_ID"
@@ -153,8 +169,12 @@ node scripts/provider-contract/run.mjs recover --run-dir \
 `recover` is cleanup-only. It cannot deploy, start or resume a case, open a
 browser witness, or reconstruct a lost callback credential. It reads exact
 owned identities from `recovery.json`, records resource snapshots, reconciles
-known sessions, deletes the exactly owned probe service, then verifies probe
-absence and the unchanged production baseline.
+known sessions, and retains the probe service while any target/dispatch remains
+unresolved or complete scoped zero-active proof is missing. Only durable
+terminal/resource and zero-active observations permit service deletion, followed
+by probe-absence and unchanged-production checks. Service deletion is never an
+emergency stop: active sessions can outlive it. Memory-only containment after
+disk failure never deletes the service, even if reads look terminal.
 
 The runner fails closed unless the production baseline is exact, it has no
 active session, and the temporary service is absent.
@@ -176,21 +196,31 @@ before validating the remaining room/token fields.
 
 Stop recovery always reads the exact session first. It makes at most three
 same-ID stop attempts in total (including the repeated-stop case), with persisted counters and 5-second then
-15-second minimum spacing, and reads status again before each attempt. CLI exit
-codes, timeouts, and real HTTP statuses are different outcomes. A repeated CLI
-success is not rewritten as `404`, and `404` is not termination until an
+15-second minimum spacing, and reads status again before each attempt. CLI service
+outcomes, session HTTP responses, timeouts and interruptions remain distinct.
+Success is not rewritten as `404`, and `404` is not termination until an
 independent exact-session read says the session ended. Permission or ownership
 failures stop destructive mutation. Readback `401`/`403` and stop permission
 errors persist a mutation barrier across recovery attempts; safe readbacks still
-run. Late recovery takes a bounded final exact-session snapshot before deletion
-without resetting the original deadline or issuing a late stop retry.
+run. Late recovery takes a bounded final exact-session snapshot without resetting
+the original deadline or issuing a late stop retry. An active/unknown target,
+missing resource samples, unresolved dispatch, failed list, or incomplete list
+retains the service and recovery checkpoint. An empty local target set alone
+does not prove zero active provider sessions.
 
 On success, failure, or signal, cleanup records independent results without
 overwriting the first case or operation failure. It captures terminal and
 resource observations before deleting the temporary service, verifies the
 service absent, and requires authenticated readback of the unchanged production
 build/digest, min/max 0/3, `duplexd-agent-secrets`, absent duration override,
-zero active sessions, zero private keys, and absent `duplexd-provider-proof`.
+zero active sessions, unchanged validated private-key ID inventory, and absent
+`duplexd-provider-proof` secret set. For future runs, the preflight inventory
+may be nonempty: its exact sorted IDs are retained only in the private checkpoint
+and compared through cleanup/recovery. Missing, malformed, duplicate, added or
+removed IDs fail closed. No key is created or revoked. Inventory equality does
+not establish which key was supplied or its authorization. The historical
+zero-private-key observations above describe the earlier attempts, not this
+revised future-run invariant.
 The first exercise signal starts cleanup with a fresh cancellation signal;
 an interruption during cleanup aborts in-flight HTTP/CLI work and prevents
 later stop/delete mutations. Recovery itself is interruptible the same way.
@@ -202,21 +232,22 @@ the application's lost-response identity.
 Provider termination, unchanged resource samples, runtime estimates, and
 authoritative billed usage are separate observations. The current provider
 surface has no documented authoritative final-billing source in this runner,
-so `confirmedBilledMinutes` stays `null`, aggregate `usageStatus` stays
-`unknown`, and the verdict stays blocked. Case advancement requires exact
-provider termination and confirmed usage inside the aggregate budget; with the
-current unknown accounting the runner stops after the first started case.
+so `confirmedBilledMinutes` stays `null` and `accountingStatus`/`usageStatus`
+stay `unknown`. Resource acceptance is separate: `resourceStatus` (also the
+compatibility `status` field) can pass only with all six cases, exact bounded
+terminal/resource evidence, required registration/media observations, full
+reservation ledger and verified cleanup. Missing accounting alone does not
+block case advancement or require retaining an otherwise terminal service.
 Ceiling cases poll exact termination after participant ejection; ejection alone
 never releases the next start. Repeated identical metric polls do not
-upgrade billing to confirmed. This is intentional: the next live release must
-identify and authorize that evidence source rather than inventing an adapter.
+upgrade billing to confirmed. No billing adapter or invoice-finality claim is
+added; accounting reconciliation remains separate from resource proof.
 
 ## Merge rule
 
-**A01 and dependent A03 remain blocked pending new live evidence and an
-authoritative usage source.** Offline crash/recovery tests validate the local
+**A01 and dependent A03 remain blocked pending separately authorized live
+resource evidence.** Final accounting remains independently unknown. Offline crash/recovery tests validate the local
 mechanism only; they cannot establish provider termination, Daily ejection,
-delayed billing finality, or equivalence between OAuth CLI stop and the planned
-server private-key path. Keep PR #71 draft and retain the disposable probe. The
+delayed billing finality, or actual private-key permissions/behavior. Keep PR #71 draft and retain the disposable probe. The
 historical `live-evidence.json` remains unchanged: one session started, zero
 cases completed, and billed usage is unknown.

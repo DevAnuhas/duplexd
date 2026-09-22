@@ -218,6 +218,7 @@ test("crash after synced start intent remains ambiguous; recovery issues zero st
   assert.equal(recovered.recovery.dispatches[0].deadline, deadline)
   assert.equal(recovered.recovery.dispatches[0].outcome, "unknown")
   assert.equal(recovered.recovery.starts, 1)
+  assert.equal(recovered.recovery.reservedSessionMinutes, 12)
   assert.equal(
     recovered.calls.filter(([name]) => name === "startSession").length,
     0
@@ -386,8 +387,8 @@ test("deadline exhaustion never resets the deadline or manufactures terminal sta
   assert.equal(store.recovery.sessions[ref].deadline, deadline)
   assert.equal(store.recovery.sessions[ref].terminal, false)
   assert.ok(
-    calls.some(([name]) => name === "deleteProbe"),
-    "late recovery still attempts scoped containment"
+    !calls.some(([name]) => name === "deleteProbe"),
+    "late recovery retains the service while exact session state remains active"
   )
 })
 
@@ -492,6 +493,10 @@ test("disk sync failure never acknowledges callback and leaves exact identity av
   const result = await writer.message("contained")
   assert.ok(result.calls.some(([name]) => name === "readSession"))
   assert.notEqual(result.summary.status, "pass")
+  assert.equal(
+    result.calls.filter(([name]) => name === "deleteProbe").length,
+    0
+  )
   assertNoCanaries(writer.output())
 })
 
@@ -749,7 +754,7 @@ test("provider error canaries in normalized state and timestamps cannot leak to 
 })
 
 test(
-  "real CLI SIGTERM aborts active dispatch, contains with fresh requests, and repeated recovery never redispatches",
+  "real CLI SIGTERM aborts unknown dispatch, retains service, and repeated recovery never redispatches",
   { timeout: 20_000 },
   async (t) => {
     const dir = await directory(t)
@@ -765,7 +770,7 @@ test(
     assert.equal(boundaries.starts, 1)
     assert.equal(
       boundaries.calls.filter((call) => call.includes("delete")).length,
-      1
+      0
     )
     assertNoCanaries(writer.output())
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -773,6 +778,7 @@ test(
       const result = await reader.message("recovered")
       await reader.exited
       assert.equal(result.recovery.starts, 1)
+      assert.equal(result.recovery.reservedSessionMinutes, 12)
       assert.equal(
         result.recovery.dispatches[0].deadline,
         before.dispatches[0].deadline
@@ -802,7 +808,7 @@ test("lost-response application identity cannot fall back to the operator witnes
   )
 })
 
-test("actual stop classifier separates repeated CLI success, numeric HTTP 404, permission, timeout and transport errors", () => {
+test("service CLI classifier separates success, numeric HTTP 404, permission, timeout and transport errors", () => {
   for (const [input, expected] of [
     [
       { status: "success", exitCode: 0, output: "stopped" },
@@ -836,7 +842,7 @@ test("actual stop classifier separates repeated CLI success, numeric HTTP 404, p
     assert.deepEqual(classifyStopCommandResult(input), expected)
 })
 
-test("not-found prose without observed HTTP status cannot manufacture numeric 404", () => {
+test("service CLI not-found prose without observed HTTP status cannot manufacture numeric 404", () => {
   const result = classifyStopCommandResult({
     status: "cli_failure",
     exitCode: 1,

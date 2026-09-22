@@ -2,6 +2,7 @@
 // The only sockets are the runner's loopback collector. Long CLI operations are
 // disposable Node children so interruption exercises the real process-group kill.
 import childProcess from "node:child_process"
+import fs from "node:fs/promises"
 import { createHmac, randomBytes } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { syncBuiltinESMExports } from "node:module"
@@ -19,18 +20,33 @@ const deploymentId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 const baselineBuildId = "3010f496-fd84-4f39-a75c-c4a58a1bd922"
 const baselineDigest =
   "sha256:032aa1f121bc91a22748c725966bfd21e6659daaf8b159d367fd6e0f7a745242"
-const sessionId = "response-session-canary"
+let sessionId = "response-session-canary"
+const serviceId = "33333333-3333-4333-8333-333333333333"
+const retainedSessions = new Map()
 const terminal = {
   status: "ended",
-  startedAt: "2026-09-22T00:00:00Z",
-  endedAt: "2026-09-22T00:01:00Z",
-  resourceMetrics: { sampleCount: 2, timeseries: [{ t: 1 }, { t: 2 }] },
+  startedAt: new Date(Date.now() - 60_000).toISOString(),
+  endedAt: new Date(Date.now()).toISOString(),
+  resourceMetrics: {
+    sampleCount: 2,
+    timeseries: [
+      { t: 1, c: 10, m: 2048 },
+      { t: 2, c: 10, m: 2048 },
+    ],
+  },
 }
 let collectorPort
 let probePresent = false
 let starts = 0
 let currentProof = null
 const calls = []
+if (mode === "missing-private-key-recover") {
+  const open = fs.open
+  fs.open = async (...args) => {
+    calls.push(["file-open", String(args[0])])
+    return open(...args)
+  }
+}
 const report = () => process.send({ type: "boundaries", calls, starts })
 function pendingFetch(signal, phase) {
   process.send({ type: "cleanup-pending", phase })
@@ -192,12 +208,16 @@ globalThis.fetch = async (url, options = {}) => {
         )
       )
     }
-    if (starts > 1)
-      throw new Error("fixture_forbids_second_start_without_accounting")
+    if (starts > 6) throw new Error("fixture_forbids_seventh_start")
+    sessionId =
+      starts === 1
+        ? "response-session-canary"
+        : `response-session-canary-${starts}`
     const body = JSON.parse(options.body)
     const proof = body.body.providerProof
     const expiresAt = body.dailyMeetingTokenProperties.exp
     currentProof = { proof, expiresAt }
+    retainedSessions.set(sessionId, { proof, stopped: false, reads: 0 })
     const claims = {
       exp: expiresAt,
       eject_at_token_exp: true,
@@ -217,7 +237,8 @@ globalThis.fetch = async (url, options = {}) => {
     if (mode === "complete-case")
       setImmediate(async () => {
         try {
-          await probeCallback("registered")
+          if (proof.case !== "no_registration_startup")
+            await probeCallback("registered")
           await probeCallback("agent_joined")
           await probeCallback("agent_ejected")
         } catch {
@@ -227,25 +248,51 @@ globalThis.fetch = async (url, options = {}) => {
     process.send({ type: "response-returned" })
     return Response.json(response)
   }
+  if (parsed.pathname.startsWith("/v1/agents/")) {
+    if (options.headers.authorization !== "Bearer private-key-canary")
+      throw new Error("wrong_fixture_private_credential")
+    const id = decodeURIComponent(parsed.pathname.split("/").at(-1))
+    if (id === "sessions")
+      return Response.json({ total_count: 0, sessions: [] })
+    const retained = retainedSessions.get(id)
+    if (!retained) return Response.json({}, { status: 404 })
+    if (options.method === "DELETE") {
+      if (mode === "cleanup-stop") return pendingFetch(options.signal, "stop")
+      if (retained.stopped) {
+        timeOffset += 15_000
+        return Response.json({}, { status: 404 })
+      }
+      retained.stopped = true
+      // Advance only the synthetic provider exercise clock past retry spacing.
+      timeOffset += 5_000
+      return Response.json({ status: "terminated", session_id: id })
+    }
+    if (mode === "cleanup-read") return pendingFetch(options.signal, "read")
+    retained.reads++
+    const ceiling = ["no_registration_startup", "hung_runtime"].includes(
+      retained.proof.case
+    )
+    const ended =
+      (mode !== "complete-case" && mode !== "cleanup-stop") ||
+      retained.stopped ||
+      ceiling
+    return Response.json({
+      ...terminal,
+      sessionId: id,
+      serviceId,
+      organizationId: "22222222-2222-4222-8222-222222222222",
+      deploymentId,
+      status: ended ? "ended" : "active",
+      endedAt: ended ? terminal.endedAt : null,
+      resourceMetrics: { ...terminal.resourceMetrics, sessionId: id },
+    })
+  }
   if (parsed.pathname.endsWith("/apiKeys"))
     return Response.json({ body: { private: [], public: [] } })
   if (parsed.pathname.endsWith("/secrets"))
     return Response.json({ body: { sets: [] } })
-  if (parsed.pathname.endsWith("/sessions")) {
-    if (
-      parsed.pathname.includes("duplexd-provider-proof") &&
-      starts > 0 &&
-      mode !== "pending"
-    ) {
-      if (mode === "cleanup-read") return pendingFetch(options.signal, "read")
-      const observation =
-        mode === "cleanup-stop"
-          ? { ...terminal, status: "running", endedAt: null }
-          : terminal
-      return Response.json({ sessions: [{ ...observation, sessionId }] })
-    }
+  if (parsed.pathname.endsWith("/sessions"))
     return Response.json({ sessions: [] })
-  }
   if (parsed.pathname.includes("/builds/"))
     return Response.json({
       body: {
@@ -265,6 +312,7 @@ globalThis.fetch = async (url, options = {}) => {
       name: production ? "duplexd-agent" : "duplexd-provider-proof",
       autoScaling: { minReplicas: 0, maxReplicas: production ? 3 : 1 },
       deployment: {
+        serviceId,
         buildId: production ? baselineBuildId : buildId,
         id: production ? "production-deployment" : deploymentId,
         manifest: {
@@ -280,9 +328,18 @@ globalThis.fetch = async (url, options = {}) => {
 process.env.PROVIDER_PROOF_LIVE_RELEASE = "stage-a-disposable-probe-release"
 process.env.PROVIDER_PROOF_RUN_ID = "signal-run-canary"
 process.env.PIPECAT_API_KEY = "credential-canary"
-process.env.PIPECAT_OPERATOR_TOKEN = "credential-canary"
-process.env.PIPECAT_ORGANIZATION = "org-canary-private"
+process.env.PIPECAT_OPERATOR_TOKEN = "operator-key-canary"
+if (mode.startsWith("missing-private-key"))
+  delete process.env.PIPECAT_PRIVATE_API_KEY
+else process.env.PIPECAT_PRIVATE_API_KEY = "private-key-canary"
+process.env.PIPECAT_ORGANIZATION = "22222222-2222-4222-8222-222222222222"
 const runner = fileURLToPath(new URL("../../run.mjs", import.meta.url))
-process.argv = [process.execPath, runner, "live", "--run-dir", runDir]
+process.argv = [
+  process.execPath,
+  runner,
+  mode === "missing-private-key-recover" ? "recover" : "live",
+  "--run-dir",
+  runDir,
+]
 process.on("beforeExit", report)
 await import(runner)

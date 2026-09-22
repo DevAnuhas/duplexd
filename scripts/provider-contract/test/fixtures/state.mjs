@@ -4,6 +4,7 @@ export const identity = {
   runId: "run-canary-private",
   organization: "org-canary-private",
   sessionId: "session-canary-private",
+  serviceId: "33333333-3333-4333-8333-333333333333",
   buildId: "build-canary-private",
   deploymentId: "deployment-canary-private",
   bootId: "boot-canary-private",
@@ -25,17 +26,24 @@ export const production = {
   keys: { body: { private: [] } },
   secretSets: { body: { sets: [] } },
 }
+const sampleEnd = Date.now()
 export const active = {
   status: "running",
-  startedAt: "2026-09-22T00:00:00.000Z",
+  startedAt: new Date(sampleEnd - 60_000).toISOString(),
   endedAt: null,
 }
 export const ended = {
   ...active,
   status: "ended",
-  endedAt: "2026-09-22T00:01:00.000Z",
-  updatedAt: "2026-09-22T00:01:01.000Z",
-  resourceMetrics: { sampleCount: 2, timeseries: [{ t: 1 }, { t: 2 }] },
+  endedAt: new Date(sampleEnd).toISOString(),
+  updatedAt: new Date(sampleEnd).toISOString(),
+  resourceMetrics: {
+    sampleCount: 2,
+    timeseries: [
+      { t: 1, c: 10, m: 2048 },
+      { t: 2, c: 10, m: 2048 },
+    ],
+  },
 }
 
 export async function seed(
@@ -50,10 +58,13 @@ export async function seed(
   const sessionRef = safeRef(store.recovery.salt, identity.sessionId)
   await store.checkpoint((recovery) => {
     recovery.probe = {
+      serviceId: identity.serviceId,
       buildId: identity.buildId,
       deploymentId: identity.deploymentId,
     }
+    recovery.privateKeyIds = []
     recovery.starts = 1
+    recovery.reservedSessionMinutes = 12
     recovery.dispatches = [
       {
         dispatchRef: "dispatch-ref",
@@ -62,6 +73,7 @@ export async function seed(
         deadline,
         providerDeadline: deadline - 120_000,
         outcome,
+        reservedMinutes: 12,
       },
     ]
     if (session)
@@ -109,7 +121,12 @@ export function dependencies(store, overrides = {}) {
           ...store.recovery.probe,
         },
         sessions: [],
+        keys: { body: { private: [] } },
       }
+    },
+    readActiveSessions: async () => {
+      calls.push(["readActiveSessions"])
+      return { complete: true, activeSessionCount: 0, httpStatus: 200 }
     },
     readProduction: async () => {
       calls.push(["readProduction"])

@@ -1,4 +1,5 @@
-import { CASES } from "../../run.mjs"
+import { CASES, normalizeSessionObservation } from "../../run.mjs"
+import { ended } from "./state.mjs"
 
 // Synthetic contract evidence, never provider proof. Exercise the projection's
 // positive branch, then remove/corrupt one observation at a time in tests.
@@ -8,10 +9,12 @@ export function completeEvidence() {
     salt: "synthetic-salt",
     runId: "synthetic-run",
     starts: 6,
+    reservedSessionMinutes: 72,
     dispatches: [],
     sessions: {},
     cleanup: {
       completed: true,
+      zeroActiveComplete: true,
       probeServiceAbsent: true,
       productionUnchanged: true,
       unresolvedSessions: 0,
@@ -36,11 +39,13 @@ export function completeEvidence() {
     recovery.sessions[sessionRef] = {
       id: `private-${id}`,
       caseRef: id,
-      terminal: true,
-      usageStatus: "confirmed",
-      confirmedBilledMinutes: 1,
+      ...normalizeSessionObservation(ended),
     }
-    recovery.dispatches.push({ caseRef: id, outcome: "accepted" })
+    recovery.dispatches.push({
+      caseRef: id,
+      outcome: "accepted",
+      reservedMinutes: 12,
+    })
     append(id, "operation_intent", "application", { name: "start_session" })
     append(id, "operation_result", "application", {
       name: "start_session",
@@ -84,8 +89,7 @@ export function completeEvidence() {
         name: "stop_session",
         targetRef: sessionRef,
         status: "success",
-        httpStatus: null,
-        exitCode: 0,
+        httpStatus: 200,
       })
     }
     if (definition.stop === "twice")
@@ -100,15 +104,19 @@ export function completeEvidence() {
       sessionRef,
       terminal: true,
       state: "ended",
+      httpStatus: 200,
       providerEndedAt: "2026-09-22T00:01:00.000Z",
     })
     append(id, "resource_observation", "provider_readback", {
-      resource: "authoritative_usage",
+      resource: "session_resources",
       sessionRef,
-      usageStatus: "confirmed",
-      confirmedBilledMinutes: 1,
-      units: "minutes",
-      accountingSource: "synthetic-documented-final-usage",
+      ...normalizeSessionObservation(ended),
+    })
+    append(id, "resource_observation", "private_session_readback", {
+      resource: "probe_sessions",
+      complete: true,
+      activeSessionCount: 0,
+      httpStatus: 200,
     })
     append(id, "verdict", "operator", { status: "pass" })
   }

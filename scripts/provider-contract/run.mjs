@@ -171,6 +171,18 @@ function safeCategory(error) {
       "daily_claims_invalid",
       "start_response_invalid",
       "billing_limit_exceeded",
+      "reservation_limit_exceeded",
+      "session_resource_incomplete",
+      "session_resource_bound_exceeded",
+      "active_sessions_unresolved",
+      "session_identity_mismatch",
+      "session_scope_mismatch",
+      "private_key_missing",
+      "private_key_inventory_invalid",
+      "provider_timeout",
+      "provider_network_failure",
+      "session_stop_unverified",
+      "repeat_stop_unverified",
     ].includes(value)
   )
     return value
@@ -196,6 +208,15 @@ function permissionFailure(error) {
     "provider_http_403",
     "session_permission_denied",
   ].includes(error?.message)
+}
+
+function isUuid(value) {
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(
+      value
+    )
+  )
 }
 
 function mutationBlocked(recovery) {
@@ -292,7 +313,21 @@ export function projectSummary(records, recovery, truncatedTail = false) {
   const sessions = Object.values(recovery.sessions ?? {})
   const usageConfirmed =
     sessions.length > 0 &&
-    sessions.every((session) => session.usageStatus === "confirmed") &&
+    Object.entries(recovery.sessions ?? {}).every(
+      ([sessionRef, session]) =>
+        session.usageStatus === "confirmed" &&
+        Number.isFinite(session.confirmedBilledMinutes) &&
+        session.confirmedBilledMinutes >= 0 &&
+        records.some(
+          (record) =>
+            record.kind === "resource_observation" &&
+            record.payload.resource === "authoritative_usage" &&
+            record.payload.sessionRef === sessionRef &&
+            record.payload.usageStatus === "confirmed" &&
+            record.payload.confirmedBilledMinutes ===
+              session.confirmedBilledMinutes
+        )
+    ) &&
     !(recovery.dispatches ?? []).some(
       (dispatch) => dispatch.outcome === "unknown"
     )
@@ -330,15 +365,23 @@ export function projectSummary(records, recovery, truncatedTail = false) {
       (record) =>
         record.kind === "session_status" &&
         record.payload.terminal === true &&
+        record.payload.httpStatus === 200 &&
         sessionRefs.has(record.payload.sessionRef)
     )
-    const hasConfirmedUsage = observed.some(
+    const hasResources = observed.some(
       (record) =>
         record.kind === "resource_observation" &&
-        record.payload.resource === "authoritative_usage" &&
+        record.payload.resource === "session_resources" &&
         sessionRefs.has(record.payload.sessionRef) &&
-        record.payload.usageStatus === "confirmed" &&
-        Number.isFinite(record.payload.confirmedBilledMinutes)
+        resourceEvidenceComplete(record.payload) &&
+        record.payload.observedRuntimeMinutes <= LIMITS.providerSeconds / 60
+    )
+    const zeroActive = observed.some(
+      (record) =>
+        record.kind === "resource_observation" &&
+        record.payload.resource === "probe_sessions" &&
+        record.payload.complete === true &&
+        record.payload.activeSessionCount === 0
     )
     const registrationCorrect =
       definition.id === "no_registration_startup"
@@ -361,7 +404,10 @@ export function projectSummary(records, recovery, truncatedTail = false) {
       observed.some(
         (record) =>
           record.kind === "operation_result" &&
-          record.payload.name === "stop_session"
+          record.payload.name === "stop_session" &&
+          record.payload.status === "success" &&
+          record.payload.httpStatus === 200 &&
+          sessionRefs.has(record.payload.targetRef)
       )
     const repeatCorrect =
       definition.stop !== "twice" ||
@@ -369,6 +415,7 @@ export function projectSummary(records, recovery, truncatedTail = false) {
         (record) =>
           record.kind === "operation_result" &&
           record.payload.name === "repeat_stop_session" &&
+          sessionRefs.has(record.payload.targetRef) &&
           record.payload.httpStatus === 404
       )
     const applicationIdentityCorrect =
@@ -388,7 +435,8 @@ export function projectSummary(records, recovery, truncatedTail = false) {
       cases[definition.id]?.status === "pass" &&
       hasStartResult &&
       hasTerminalStatus &&
-      hasConfirmedUsage &&
+      hasResources &&
+      zeroActive &&
       registrationCorrect &&
       joinCorrect &&
       ceilingCorrect &&
@@ -410,7 +458,18 @@ export function projectSummary(records, recovery, truncatedTail = false) {
     CASES.every(caseComplete) &&
     cleanupObserved &&
     recovery.cleanup?.completed === true &&
-    usageConfirmed &&
+    recovery.cleanup.zeroActiveComplete === true &&
+    sessions.every(resourceEvidenceComplete) &&
+    unresolvedDispatches(recovery).length === 0 &&
+    recovery.starts === CASES.length &&
+    recovery.reservedSessionMinutes ===
+      (CASES.length * LIMITS.caseSeconds) / 60 &&
+    recovery.dispatches?.length === CASES.length &&
+    recovery.dispatches.every(
+      (dispatch) =>
+        dispatch.reservedMinutes === LIMITS.caseSeconds / 60 &&
+        dispatch.outcome !== "unknown"
+    ) &&
     !firstFailure &&
     !recovery.firstFailure &&
     !records.some(
@@ -426,6 +485,11 @@ export function projectSummary(records, recovery, truncatedTail = false) {
     schemaVersion: SCHEMA_VERSION,
     runRef: safeRef(recovery.salt, recovery.runId),
     status,
+    resourceStatus: status,
+    accountingStatus: usageConfirmed ? "confirmed" : "unknown",
+    reservedSessionMinutes:
+      recovery.reservedSessionMinutes ??
+      ((recovery.starts ?? 0) * LIMITS.caseSeconds) / 60,
     reason:
       requestedStatus === "pass" && !requirementsComplete
         ? "required_observations_missing"
@@ -487,6 +551,7 @@ export class DurableRunStore {
       productionServiceName: PROD_AGENT,
       createdAt: new Date().toISOString(),
       starts: 0,
+      reservedSessionMinutes: 0,
       dispatches: [],
       sessions: {},
       cleanup: {},
@@ -774,6 +839,7 @@ export function manifestFacts(value, imageDigest) {
     body.maxSessionDuration
   return {
     agentName: body.name,
+    serviceId: deployment.serviceId,
     buildId: deployment.buildId,
     deploymentId: deployment.deploymentId ?? deployment.id,
     imageDigest,
@@ -784,14 +850,39 @@ export function manifestFacts(value, imageDigest) {
   }
 }
 
-export function verifyBaseline(manifest, sessions, keys, secretSets) {
+export function privateKeyInventory(keys) {
+  const entries = (keys?.body ?? keys)?.private
+  if (!Array.isArray(entries)) throw new Error("private_key_inventory_invalid")
+  const ids = entries.map((entry) => {
+    if (
+      entry?.type !== "private" ||
+      typeof entry.id !== "string" ||
+      entry.id.trim().length === 0 ||
+      entry.id.length > 512
+    )
+      throw new Error("private_key_inventory_invalid")
+    return entry.id
+  })
+  if (new Set(ids).size !== ids.length)
+    throw new Error("private_key_inventory_invalid")
+  return ids.sort()
+}
+
+export function verifyBaseline(
+  manifest,
+  sessions,
+  keys,
+  secretSets,
+  expectedPrivateKeyIds = []
+) {
   const active = sessions.filter((session) => session.endedAt == null)
-  const root = keys?.body ?? keys
-  const privateKeys = Array.isArray(root?.private)
-    ? root.private
-    : (root?.apiKeys ?? root?.keys ?? []).filter(
-        (key) => key.type === "private"
-      )
+  let privateKeys
+  try {
+    privateKeys = privateKeyInventory(keys)
+  } catch {
+    return false
+  }
+  if (!Array.isArray(expectedPrivateKeyIds)) return false
   const sets = (secretSets?.body ?? secretSets)?.sets ?? []
   return (
     manifest.agentName === PROD_AGENT &&
@@ -803,13 +894,15 @@ export function verifyBaseline(manifest, sessions, keys, secretSets) {
       JSON.stringify([BASELINE.secretSet]) &&
     !Object.hasOwn(manifest, "maxSessionDurationSeconds") &&
     active.length === 0 &&
-    privateKeys.length === 0 &&
+    JSON.stringify(privateKeys) ===
+      JSON.stringify([...expectedPrivateKeyIds].sort()) &&
     !sets.some((set) => set.name === PROBE_AGENT)
   )
 }
 
 export function verifyProbeManifest(manifest, buildId) {
   return (
+    isUuid(manifest.serviceId) &&
     manifest.agentName === PROBE_AGENT &&
     manifest.buildId === buildId &&
     /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(
@@ -858,6 +951,10 @@ export function normalizeSessionObservation(session) {
       ? metrics.sampleCount
       : null,
     lastMetricSampleAt: Number.isFinite(lastSample?.t) ? lastSample.t : null,
+    lastCpuMillicores:
+      Number.isFinite(lastSample?.c) && lastSample.c >= 0 ? lastSample.c : null,
+    lastMemoryBytes:
+      Number.isFinite(lastSample?.m) && lastSample.m >= 0 ? lastSample.m : null,
     observedRuntimeMinutes:
       Number.isFinite(start) && Number.isFinite(end) && end >= start
         ? (end - start) / 60_000
@@ -1059,7 +1156,14 @@ async function runCommand(
 
 async function requestJson(
   url,
-  { token, method = "GET", body, timeoutMs = 30_000, signal = exerciseSignal }
+  {
+    token,
+    method = "GET",
+    body,
+    timeoutMs = 30_000,
+    signal = exerciseSignal,
+    returnResponse = false,
+  }
 ) {
   assertNotAborted(signal)
   let response
@@ -1081,15 +1185,23 @@ async function requestJson(
       throw new Error("provider_timeout")
     throw new Error("provider_network_failure")
   }
-  if (!response.ok) throw new Error(`provider_http_${response.status}`)
+  if (!response.ok) {
+    if (returnResponse) return { httpStatus: response.status, value: null }
+    throw Object.assign(new Error(`provider_http_${response.status}`), {
+      httpStatus: response.status,
+    })
+  }
   const text = await response.text()
   let value
   try {
     value = text ? JSON.parse(text) : null
   } catch {
-    throw new Error("provider_response_invalid")
+    if (returnResponse) return { httpStatus: response.status, value: null }
+    throw Object.assign(new Error("provider_response_invalid"), {
+      httpStatus: response.status,
+    })
   }
-  return value
+  return returnResponse ? { httpStatus: response.status, value } : value
 }
 
 async function readControlPlane(
@@ -1137,22 +1249,108 @@ async function readControlPlane(
   }
 }
 
-async function stopExact(organization, sessionId, signal = exerciseSignal) {
-  const result = await runCommand(
-    [
-      "cloud",
-      "agent",
-      "stop",
-      PROBE_AGENT,
-      "--session-id",
-      sessionId,
-      "--organization",
-      organization,
-      "--force",
-    ],
-    { timeoutMs: 60_000, signal }
+function privateSessionUrl(privateKey, recovery, sessionId) {
+  if (!privateKey) throw new Error("private_key_missing")
+  if (
+    recovery.serviceName !== PROBE_AGENT ||
+    !isUuid(recovery.probe?.serviceId) ||
+    !isUuid(recovery.probe?.deploymentId) ||
+    !isUuid(recovery.organization)
   )
-  return classifyStopCommandResult(result)
+    throw new Error("ownership_unresolved")
+  return `${ORIGIN}/v1/agents/${encodeURIComponent(recovery.serviceName)}/sessions${sessionId == null ? "" : `/${encodeURIComponent(sessionId)}`}`
+}
+
+export async function readExactSession({
+  privateKey,
+  recovery,
+  sessionId,
+  signal,
+}) {
+  const url = privateSessionUrl(privateKey, recovery, sessionId)
+  const { value, httpStatus } = await requestJson(url, {
+    token: privateKey,
+    signal,
+    returnResponse: true,
+  })
+  const fail = (category) => {
+    throw Object.assign(new Error(category), { httpStatus })
+  }
+  if (httpStatus !== 200) fail(`provider_http_${httpStatus}`)
+  if (
+    !value ||
+    value.sessionId !== sessionId ||
+    (value.resourceMetrics != null &&
+      value.resourceMetrics.sessionId !== sessionId)
+  )
+    fail("session_identity_mismatch")
+  if (
+    value.serviceId !== recovery.probe.serviceId ||
+    value.organizationId !== recovery.organization ||
+    value.deploymentId !== recovery.probe.deploymentId
+  )
+    fail("session_scope_mismatch")
+  return { ...value, httpStatus }
+}
+
+export async function stopExactSession({
+  privateKey,
+  recovery,
+  sessionId,
+  signal,
+}) {
+  const url = privateSessionUrl(privateKey, recovery, sessionId)
+  try {
+    const { value, httpStatus } = await requestJson(url, {
+      token: privateKey,
+      method: "DELETE",
+      signal,
+      timeoutMs: 60_000,
+      returnResponse: true,
+    })
+    if ([401, 403].includes(httpStatus))
+      return { status: "permission_error", httpStatus }
+    if (httpStatus !== 200) return { status: "http_error", httpStatus }
+    if (value?.session_id !== sessionId || value.status !== "terminated")
+      return {
+        status: "invalid_response",
+        httpStatus,
+        category: "session_identity_mismatch",
+      }
+    // A successful DELETE acknowledges the request; only an exact GET proves terminal resources.
+    return { status: "success", httpStatus }
+  } catch (error) {
+    return {
+      status: signal?.aborted
+        ? "interrupted"
+        : error.message === "provider_timeout"
+          ? "timeout"
+          : "network_failure",
+      httpStatus: null,
+    }
+  }
+}
+
+export async function readActiveSessions({ privateKey, recovery, signal }) {
+  const url = new URL(privateSessionUrl(privateKey, recovery))
+  url.searchParams.set("status", "active")
+  url.searchParams.set("deploymentId", recovery.probe.deploymentId)
+  url.searchParams.set("offset", "0")
+  const { value, httpStatus } = await requestJson(url.href, {
+    token: privateKey,
+    signal,
+    returnResponse: true,
+  })
+  if (httpStatus !== 200)
+    throw Object.assign(new Error(`provider_http_${httpStatus}`), {
+      httpStatus,
+    })
+  const complete =
+    Number.isSafeInteger(value?.total_count) &&
+    value.total_count === 0 &&
+    Array.isArray(value.sessions) &&
+    value.sessions.length === 0
+  return { complete, activeSessionCount: complete ? 0 : null, httpStatus }
 }
 
 async function deployProbe(organization, salt) {
@@ -1238,24 +1436,6 @@ async function probeAbsent(
     if (error?.message === "provider_http_404") return true
     throw error
   }
-}
-
-async function readSession(
-  operatorToken,
-  organization,
-  sessionId,
-  signal = exerciseSignal
-) {
-  const base = `${ORIGIN}/v1/organizations/${encodeURIComponent(organization)}`
-  const value = await requestJson(`${base}/services/${PROBE_AGENT}/sessions`, {
-    token: operatorToken,
-    signal,
-  })
-  const sessions = value?.sessions ?? value?.body?.sessions ?? value
-  if (!Array.isArray(sessions)) throw new Error("session_list_invalid")
-  return (
-    sessions.find((item) => (item.sessionId ?? item.id) === sessionId) ?? null
-  )
 }
 
 export async function startCollector({ store, scratch }) {
@@ -1561,6 +1741,8 @@ async function startTunnel(port) {
 function cleanupDependencies({
   operatorToken,
   organization,
+  privateKey,
+  recovery,
   signal = null,
   waitForUnknown = true,
 }) {
@@ -1573,8 +1755,11 @@ function cleanupDependencies({
     readProduction: () =>
       readControlPlane(operatorToken, organization, PROD_AGENT, signal),
     readSession: (sessionId) =>
-      readSession(operatorToken, organization, sessionId, signal),
-    stopSession: (sessionId) => stopExact(organization, sessionId, signal),
+      readExactSession({ privateKey, recovery, sessionId, signal }),
+    stopSession: (sessionId) =>
+      stopExactSession({ privateKey, recovery, sessionId, signal }),
+    readActiveSessions: () =>
+      readActiveSessions({ privateKey, recovery, signal }),
     deleteProbe: () => deleteProbe(organization, signal),
     probeAbsent: () => probeAbsent(operatorToken, organization, signal),
     waitForUnknown,
@@ -1585,10 +1770,17 @@ function assertOwnedProbe(recovery, state) {
   if (!state?.manifest) throw new Error("ownership_unresolved")
   if (
     state.manifest.agentName !== recovery.serviceName ||
+    state.manifest.serviceId !== recovery.probe?.serviceId ||
     state.manifest.buildId !== recovery.probe?.buildId ||
     state.manifest.deploymentId !== recovery.probe?.deploymentId
   )
     throw new Error("ownership_mismatch")
+  if (
+    !Array.isArray(recovery.privateKeyIds) ||
+    JSON.stringify(privateKeyInventory(state.keys)) !==
+      JSON.stringify([...recovery.privateKeyIds].sort())
+  )
+    throw new Error("private_key_inventory_invalid")
 }
 
 async function recordOperation(
@@ -1654,20 +1846,77 @@ export function assertCaseComplete(recovery, sessionRef) {
     sessions.some((session) => !session.terminal)
   )
     throw new Error("session_status_unknown")
+  if (sessions.some((session) => !resourceEvidenceComplete(session)))
+    throw new Error("session_resource_incomplete")
   if (
     sessions.some(
       (session) =>
-        session.usageStatus !== "confirmed" ||
-        !Number.isFinite(session.confirmedBilledMinutes) ||
-        session.confirmedBilledMinutes < 0
+        session.observedRuntimeMinutes > LIMITS.providerSeconds / 60 ||
+        Date.parse(session.providerEndedAt) > session.deadline
     )
   )
-    throw new Error("usage_unknown")
-  if (
-    sessions.reduce((sum, item) => sum + item.confirmedBilledMinutes, 0) >=
-    LIMITS.billedMinutes
+    throw new Error("session_resource_bound_exceeded")
+  if (unresolvedDispatches(recovery).length)
+    throw new Error("session_status_unknown")
+}
+
+export function resourceEvidenceComplete(observation) {
+  return (
+    observation?.readbackValid !== false &&
+    observation?.terminal === true &&
+    Number.isFinite(Date.parse(observation.providerStartedAt)) &&
+    Number.isFinite(Date.parse(observation.providerEndedAt)) &&
+    Number.isFinite(observation.observedRuntimeMinutes) &&
+    observation.observedRuntimeMinutes >= 0 &&
+    Number.isSafeInteger(observation.metricSampleCount) &&
+    observation.metricSampleCount > 0 &&
+    Number.isFinite(observation.lastMetricSampleAt) &&
+    observation.lastMetricSampleAt > 0 &&
+    Number.isFinite(observation.lastCpuMillicores) &&
+    observation.lastCpuMillicores >= 0 &&
+    Number.isFinite(observation.lastMemoryBytes) &&
+    observation.lastMemoryBytes >= 0
   )
-    throw new Error("billing_limit_exceeded")
+}
+
+function unresolvedDispatches(recovery) {
+  return (recovery.dispatches ?? []).filter(
+    (dispatch) =>
+      dispatch.outcome === "unknown" ||
+      !Object.values(recovery.sessions).some(
+        (session) =>
+          session.caseRef === dispatch.caseRef &&
+          resourceEvidenceComplete(session)
+      )
+  )
+}
+
+export async function reserveStart(store, dispatch) {
+  await store.checkpoint((recovery) => {
+    const reserved =
+      recovery.reservedSessionMinutes ??
+      (recovery.starts * LIMITS.caseSeconds) / 60
+    if (
+      !Number.isSafeInteger(reserved) ||
+      reserved < (recovery.starts * LIMITS.caseSeconds) / 60 ||
+      recovery.starts >= LIMITS.starts ||
+      reserved + LIMITS.caseSeconds / 60 > LIMITS.billedMinutes
+    )
+      throw new Error("reservation_limit_exceeded")
+    if (
+      recovery.dispatches.some(
+        (item) => item.dispatchRef === dispatch.dispatchRef
+      )
+    )
+      throw new Error("ambiguous_start_no_retry")
+    recovery.starts += 1
+    recovery.reservedSessionMinutes = reserved + LIMITS.caseSeconds / 60
+    recovery.dispatches.push({
+      ...dispatch,
+      reservedMinutes: LIMITS.caseSeconds / 60,
+      outcome: "unknown",
+    })
+  })
 }
 
 async function snapshotSession(store, sessionRef, dependencies) {
@@ -1682,11 +1931,23 @@ async function snapshotSession(store, sessionRef, dependencies) {
       kind: "session_status",
       source: "provider_readback",
       caseRef: session.caseRef,
-      payload: { sessionRef, ...observation },
+      payload: {
+        sessionRef,
+        ...observation,
+        httpStatus: raw.httpStatus ?? null,
+      },
     })
     await store.checkpoint((recovery) =>
-      Object.assign(recovery.sessions[sessionRef], observation)
+      Object.assign(recovery.sessions[sessionRef], observation, {
+        readbackValid: true,
+      })
     )
+    await store.append({
+      kind: "resource_observation",
+      source: "provider_readback",
+      caseRef: session.caseRef,
+      payload: { resource: "session_resources", sessionRef, ...observation },
+    })
     if (dependencies.now() >= session.deadline) {
       await store.append({
         kind: "resource_observation",
@@ -1698,9 +1959,59 @@ async function snapshotSession(store, sessionRef, dependencies) {
     }
     return observation
   } catch (error) {
+    if (error.message !== "cleanup_deadline_exceeded")
+      await store.checkpoint((recovery) => {
+        recovery.sessions[sessionRef].readbackValid = false
+      })
     await blockPermission(store, error)
+    await store.append({
+      kind: "session_status",
+      source: "provider_readback",
+      caseRef: session.caseRef,
+      payload: {
+        sessionRef,
+        httpStatus: error.httpStatus ?? null,
+        status: dependencies.signal?.aborted
+          ? "interrupted"
+          : error.message === "provider_timeout"
+            ? "timeout"
+            : "failed",
+        category: safeCategory(error),
+      },
+    })
     throw error
   }
+}
+
+export async function captureZeroActive(store, dependencies, caseRef = null) {
+  assertNotAborted(dependencies.signal)
+  const state = await dependencies.readProbe()
+  assertOwnedProbe(store.recovery, state)
+  const observed = await dependencies.readActiveSessions()
+  const complete =
+    observed?.complete === true &&
+    observed?.activeSessionCount === 0 &&
+    observed?.httpStatus === 200
+  await store.append({
+    kind: "resource_observation",
+    source: "private_session_readback",
+    caseRef,
+    payload: {
+      resource: "probe_sessions",
+      complete,
+      activeSessionCount: complete ? 0 : null,
+      httpStatus: observed?.httpStatus ?? null,
+      deploymentRef: safeRef(
+        store.recovery.salt,
+        store.recovery.probe.deploymentId
+      ),
+    },
+  })
+  await store.checkpoint((recovery) => {
+    recovery.cleanup.zeroActiveComplete = complete
+  })
+  if (!complete) throw new Error("active_sessions_unresolved")
+  return true
 }
 
 export async function countedStop(
@@ -1766,6 +2077,8 @@ export async function countedStop(
     await blockPermission(store, new Error("session_permission_denied"))
     throw new Error("session_permission_denied")
   }
+  if (result.status === "invalid_response")
+    throw new Error("session_identity_mismatch")
   return result
 }
 
@@ -1844,22 +2157,38 @@ export async function cleanupRun(store, dependencies) {
         await blockPermission(store, error)
       }
     }
-    for (const dispatch of store.recovery.dispatches ?? [])
-      if (dispatch.outcome === "unknown") {
-        await store.append({
-          kind: "resource_observation",
-          source: "application_recovery",
-          caseRef: dispatch.caseRef,
-          payload: {
-            dispatchRef: dispatch.dispatchRef,
-            sessionRef: null,
-            identityStatus: "unknown",
-            deadlineExceeded: dependencies.now() > dispatch.deadline,
-          },
-        })
-        cleanupErrors.push(new Error("session_status_unknown"))
-      }
-    if (!mutationsBlocked && !mutationBlocked(store.recovery)) {
+    for (const dispatch of unresolvedDispatches(store.recovery)) {
+      await store.append({
+        kind: "resource_observation",
+        source: "application_recovery",
+        caseRef: dispatch.caseRef,
+        payload: {
+          dispatchRef: dispatch.dispatchRef,
+          sessionRef: null,
+          identityStatus: "unknown",
+          deadlineExceeded: dependencies.now() > dispatch.deadline,
+        },
+      })
+      cleanupErrors.push(new Error("session_status_unknown"))
+    }
+    let zeroActive = false
+    try {
+      zeroActive = await captureZeroActive(store, dependencies)
+    } catch (error) {
+      await blockPermission(store, error)
+      cleanupErrors.push(error)
+    }
+    const targetsComplete =
+      Object.values(store.recovery.sessions).every(resourceEvidenceComplete) &&
+      unresolvedDispatches(store.recovery).length === 0
+    if (!targetsComplete)
+      cleanupErrors.push(new Error("session_resource_incomplete"))
+    if (
+      !mutationsBlocked &&
+      !mutationBlocked(store.recovery) &&
+      zeroActive &&
+      targetsComplete
+    ) {
       try {
         const result = await recordOperation(store, {
           name: "delete_probe_service",
@@ -1868,7 +2197,16 @@ export async function cleanupRun(store, dependencies) {
             store.recovery.salt,
             store.recovery.probe.deploymentId
           ),
-          perform: dependencies.deleteProbe,
+          perform: () => {
+            if (
+              unresolvedDispatches(store.recovery).length ||
+              !Object.values(store.recovery.sessions).every(
+                resourceEvidenceComplete
+              )
+            )
+              throw new Error("session_status_unknown")
+            return dependencies.deleteProbe()
+          },
         })
         await store.checkpoint((recovery) => {
           recovery.cleanup.deleteProbe = result
@@ -1910,7 +2248,8 @@ export async function cleanupRun(store, dependencies) {
       production.manifest,
       production.sessions,
       production.keys,
-      production.secretSets
+      production.secretSets,
+      store.recovery.privateKeyIds ?? null
     )
     await store.append({
       kind: "cleanup_result",
@@ -1930,7 +2269,7 @@ export async function cleanupRun(store, dependencies) {
   }
 
   const unresolvedSessions = Object.values(store.recovery.sessions).filter(
-    (session) => !session.terminal
+    (session) => !resourceEvidenceComplete(session)
   ).length
   await store.checkpoint((recovery) => {
     recovery.cleanup.unresolvedSessions = unresolvedSessions
@@ -1938,6 +2277,8 @@ export async function cleanupRun(store, dependencies) {
       cleanupErrors.length === 0 &&
       !mutationBlocked(recovery) &&
       unresolvedSessions === 0 &&
+      unresolvedDispatches(recovery).length === 0 &&
+      recovery.cleanup.zeroActiveComplete === true &&
       recovery.cleanup.probeServiceAbsent === true &&
       recovery.cleanup.productionUnchanged === true
   })
@@ -1954,7 +2295,7 @@ export async function cleanupRun(store, dependencies) {
   return store.recovery.cleanup.completed
 }
 
-async function containFromMemory(store, dependencies) {
+export async function containFromMemory(store, dependencies) {
   if (mutationBlocked(store.recovery) || dependencies.signal?.aborted)
     return false
   let state
@@ -1996,13 +2337,8 @@ async function containFromMemory(store, dependencies) {
       if (dependencies.signal?.aborted) return false
     }
   }
-  try {
-    assertNotAborted(dependencies.signal)
-    await dependencies.deleteProbe()
-    return true
-  } catch {
-    return false
-  }
+  // Disk failure prevents durable terminal/zero-active evidence. Preserve the lookup surface.
+  return false
 }
 
 async function runLive(runDir) {
@@ -2010,8 +2346,10 @@ async function runLive(runDir) {
     throw new Error("live_release_missing")
   const runId = process.env.PROVIDER_PROOF_RUN_ID
   const publicKey = process.env.PIPECAT_API_KEY
+  const privateKey = process.env.PIPECAT_PRIVATE_API_KEY
   const operatorToken = process.env.PIPECAT_OPERATOR_TOKEN
   const organization = process.env.PIPECAT_ORGANIZATION
+  if (!privateKey) throw new Error("private_key_missing")
   if (![runId, publicKey, operatorToken, organization, runDir].every(Boolean))
     throw new Error("live_prerequisite_missing")
 
@@ -2045,15 +2383,20 @@ async function runLive(runDir) {
       organization,
       PROD_AGENT
     )
+    const privateKeyIds = privateKeyInventory(preflight.keys)
     if (
       !verifyBaseline(
         preflight.manifest,
         preflight.sessions,
         preflight.keys,
-        preflight.secretSets
+        preflight.secretSets,
+        privateKeyIds
       )
     )
       throw new Error("baseline_preflight_failed")
+    await store.checkpoint((recovery) => {
+      recovery.privateKeyIds = privateKeyIds
+    })
     if (!(await probeAbsent(operatorToken, organization)))
       throw new Error("probe_service_already_exists")
     collector = await startCollector({ store, scratch })
@@ -2081,6 +2424,7 @@ async function runLive(runDir) {
       recovery.probe = {
         buildId: reconciled.state.manifest.buildId,
         deploymentId: reconciled.state.manifest.deploymentId,
+        serviceId: reconciled.state.manifest.serviceId,
       }
     })
     await store.append({
@@ -2089,6 +2433,16 @@ async function runLive(runDir) {
       operationRef: deployRef,
       payload: { name: "deploy_probe", ...reconciled.diagnostic },
     })
+    await captureZeroActive(
+      store,
+      cleanupDependencies({
+        operatorToken,
+        organization,
+        privateKey,
+        recovery: store.recovery,
+        signal: controller.signal,
+      })
+    )
 
     for (const definition of CASES) {
       assertNotAborted(controller.signal)
@@ -2112,18 +2466,14 @@ async function runLive(runDir) {
         secret: Buffer.from(callbackSecret, "base64url"),
         expiresAtEpochSeconds: expiresAt,
       })
-      await store.checkpoint((recovery) => {
-        recovery.starts += 1
-        recovery.dispatches.push({
-          dispatchRef,
-          caseRef: definition.id,
-          dispatchedAt,
-          deadline,
-          providerDeadline: dispatchedAt + LIMITS.providerSeconds * 1_000,
-          expiresAtEpochSeconds: expiresAt,
-          providerLifetimeStart: "local_dispatch_pending_provider_timestamp",
-          outcome: "unknown",
-        })
+      await reserveStart(store, {
+        dispatchRef,
+        caseRef: definition.id,
+        dispatchedAt,
+        deadline,
+        providerDeadline: dispatchedAt + LIMITS.providerSeconds * 1_000,
+        expiresAtEpochSeconds: expiresAt,
+        providerLifetimeStart: "local_dispatch_pending_provider_timestamp",
       })
       currentOperation = "start_session"
       await store.append({
@@ -2133,6 +2483,7 @@ async function runLive(runDir) {
         operationRef: dispatchRef,
         payload: {
           name: "start_session",
+          reservedMinutes: LIMITS.caseSeconds / 60,
           deadline: new Date(deadline).toISOString(),
         },
       })
@@ -2283,6 +2634,8 @@ async function runLive(runDir) {
           ...cleanupDependencies({
             operatorToken,
             organization,
+            privateKey,
+            recovery: store.recovery,
             signal: controller.signal,
           }),
           observeOnly: true,
@@ -2295,6 +2648,8 @@ async function runLive(runDir) {
           cleanupDependencies({
             operatorToken,
             organization,
+            privateKey,
+            recovery: store.recovery,
             signal: controller.signal,
           })
         )
@@ -2305,21 +2660,57 @@ async function runLive(runDir) {
             cleanupDependencies({
               operatorToken,
               organization,
+              privateKey,
+              recovery: store.recovery,
               signal: controller.signal,
             }),
             "repeat_stop_session"
           )
       }
+      if (
+        definition.stop !== "ceiling" &&
+        !store.records.some(
+          (record) =>
+            record.caseRef === definition.id &&
+            record.kind === "operation_result" &&
+            record.payload.name === "stop_session" &&
+            record.payload.status === "success" &&
+            record.payload.httpStatus === 200
+        )
+      )
+        throw new Error("session_stop_unverified")
+      if (
+        definition.stop === "twice" &&
+        !store.records.some(
+          (record) =>
+            record.caseRef === definition.id &&
+            record.kind === "operation_result" &&
+            record.payload.name === "repeat_stop_session" &&
+            record.payload.httpStatus === 404
+        )
+      )
+        throw new Error("repeat_stop_unverified")
+      assertCaseComplete(store.recovery, sessionRef)
+      await captureZeroActive(
+        store,
+        cleanupDependencies({
+          operatorToken,
+          organization,
+          privateKey,
+          recovery: store.recovery,
+          signal: controller.signal,
+        }),
+        definition.id
+      )
       await store.append({
         kind: "verdict",
         source: "operator",
         caseRef: definition.id,
         payload: {
-          status: "partial",
-          reason: "case_observations_complete_usage_unknown",
+          status: "pass",
+          reason: "case_resource_observations_complete",
         },
       })
-      assertCaseComplete(store.recovery, sessionRef)
     }
   } catch (error) {
     try {
@@ -2341,6 +2732,8 @@ async function runLive(runDir) {
     const dependencies = cleanupDependencies({
       operatorToken,
       organization,
+      privateKey,
+      recovery: store.recovery,
       signal: cleanupController.signal,
       waitForUnknown: !controller.signal.aborted,
     })
@@ -2359,17 +2752,13 @@ async function runLive(runDir) {
   await rm(scratch, { recursive: true, force: true })
   const before = projectSummary(store.records, store.recovery)
   const status =
-    store.recovery.cleanup.completed === true &&
-    !store.recovery.firstFailure &&
-    before.usageStatus === "confirmed"
+    store.recovery.cleanup.completed === true && !store.recovery.firstFailure
       ? "pass"
       : "blocked"
   const reason = secondSignal
     ? "cleanup_interrupted_recovery_required"
     : (store.recovery.firstFailure?.category ??
-      (before.usageStatus !== "confirmed"
-        ? "usage_unknown"
-        : "cleanup_unverified"))
+      (status === "pass" ? "resource_proof_complete" : "cleanup_unverified"))
   let summary = { status: "blocked" }
   if (evidenceWritable) {
     try {
@@ -2387,14 +2776,16 @@ async function runLive(runDir) {
   process.removeListener("SIGTERM", onSignal)
   await store.close()
   process.stdout.write(
-    `${JSON.stringify({ status, reason, runDir: store.runDir })}\n`
+    `${JSON.stringify({ resourceStatus: summary.status, accountingStatus: before.accountingStatus, reason: summary.reason ?? reason, runDir: store.runDir })}\n`
   )
   process.exitCode = summary.status === "pass" ? 0 : 1
 }
 
 async function recover(runDir) {
   const operatorToken = process.env.PIPECAT_OPERATOR_TOKEN
+  const privateKey = process.env.PIPECAT_PRIVATE_API_KEY
   const organization = process.env.PIPECAT_ORGANIZATION
+  if (!privateKey) throw new Error("private_key_missing")
   if (![operatorToken, organization, runDir].every(Boolean))
     throw new Error("recover_prerequisite_missing")
   const store = await DurableRunStore.open(runDir)
@@ -2435,6 +2826,8 @@ async function recover(runDir) {
       cleanupDependencies({
         operatorToken,
         organization,
+        privateKey,
+        recovery: store.recovery,
         signal: controller.signal,
       })
     )
@@ -2444,26 +2837,20 @@ async function recover(runDir) {
       store.truncatedTail
     )
     const status =
-      completed &&
-      !store.recovery.firstFailure &&
-      before.usageStatus === "confirmed"
-        ? "pass"
-        : "blocked"
+      completed && !store.recovery.firstFailure ? "pass" : "blocked"
     const reason =
       store.recovery.firstFailure?.category ??
-      (before.usageStatus !== "confirmed"
-        ? "usage_unknown"
-        : "cleanup_unverified")
+      (status === "pass" ? "resource_proof_complete" : "cleanup_unverified")
     await store.append({
       kind: "verdict",
       source: "recovery",
       payload: { status, reason },
     })
-    await store.writeSummary()
+    const summary = await store.writeSummary()
     process.stdout.write(
-      `${JSON.stringify({ status, reason, runDir: store.runDir })}\n`
+      `${JSON.stringify({ resourceStatus: summary.status, accountingStatus: before.accountingStatus, reason: summary.reason ?? reason, runDir: store.runDir })}\n`
     )
-    process.exitCode = status === "pass" ? 0 : 1
+    process.exitCode = summary.status === "pass" ? 0 : 1
   } catch (error) {
     await store.latchFailure({
       category: safeCategory(error),

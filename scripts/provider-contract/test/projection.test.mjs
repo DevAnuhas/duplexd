@@ -3,11 +3,14 @@ import { test } from "node:test"
 import { projectSummary } from "../run.mjs"
 import { completeEvidence } from "./fixtures/projection.mjs"
 
-test("complete synthetic six-case evidence projects pass only with independent cleanup and documented usage observations", () => {
+test("complete synthetic six-case resource proof can pass with separate unknown accounting", () => {
   const { records, recovery } = completeEvidence()
   const summary = projectSummary(records, recovery)
   assert.equal(summary.status, "pass")
-  assert.equal(summary.confirmedBilledMinutes, 6)
+  assert.equal(summary.resourceStatus, "pass")
+  assert.equal(summary.accountingStatus, "unknown")
+  assert.equal(summary.confirmedBilledMinutes, null)
+  assert.equal(summary.reservedSessionMinutes, 72)
   assert.equal(Object.keys(summary.cases).length, 6)
 })
 
@@ -72,10 +75,10 @@ for (const mutate of [
     ).payload.status = "failed"
     return records
   },
-  function unconfirmedUsage(records) {
+  function missingResourceSamples(records) {
     records.find(
-      (record) => record.payload.resource === "authoritative_usage"
-    ).payload.confirmedBilledMinutes = null
+      (record) => record.payload.resource === "session_resources"
+    ).payload.metricSampleCount = null
     return records
   },
   function unboundedAgentClaims(records) {
@@ -109,3 +112,31 @@ test("summary cannot reset first failure or ignore an ambiguous dispatch or trun
   })
   assert.equal(projectSummary(records, recovery).status, "blocked")
 })
+
+for (const corrupt of [
+  function missingScopedZero(recovery) {
+    delete recovery.cleanup.zeroActiveComplete
+  },
+  function failedScopedZero(recovery) {
+    recovery.cleanup.zeroActiveComplete = false
+  },
+  function invalidatedReadback(recovery) {
+    Object.values(recovery.sessions)[0].readbackValid = false
+  },
+  function activeCheckpoint(recovery) {
+    Object.values(recovery.sessions)[0].terminal = false
+  },
+  function unresolvedAcceptedDispatch(recovery) {
+    delete recovery.sessions[Object.keys(recovery.sessions)[0]]
+  },
+])
+  test(`pass-shaped journal cannot override current checkpoint: ${corrupt.name}`, () => {
+    const { records, recovery } = completeEvidence()
+    assert.equal(projectSummary(records, recovery).resourceStatus, "pass")
+    corrupt(recovery)
+    const summary = projectSummary(records, recovery)
+    assert.equal(summary.status, "blocked")
+    assert.equal(summary.resourceStatus, "blocked")
+    assert.equal(summary.accountingStatus, "unknown")
+    assert.equal(summary.confirmedBilledMinutes, null)
+  })

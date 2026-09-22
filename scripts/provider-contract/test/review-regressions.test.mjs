@@ -66,14 +66,14 @@ function callback(port, sessionId = identity.sessionId) {
   })
 }
 
-// Review 1: run the actual first case to completion, including authenticated
-// callbacks and browser-witness reports, with no provider accounting available.
-test("live loop stops after one completed case when authoritative usage is unknown", async (t) => {
+// Revised contract: run all six actual cases with authenticated callbacks and
+// browser witnesses; resource proof is independent of unknown accounting.
+test("live loop reserves six bounded cases while accounting stays separately unknown", async (t) => {
   const dir = await runDirectory(t)
   const child = fixtureChild(t, "signal-process.mjs", [dir, "complete-case"])
-  const result = await child.message("boundaries")
+  const result = await child.message("boundaries", 15_000)
   await child.exited
-  assert.equal(result.starts, 1)
+  assert.equal(result.starts, 6)
   const { records } = await runner.replayJournal(join(dir, "events.ndjson"))
   assert.ok(
     records.some(
@@ -96,7 +96,9 @@ test("live loop stops after one completed case when authoritative usage is unkno
   )
   const summary = JSON.parse(await readFile(join(dir, "summary.json"), "utf8"))
   assert.equal(summary.confirmedBilledMinutes, null)
-  assert.equal(summary.status, "blocked")
+  assert.equal(summary.resourceStatus, "pass")
+  assert.equal(summary.accountingStatus, "unknown")
+  assert.equal(summary.reservedSessionMinutes, 72)
 })
 
 // Review 2: both processes see the same dead owner. Hold B's stale read until A
@@ -387,10 +389,10 @@ for (const phase of ["read", "stop", "delete"])
           result.calls.filter((call) => call.includes("delete")).length,
           0
         )
-      if (phase === "read")
+      if (phase === "read" || phase === "stop")
         assert.ok(
           result.calls.some(
-            ([name, target]) => name === "aborted" && target === "read"
+            ([name, target]) => name === "aborted" && target === phase
           )
         )
       else
@@ -524,40 +526,31 @@ test("ceiling completion observes exact process termination after media ejection
   assert.equal((await runner.reconcileSession(store, ref, deps)).terminal, true)
   assert.equal(reads, 2)
   assert.equal(calls.filter(([name]) => name === "stopSession").length, 0)
-  assert.throws(
-    () => runner.assertCaseComplete(store.recovery, ref),
-    /usage_unknown/u
-  )
+  assert.doesNotThrow(() => runner.assertCaseComplete(store.recovery, ref))
 })
 
-for (const billed of [null, undefined, NaN, Infinity, -1])
-  test(`case advancement rejects confirmed usage with invalid amount ${String(billed)}`, () => {
-    const recovery = {
-      sessions: {
-        exact: {
-          terminal: true,
-          usageStatus: "confirmed",
-          confirmedBilledMinutes: billed,
-        },
-      },
-    }
+for (const field of [
+  "metricSampleCount",
+  "lastMetricSampleAt",
+  "lastCpuMillicores",
+  "lastMemoryBytes",
+])
+  test(`case advancement requires resource field ${field}`, () => {
+    const observation = runner.normalizeSessionObservation(ended)
+    observation[field] = null
+    const recovery = { sessions: { exact: observation } }
     assert.throws(
       () => runner.assertCaseComplete(recovery, "exact"),
-      /usage_unknown/u
+      /session_resource_incomplete/u
     )
   })
 
-test("case advancement requires every session terminal, no first failure and remaining spend budget", () => {
+test("case advancement requires every session terminal and no failure, while allowing unknown accounting", () => {
   const recovery = {
-    sessions: {
-      exact: {
-        terminal: true,
-        usageStatus: "confirmed",
-        confirmedBilledMinutes: 1,
-      },
-    },
+    sessions: { exact: runner.normalizeSessionObservation(ended) },
   }
   assert.doesNotThrow(() => runner.assertCaseComplete(recovery, "exact"))
+  assert.equal(recovery.sessions.exact.confirmedBilledMinutes, null)
   recovery.sessions.other = {
     terminal: false,
     usageStatus: "unknown",
@@ -572,12 +565,6 @@ test("case advancement requires every session terminal, no first failure and rem
   assert.throws(
     () => runner.assertCaseComplete(recovery, "exact"),
     /callback_conflict/u
-  )
-  delete recovery.firstFailure
-  recovery.sessions.exact.confirmedBilledMinutes = 72
-  assert.throws(
-    () => runner.assertCaseComplete(recovery, "exact"),
-    /billing_limit_exceeded/u
   )
 })
 

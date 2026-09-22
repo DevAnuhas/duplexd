@@ -244,6 +244,7 @@ test("real manifest nesting maps only the baseline proof fields", () => {
       autoScaling: { minReplicas: 0, maxReplicas: 3 },
       deployment: {
         id: "deployment",
+        serviceId: "33333333-3333-4333-8333-333333333333",
         buildId: baselineManifest.buildId,
         manifest: { spec: { envFromSecretNames: ["duplexd-agent-secrets"] } },
       },
@@ -251,6 +252,7 @@ test("real manifest nesting maps only the baseline proof fields", () => {
   }
   assert.deepEqual(manifestFacts(value, baselineManifest.imageDigest), {
     ...baselineManifest,
+    serviceId: "33333333-3333-4333-8333-333333333333",
     deploymentId: "deployment",
   })
 })
@@ -264,6 +266,7 @@ test("real probe manifest normalizes the authoritative nested duration", () => {
       autoScaling: { minReplicas: 0, maxReplicas: 1 },
       deployment: {
         id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        serviceId: "33333333-3333-4333-8333-333333333333",
         buildId,
         manifest: {
           spec: { envFromSecretNames: [], maxSessionDurationSeconds: 600 },
@@ -299,6 +302,7 @@ test("probe manifest refuses inherited production secrets", () => {
   const probe = {
     agentName: "duplexd-provider-proof",
     buildId: "11111111-2222-4333-8444-555555555555",
+    serviceId: "33333333-3333-4333-8333-333333333333",
     deploymentId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
     maxSessionDurationSeconds: 600,
     imageDigest: `sha256:${"1".repeat(64)}`,
@@ -330,7 +334,7 @@ test("unchanged resource markers require terminal samples and do not establish f
   )
 })
 
-test("repeat stop accepts only an explicit not-found response", () => {
+test("service CLI not-found detection distinguishes error text without asserting HTTP status", () => {
   assert.equal(isNotFoundStop("request failed: 404"), true)
   assert.equal(isNotFoundStop("session not found"), true)
   assert.equal(isNotFoundStop("request failed: 500"), false)
