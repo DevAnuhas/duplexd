@@ -316,7 +316,7 @@ test("probe manifest refuses inherited production secrets", () => {
   )
 })
 
-test("usage cessation requires ended status and real stable-resource samples", () => {
+test("unchanged resource markers require terminal samples and do not establish final billing", () => {
   const ended = {
     endedAt: "2026-09-21T00:01:00.000Z",
     updatedAt: "2026-09-21T00:01:05.000Z",

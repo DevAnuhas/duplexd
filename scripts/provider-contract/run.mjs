@@ -83,6 +83,10 @@ let exerciseSignal = null
 
 const sleep = (milliseconds, signal = null) =>
   new Promise((resolvePromise, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("operator_signal"))
+      return
+    }
     const finish = () => {
       signal?.removeEventListener("abort", abort)
       resolvePromise()
@@ -162,6 +166,11 @@ function safeCategory(error) {
       "session_permission_denied",
       "cleanup_deadline_exceeded",
       "usage_unknown",
+      "callback_conflict",
+      "callback_timeout",
+      "daily_claims_invalid",
+      "start_response_invalid",
+      "billing_limit_exceeded",
     ].includes(value)
   )
     return value
@@ -175,6 +184,31 @@ async function syncDirectory(path) {
   } finally {
     await handle.close()
   }
+}
+
+function assertNotAborted(signal) {
+  if (signal?.aborted) throw new Error("operator_signal")
+}
+
+function permissionFailure(error) {
+  return [
+    "provider_http_401",
+    "provider_http_403",
+    "session_permission_denied",
+  ].includes(error?.message)
+}
+
+function mutationBlocked(recovery) {
+  return (
+    recovery.mutationBlocked === true ||
+    Object.values(recovery.sessions).some((session) =>
+      session.stopHistory?.some(
+        (result) =>
+          result.status === "permission_error" ||
+          [401, 403].includes(result.httpStatus)
+      )
+    )
+  )
 }
 
 async function atomicJson(path, value) {
@@ -378,6 +412,10 @@ export function projectSummary(records, recovery, truncatedTail = false) {
     recovery.cleanup?.completed === true &&
     usageConfirmed &&
     !firstFailure &&
+    !recovery.firstFailure &&
+    !records.some(
+      (record) => record.kind === "session_identity" && record.payload.conflict
+    ) &&
     !truncatedTail
   const requestedStatus = latestVerdict?.payload.status ?? "incomplete"
   const status =
@@ -468,20 +506,32 @@ export class DurableRunStore {
       if (info.isSymbolicLink() || !info.isFile())
         throw new Error("recovery_invalid")
     }
+    const guardPath = join(absolute, "writer.takeover")
     try {
-      if ((await lstat(lockPath)).isSymbolicLink())
-        throw new Error("recovery_invalid")
-      const lock = JSON.parse(await readFile(lockPath, "utf8"))
-      if (processAlive(lock.pid)) throw new Error("run_writer_active")
-      await rm(lockPath)
+      await mkdir(guardPath, { mode: 0o700 })
     } catch (error) {
-      if (error?.message === "run_writer_active") throw error
-      if (error?.message === "recovery_invalid") throw error
-      if (error?.code !== "ENOENT") throw error
+      if (error.code === "EEXIST") throw new Error("run_writer_active")
+      throw error
     }
-    const lockHandle = await open(lockPath, "wx", 0o600)
-    await lockHandle.writeFile(`${JSON.stringify({ pid: process.pid })}\n`)
-    await lockHandle.sync()
+    let lockHandle
+    try {
+      try {
+        if ((await lstat(lockPath)).isSymbolicLink())
+          throw new Error("recovery_invalid")
+        const lock = JSON.parse(await readFile(lockPath, "utf8"))
+        if (processAlive(lock.pid)) throw new Error("run_writer_active")
+        await rm(lockPath)
+      } catch (error) {
+        if (error?.message === "run_writer_active") throw error
+        if (error?.message === "recovery_invalid") throw error
+        if (error?.code !== "ENOENT") throw error
+      }
+      lockHandle = await open(lockPath, "wx", 0o600)
+      await lockHandle.writeFile(`${JSON.stringify({ pid: process.pid })}\n`)
+      await lockHandle.sync()
+    } finally {
+      await rm(guardPath, { recursive: true })
+    }
     try {
       const recovery = JSON.parse(
         await readFile(join(absolute, "recovery.json"), "utf8")
@@ -499,8 +549,7 @@ export class DurableRunStore {
       store.needsJournalContinuation = replay.needsContinuation
       return store
     } catch (error) {
-      await lockHandle.close()
-      await rm(lockPath, { force: true })
+      await new DurableRunStore(absolute, null, [], lockHandle).close()
       throw error
     }
   }
@@ -564,6 +613,19 @@ export class DurableRunStore {
     category,
     predicate = null,
   }) {
+    category = safeCategory({ message: category })
+    if (
+      ![
+        "registered",
+        "deploy_probe",
+        "start_session",
+        "run_preflight",
+        "recovery_cleanup",
+        "recovery_organization_mismatch",
+        "callback_identity_consistency",
+      ].includes(predicate)
+    )
+      predicate = null
     if (this.recovery.firstFailure) {
       if (!this.records.some((record) => record.kind === "first_failure")) {
         const failure = this.recovery.firstFailure
@@ -605,8 +667,17 @@ export class DurableRunStore {
     if (this.closed) return
     this.closed = true
     await this.queue
-    await this.lockHandle.close()
-    await rm(join(this.runDir, "writer.lock"), { force: true })
+    const owned = await this.lockHandle.stat()
+    const lockPath = join(this.runDir, "writer.lock")
+    try {
+      const current = await lstat(lockPath)
+      if (current.ino === owned.ino && current.dev === owned.dev)
+        await rm(lockPath)
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error
+    } finally {
+      await this.lockHandle.close()
+    }
   }
 }
 
@@ -660,9 +731,13 @@ export async function reconcileProbeDeployment({ deploy, readManifest }) {
 export function decodeClaims(token) {
   const parts = token?.split(".")
   if (!parts || parts.length < 2) throw new Error("daily_claims_invalid")
-  const payload = JSON.parse(
-    Buffer.from(parts[1], "base64url").toString("utf8")
-  )
+  let payload
+  try {
+    payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"))
+    if (!payload || typeof payload !== "object") throw new Error()
+  } catch {
+    throw new Error("daily_claims_invalid")
+  }
   const properties = payload.properties ?? payload
   return {
     expiresAtEpochSeconds: properties.exp,
@@ -813,6 +888,12 @@ export function isNotFoundStop(output) {
 }
 
 export function classifyStopCommandResult(result) {
+  if (result.status === "interrupted")
+    return {
+      status: "interrupted",
+      httpStatus: null,
+      exitCode: result.exitCode,
+    }
   if (result.status === "timeout")
     return { status: "timeout", httpStatus: null, exitCode: result.exitCode }
   if (result.status === "network_failure")
@@ -899,7 +980,11 @@ function callbackIdentity(event) {
   return createHash("sha256").update(JSON.stringify(normalized)).digest("hex")
 }
 
-async function runCommand(args, { timeoutMs = 10 * 60_000 } = {}) {
+async function runCommand(
+  args,
+  { timeoutMs = 10 * 60_000, signal = exerciseSignal } = {}
+) {
+  assertNotAborted(signal)
   return new Promise((resolvePromise) => {
     const child = spawn(
       "uv",
@@ -920,23 +1005,31 @@ async function runCommand(args, { timeoutMs = 10 * 60_000 } = {}) {
     )
     let output = ""
     let timedOut = false
+    let killTimer
     for (const stream of [child.stdout, child.stderr])
       stream.on("data", (chunk) => {
         if (output.length < 32_000) output += chunk.toString("utf8")
       })
-    const timer = setTimeout(() => {
-      timedOut = true
+    const terminate = () => {
       try {
         process.kill(-child.pid, "SIGTERM")
       } catch {}
-      setTimeout(() => {
+      killTimer ??= setTimeout(() => {
         try {
           process.kill(-child.pid, "SIGKILL")
         } catch {}
       }, 5_000).unref()
+    }
+    const onAbort = () => terminate()
+    signal?.addEventListener("abort", onAbort, { once: true })
+    const timer = setTimeout(() => {
+      timedOut = true
+      terminate()
     }, timeoutMs)
     child.once("error", () => {
       clearTimeout(timer)
+      clearTimeout(killTimer)
+      signal?.removeEventListener("abort", onAbort)
       resolvePromise({
         status: "network_failure",
         exitCode: null,
@@ -946,8 +1039,16 @@ async function runCommand(args, { timeoutMs = 10 * 60_000 } = {}) {
     })
     child.once("exit", (code) => {
       clearTimeout(timer)
+      clearTimeout(killTimer)
+      signal?.removeEventListener("abort", onAbort)
       resolvePromise({
-        status: timedOut ? "timeout" : code === 0 ? "success" : "cli_failure",
+        status: signal?.aborted
+          ? "interrupted"
+          : timedOut
+            ? "timeout"
+            : code === 0
+              ? "success"
+              : "cli_failure",
         exitCode: Number.isInteger(code) ? code : null,
         output,
         timedOut,
@@ -958,12 +1059,13 @@ async function runCommand(args, { timeoutMs = 10 * 60_000 } = {}) {
 
 async function requestJson(
   url,
-  { token, method = "GET", body, timeoutMs = 30_000 }
+  { token, method = "GET", body, timeoutMs = 30_000, signal = exerciseSignal }
 ) {
+  assertNotAborted(signal)
   let response
   try {
     const signals = [AbortSignal.timeout(timeoutMs)]
-    if (exerciseSignal) signals.push(exerciseSignal)
+    if (signal) signals.push(signal)
     response = await fetch(url, {
       method,
       headers: {
@@ -974,10 +1076,12 @@ async function requestJson(
       signal: AbortSignal.any(signals),
     })
   } catch (error) {
+    assertNotAborted(signal)
     if (error?.name === "TimeoutError" || error?.name === "AbortError")
       throw new Error("provider_timeout")
     throw new Error("provider_network_failure")
   }
+  if (!response.ok) throw new Error(`provider_http_${response.status}`)
   const text = await response.text()
   let value
   try {
@@ -985,20 +1089,25 @@ async function requestJson(
   } catch {
     throw new Error("provider_response_invalid")
   }
-  if (!response.ok) throw new Error(`provider_http_${response.status}`)
   return value
 }
 
-async function readControlPlane(operatorToken, organization, agentName) {
+async function readControlPlane(
+  operatorToken,
+  organization,
+  agentName,
+  signal = exerciseSignal
+) {
   const base = `${ORIGIN}/v1/organizations/${encodeURIComponent(organization)}`
   const service = await requestJson(`${base}/services/${agentName}`, {
     token: operatorToken,
+    signal,
   })
   const buildId = service?.body?.deployment?.buildId
   if (typeof buildId !== "string") throw new Error("manifest_build_missing")
   const buildValue = await requestJson(
     `${base}/builds/${encodeURIComponent(buildId)}`,
-    { token: operatorToken }
+    { token: operatorToken, signal }
   )
   const build = buildValue?.body?.build ?? buildValue?.build ?? buildValue
   const imageDigest = build?.imageDigest ?? build?.digest
@@ -1006,14 +1115,18 @@ async function readControlPlane(operatorToken, organization, agentName) {
     throw new Error("manifest_digest_missing")
   const sessionValue = await requestJson(
     `${base}/services/${agentName}/sessions`,
-    { token: operatorToken }
+    { token: operatorToken, signal }
   )
   const sessions =
     sessionValue?.sessions ?? sessionValue?.body?.sessions ?? sessionValue
   if (!Array.isArray(sessions)) throw new Error("session_list_invalid")
-  const keys = await requestJson(`${base}/apiKeys`, { token: operatorToken })
+  const keys = await requestJson(`${base}/apiKeys`, {
+    token: operatorToken,
+    signal,
+  })
   const secretSets = await requestJson(`${base}/secrets`, {
     token: operatorToken,
+    signal,
   })
   return {
     base,
@@ -1024,7 +1137,7 @@ async function readControlPlane(operatorToken, organization, agentName) {
   }
 }
 
-async function stopExact(organization, sessionId) {
+async function stopExact(organization, sessionId, signal = exerciseSignal) {
   const result = await runCommand(
     [
       "cloud",
@@ -1037,7 +1150,7 @@ async function stopExact(organization, sessionId) {
       organization,
       "--force",
     ],
-    { timeoutMs: 60_000 }
+    { timeoutMs: 60_000, signal }
   )
   return classifyStopCommandResult(result)
 }
@@ -1078,16 +1191,19 @@ async function deployProbe(organization, salt) {
   }
 }
 
-async function deleteProbe(organization) {
-  const result = await runCommand([
-    "cloud",
-    "agent",
-    "delete",
-    PROBE_AGENT,
-    "--organization",
-    organization,
-    "--force",
-  ])
+async function deleteProbe(organization, signal = exerciseSignal) {
+  const result = await runCommand(
+    [
+      "cloud",
+      "agent",
+      "delete",
+      PROBE_AGENT,
+      "--organization",
+      organization,
+      "--force",
+    ],
+    { timeoutMs: 60_000, signal }
+  )
   return classifyStopCommandResult(result)
 }
 
@@ -1110,9 +1226,13 @@ async function waitForManifest(
   throw new Error("manifest_readback_timeout")
 }
 
-async function probeAbsent(operatorToken, organization) {
+async function probeAbsent(
+  operatorToken,
+  organization,
+  signal = exerciseSignal
+) {
   try {
-    await readControlPlane(operatorToken, organization, PROBE_AGENT)
+    await readControlPlane(operatorToken, organization, PROBE_AGENT, signal)
     return false
   } catch (error) {
     if (error?.message === "provider_http_404") return true
@@ -1120,10 +1240,16 @@ async function probeAbsent(operatorToken, organization) {
   }
 }
 
-async function readSession(operatorToken, organization, sessionId) {
+async function readSession(
+  operatorToken,
+  organization,
+  sessionId,
+  signal = exerciseSignal
+) {
   const base = `${ORIGIN}/v1/organizations/${encodeURIComponent(organization)}`
   const value = await requestJson(`${base}/services/${PROBE_AGENT}/sessions`, {
     token: operatorToken,
+    signal,
   })
   const sessions = value?.sessions ?? value?.body?.sessions ?? value
   if (!Array.isArray(sessions)) throw new Error("session_list_invalid")
@@ -1139,6 +1265,7 @@ export async function startCollector({ store, scratch }) {
   const bootSessions = new Map()
   let witness = null
   let fatalWrite = null
+  let callbackQueue = Promise.resolve()
   const server = createServer(async (request, response) => {
     let persistenceAttempt = false
     try {
@@ -1199,101 +1326,118 @@ export async function startCollector({ store, scratch }) {
       const event = acceptProbeCallback({
         raw,
         headers: request.headers,
-        expected: probe,
+        expected: { ...probe, sessionId: undefined },
       })
-      const identity = callbackIdentity(event)
-      const logicalKey = `${event.bootId}:${event.event}`
-      const previous = logicalCallbacks.get(logicalKey)
-      const previousSessionId = bootSessions.get(event.bootId)
-      if (
-        (previous && previous !== identity) ||
-        (previousSessionId && previousSessionId !== event.sessionId)
-      ) {
-        const sessionRef = safeRef(store.recovery.salt, event.sessionId)
-        persistenceAttempt = true
-        await store.checkpoint((recovery) => {
-          recovery.sessions[sessionRef] ??= {
-            id: event.sessionId,
+      const pending = callbackQueue.then(async () => {
+        if (fatalWrite) {
+          persistenceAttempt = true
+          throw fatalWrite
+        }
+        const identity = callbackIdentity(event)
+        const logicalKey = `${event.bootId}:${event.event}`
+        const previous = logicalCallbacks.get(logicalKey)
+        const previousSessionId = bootSessions.get(event.bootId)
+        if (
+          (previous && previous !== identity) ||
+          (previousSessionId && previousSessionId !== event.sessionId) ||
+          (probe.sessionId && probe.sessionId !== event.sessionId)
+        ) {
+          const sessionRef = safeRef(store.recovery.salt, event.sessionId)
+          persistenceAttempt = true
+          await store.checkpoint((recovery) => {
+            recovery.sessions[sessionRef] ??= {
+              id: event.sessionId,
+              caseRef: event.case,
+              sources: ["conflicting_authenticated_callback"],
+              stopAttempts: 0,
+              stopHistory: [],
+              usageStatus: "unknown",
+              confirmedBilledMinutes: null,
+              deadline: recovery.dispatches.find(
+                (item) => item.caseRef === event.case
+              )?.deadline,
+            }
+          })
+          await store.append({
+            kind: "session_identity",
+            source: "conflicting_authenticated_callback",
             caseRef: event.case,
-            sources: ["conflicting_authenticated_callback"],
-            stopAttempts: 0,
-            stopHistory: [],
-            usageStatus: "unknown",
-            confirmedBilledMinutes: null,
-            deadline: recovery.dispatches.find(
-              (item) => item.caseRef === event.case
-            )?.deadline,
-          }
-        })
-        await store.append({
-          kind: "session_identity",
-          source: "conflicting_authenticated_callback",
-          caseRef: event.case,
-          payload: { sessionRef, conflict: true },
-        })
-        persistenceAttempt = false
-        throw new Error("callback_conflict")
-      }
-      if (!previous) {
-        const sessionRef = safeRef(store.recovery.salt, event.sessionId)
-        const identitySource =
-          event.event === "registered"
-            ? "application_registration"
-            : "probe_media_observation"
-        persistenceAttempt = true
-        await store.checkpoint((recovery) => {
-          const session = recovery.sessions[sessionRef] ?? {
-            id: event.sessionId,
+            payload: { sessionRef, conflict: true },
+          })
+          await store.latchFailure({
+            category: "callback_conflict",
             caseRef: event.case,
-            sources: [],
-            stopAttempts: 0,
-            stopHistory: [],
-            usageStatus: "unknown",
-            confirmedBilledMinutes: null,
-            deadline: recovery.dispatches.find(
-              (item) => item.caseRef === event.case
-            )?.deadline,
-          }
-          if (!session.sources.includes(identitySource))
-            session.sources.push(identitySource)
-          recovery.sessions[sessionRef] = session
-          if (identitySource === "application_registration") {
-            const dispatch = recovery.dispatches.find(
-              (item) =>
-                item.caseRef === event.case && item.outcome === "unknown"
-            )
-            if (dispatch) dispatch.outcome = "identity_recovered"
-          }
-        })
-        await store.append({
-          kind: "session_identity",
-          source: identitySource,
-          caseRef: event.case,
-          payload: { sessionRef },
-        })
-        await store.append({
-          kind: "callback",
-          source: "authenticated_probe",
-          caseRef: event.case,
-          payload: {
-            event: event.event,
-            bootRef: safeRef(store.recovery.salt, event.bootId),
-            sessionRef,
-            sourceTimestamp: new Date(event.sourceTimestamp).toISOString(),
-            sourceObservedAt: new Date(
-              Number.isSafeInteger(event.observedAt)
-                ? event.observedAt * 1_000
-                : Date.parse(event.observedAt)
-            ).toISOString(),
-            dailyClaimsBounded:
-              probe.expiresAtEpochSeconds == null ? null : true,
-            callbackIdentity: identity,
-          },
-        })
-        logicalCallbacks.set(logicalKey, identity)
-        bootSessions.set(event.bootId, event.sessionId)
-        events.set(`${event.case}:${event.event}`, event)
-      }
+            predicate: "callback_identity_consistency",
+          })
+          persistenceAttempt = false
+          throw new Error("callback_conflict")
+        }
+        if (!previous) {
+          const sessionRef = safeRef(store.recovery.salt, event.sessionId)
+          const identitySource =
+            event.event === "registered"
+              ? "application_registration"
+              : "probe_media_observation"
+          persistenceAttempt = true
+          await store.checkpoint((recovery) => {
+            const session = recovery.sessions[sessionRef] ?? {
+              id: event.sessionId,
+              caseRef: event.case,
+              sources: [],
+              stopAttempts: 0,
+              stopHistory: [],
+              usageStatus: "unknown",
+              confirmedBilledMinutes: null,
+              deadline: recovery.dispatches.find(
+                (item) => item.caseRef === event.case
+              )?.deadline,
+            }
+            if (!session.sources.includes(identitySource))
+              session.sources.push(identitySource)
+            recovery.sessions[sessionRef] = session
+            if (identitySource === "application_registration") {
+              const dispatch = recovery.dispatches.find(
+                (item) =>
+                  item.caseRef === event.case && item.outcome === "unknown"
+              )
+              if (dispatch) dispatch.outcome = "identity_recovered"
+            }
+          })
+          await store.append({
+            kind: "session_identity",
+            source: identitySource,
+            caseRef: event.case,
+            payload: { sessionRef },
+          })
+          await store.append({
+            kind: "callback",
+            source: "authenticated_probe",
+            caseRef: event.case,
+            payload: {
+              event: event.event,
+              bootRef: safeRef(store.recovery.salt, event.bootId),
+              sessionRef,
+              sourceTimestamp: new Date(event.sourceTimestamp).toISOString(),
+              sourceObservedAt: new Date(
+                Number.isSafeInteger(event.observedAt)
+                  ? event.observedAt * 1_000
+                  : Date.parse(event.observedAt)
+              ).toISOString(),
+              dailyClaimsBounded:
+                probe.expiresAtEpochSeconds == null ? null : true,
+              callbackIdentity: identity,
+            },
+          })
+          logicalCallbacks.set(logicalKey, identity)
+          bootSessions.set(event.bootId, event.sessionId)
+          events.set(`${event.case}:${event.event}`, event)
+        }
+      })
+      callbackQueue = pending.catch(() => {
+        if (persistenceAttempt)
+          fatalWrite = new Error("callback_persist_failed")
+      })
+      await pending
       response.writeHead(204).end()
     } catch (error) {
       if (persistenceAttempt) {
@@ -1325,6 +1469,8 @@ export async function startCollector({ store, scratch }) {
       const key = `${caseId}:${event}`
       while (Date.now() < deadline) {
         if (fatalWrite) throw fatalWrite
+        if (store.recovery.firstFailure)
+          throw new Error(store.recovery.firstFailure.category)
         if (events.has(key)) return events.get(key)
         await delay(100)
       }
@@ -1338,7 +1484,7 @@ export async function startCollector({ store, scratch }) {
       const secret = randomBytes(24).toString("base64url")
       const path = `/witness/${nonce}`
       const reportPath = `/witness-report/${nonce}`
-      const file = join(scratch, "browser-witness.html")
+      const file = join(scratch, `browser-witness-${nonce}.html`)
       const html = `<!doctype html><meta charset="utf-8"><title>Provider proof witness</title><script src="https://unpkg.com/@daily-co/daily-js"></script><script>
 const report=(event)=>fetch(${JSON.stringify(reportPath)},{method:"POST",headers:{"authorization":${JSON.stringify(`Bearer ${secret}`)},"content-type":"application/json"},body:JSON.stringify({case:${JSON.stringify(caseId)},event})});
 const call=window.DailyIframe.createCallObject();call.on("joined-meeting",()=>report("browser_joined"));call.on("left-meeting",()=>report("browser_ejected"));call.join({url:${JSON.stringify(dailyRoom)},token:${JSON.stringify(dailyToken)}});</script>`
@@ -1420,15 +1566,17 @@ function cleanupDependencies({
 }) {
   return {
     now: () => Date.now(),
+    signal,
     sleep: (milliseconds) => sleep(milliseconds, signal),
-    readProbe: () => readControlPlane(operatorToken, organization, PROBE_AGENT),
+    readProbe: () =>
+      readControlPlane(operatorToken, organization, PROBE_AGENT, signal),
     readProduction: () =>
-      readControlPlane(operatorToken, organization, PROD_AGENT),
+      readControlPlane(operatorToken, organization, PROD_AGENT, signal),
     readSession: (sessionId) =>
-      readSession(operatorToken, organization, sessionId),
-    stopSession: (sessionId) => stopExact(organization, sessionId),
-    deleteProbe: () => deleteProbe(organization),
-    probeAbsent: () => probeAbsent(operatorToken, organization),
+      readSession(operatorToken, organization, sessionId, signal),
+    stopSession: (sessionId) => stopExact(organization, sessionId, signal),
+    deleteProbe: () => deleteProbe(organization, signal),
+    probeAbsent: () => probeAbsent(operatorToken, organization, signal),
     waitForUnknown,
   }
 }
@@ -1445,8 +1593,16 @@ function assertOwnedProbe(recovery, state) {
 
 async function recordOperation(
   store,
-  { name, targetRef = null, caseRef = null, source = "operator", perform }
+  {
+    name,
+    targetRef = null,
+    caseRef = null,
+    source = "operator",
+    perform,
+    signal,
+  }
 ) {
+  assertNotAborted(signal)
   const operationRef = safeRef(store.recovery.salt, `${name}:${randomUUID()}`)
   await store.append({
     kind: "operation_intent",
@@ -1456,6 +1612,7 @@ async function recordOperation(
     payload: { name, targetRef },
   })
   try {
+    assertNotAborted(signal)
     const result = await perform()
     await store.append({
       kind: "operation_result",
@@ -1482,16 +1639,45 @@ async function recordOperation(
   }
 }
 
-export async function reconcileSession(store, sessionRef, dependencies) {
+async function blockPermission(store, error) {
+  if (permissionFailure(error))
+    await store.checkpoint((recovery) => {
+      recovery.mutationBlocked = true
+    })
+}
+
+export function assertCaseComplete(recovery, sessionRef) {
+  if (recovery.firstFailure) throw new Error(recovery.firstFailure.category)
+  const sessions = Object.values(recovery.sessions)
+  if (
+    !recovery.sessions[sessionRef]?.terminal ||
+    sessions.some((session) => !session.terminal)
+  )
+    throw new Error("session_status_unknown")
+  if (
+    sessions.some(
+      (session) =>
+        session.usageStatus !== "confirmed" ||
+        !Number.isFinite(session.confirmedBilledMinutes) ||
+        session.confirmedBilledMinutes < 0
+    )
+  )
+    throw new Error("usage_unknown")
+  if (
+    sessions.reduce((sum, item) => sum + item.confirmedBilledMinutes, 0) >=
+    LIMITS.billedMinutes
+  )
+    throw new Error("billing_limit_exceeded")
+}
+
+async function snapshotSession(store, sessionRef, dependencies) {
   const session = store.recovery.sessions[sessionRef]
   if (!session) throw new Error("session_status_unknown")
-  const deadline = session.deadline
-  let lastObservation = null
-  while (dependencies.now() < deadline) {
+  try {
+    assertNotAborted(dependencies.signal)
     const raw = await dependencies.readSession(session.id)
     if (!raw) throw new Error("session_status_unknown")
     const observation = normalizeSessionObservation(raw)
-    lastObservation = observation
     await store.append({
       kind: "session_status",
       source: "provider_readback",
@@ -1501,47 +1687,104 @@ export async function reconcileSession(store, sessionRef, dependencies) {
     await store.checkpoint((recovery) =>
       Object.assign(recovery.sessions[sessionRef], observation)
     )
-    if (observation.terminal) return observation
-    if (session.stopAttempts >= 3) throw new Error("session_stop_exhausted")
-    const spacing =
-      session.stopAttempts === 0
-        ? 0
-        : session.stopAttempts === 1
-          ? 5_000
-          : 15_000
-    const lastAttemptAt = session.lastStopAttemptAt ?? 0
-    if (dependencies.now() < lastAttemptAt + spacing) {
-      await dependencies.sleep(lastAttemptAt + spacing - dependencies.now())
-      continue
+    if (dependencies.now() >= session.deadline) {
+      await store.append({
+        kind: "resource_observation",
+        source: "provider_readback",
+        caseRef: session.caseRef,
+        payload: { sessionRef, ...observation, deadlineExceeded: true },
+      })
+      throw new Error("cleanup_deadline_exceeded")
     }
-    const attempt = session.stopAttempts + 1
-    await store.checkpoint((recovery) => {
-      recovery.sessions[sessionRef].stopAttempts = attempt
-      recovery.sessions[sessionRef].lastStopAttemptAt = dependencies.now()
-    })
-    const result = await recordOperation(store, {
-      name: "stop_session",
+    return observation
+  } catch (error) {
+    await blockPermission(store, error)
+    throw error
+  }
+}
+
+export async function countedStop(
+  store,
+  sessionRef,
+  dependencies,
+  name = "stop_session"
+) {
+  const session = store.recovery.sessions[sessionRef]
+  if (!session) throw new Error("session_status_unknown")
+  assertNotAborted(dependencies.signal)
+  const spacing =
+    session.stopAttempts === 0 ? 0 : session.stopAttempts === 1 ? 5_000 : 15_000
+  const lastAttemptAt = session.lastStopAttemptAt ?? 0
+  if (
+    !mutationBlocked(store.recovery) &&
+    session.stopAttempts < 3 &&
+    dependencies.now() < session.deadline &&
+    dependencies.now() < lastAttemptAt + spacing
+  ) {
+    await dependencies.sleep(
+      Math.min(lastAttemptAt + spacing, session.deadline) - dependencies.now()
+    )
+  }
+  const observation = await snapshotSession(store, sessionRef, dependencies)
+  if (mutationBlocked(store.recovery))
+    throw new Error("session_permission_denied")
+  if (observation.terminal && name !== "repeat_stop_session")
+    return { status: "terminal", observation }
+  if (session.stopAttempts >= 3) throw new Error("session_stop_exhausted")
+  assertNotAborted(dependencies.signal)
+  const attempt = session.stopAttempts + 1
+  await store.checkpoint((recovery) => {
+    recovery.sessions[sessionRef].stopAttempts = attempt
+    recovery.sessions[sessionRef].lastStopAttemptAt = dependencies.now()
+  })
+  let result
+  try {
+    result = await recordOperation(store, {
+      name,
+      signal: dependencies.signal,
       targetRef: sessionRef,
       caseRef: session.caseRef,
       source: session.sources.includes("application_registration")
         ? "application_recovery"
         : "operator_intervention",
-      perform: () => dependencies.stopSession(session.id),
+      perform: () => {
+        if (dependencies.now() >= session.deadline)
+          throw new Error("cleanup_deadline_exceeded")
+        if (mutationBlocked(store.recovery))
+          throw new Error("session_permission_denied")
+        return dependencies.stopSession(session.id)
+      },
     })
-    await store.checkpoint((recovery) =>
-      recovery.sessions[sessionRef].stopHistory.push(result)
-    )
-    if (result.status === "permission_error")
-      throw new Error("session_permission_denied")
-    // A 404 is not a terminal observation. The next exact read must prove termination.
+  } catch (error) {
+    await blockPermission(store, error)
+    throw error
   }
-  await store.append({
-    kind: "resource_observation",
-    source: "provider_readback",
-    caseRef: session.caseRef,
-    payload: { sessionRef, ...lastObservation, deadlineExceeded: true },
-  })
-  throw new Error("cleanup_deadline_exceeded")
+  await store.checkpoint((recovery) =>
+    recovery.sessions[sessionRef].stopHistory.push(result)
+  )
+  if (result.status === "permission_error") {
+    await blockPermission(store, new Error("session_permission_denied"))
+    throw new Error("session_permission_denied")
+  }
+  return result
+}
+
+export async function reconcileSession(store, sessionRef, dependencies) {
+  while (true) {
+    if (dependencies.observeOnly) {
+      const observation = await snapshotSession(store, sessionRef, dependencies)
+      if (observation.terminal) return observation
+      await dependencies.sleep(
+        Math.min(
+          5_000,
+          store.recovery.sessions[sessionRef].deadline - dependencies.now()
+        )
+      )
+    } else {
+      const result = await countedStop(store, sessionRef, dependencies)
+      if (result.status === "terminal") return result.observation
+    }
+  }
 }
 
 export async function cleanupRun(store, dependencies) {
@@ -1556,7 +1799,7 @@ export async function cleanupRun(store, dependencies) {
   }
   const cleanupErrors = []
   let ownedState = null
-  let mutationBlocked = false
+  let mutationsBlocked = mutationBlocked(store.recovery)
   for (const dispatch of store.recovery.dispatches ?? []) {
     if (
       dependencies.waitForUnknown !== false &&
@@ -1588,18 +1831,17 @@ export async function cleanupRun(store, dependencies) {
   } catch (error) {
     if (error?.message !== "provider_http_404") cleanupErrors.push(error)
     if (["ownership_mismatch", "ownership_unresolved"].includes(error?.message))
-      mutationBlocked = true
+      mutationsBlocked = true
+    await blockPermission(store, error)
   }
 
   if (ownedState) {
     for (const sessionRef of Object.keys(store.recovery.sessions)) {
-      if (mutationBlocked) break
       try {
         await reconcileSession(store, sessionRef, dependencies)
       } catch (error) {
         cleanupErrors.push(error)
-        if (error?.message === "session_permission_denied")
-          mutationBlocked = true
+        await blockPermission(store, error)
       }
     }
     for (const dispatch of store.recovery.dispatches ?? [])
@@ -1617,10 +1859,11 @@ export async function cleanupRun(store, dependencies) {
         })
         cleanupErrors.push(new Error("session_status_unknown"))
       }
-    if (!mutationBlocked) {
+    if (!mutationsBlocked && !mutationBlocked(store.recovery)) {
       try {
         const result = await recordOperation(store, {
           name: "delete_probe_service",
+          signal: dependencies.signal,
           targetRef: safeRef(
             store.recovery.salt,
             store.recovery.probe.deploymentId
@@ -1629,8 +1872,13 @@ export async function cleanupRun(store, dependencies) {
         })
         await store.checkpoint((recovery) => {
           recovery.cleanup.deleteProbe = result
+          if (result.status === "permission_error")
+            recovery.mutationBlocked = true
         })
+        if (result.status === "permission_error")
+          throw new Error("session_permission_denied")
       } catch (error) {
+        await blockPermission(store, error)
         cleanupErrors.push(error)
       }
     }
@@ -1652,6 +1900,7 @@ export async function cleanupRun(store, dependencies) {
     if (!absent)
       cleanupErrors.push(new Error("probe_service_delete_unverified"))
   } catch (error) {
+    await blockPermission(store, error)
     cleanupErrors.push(error)
   }
 
@@ -1676,6 +1925,7 @@ export async function cleanupRun(store, dependencies) {
     })
     if (!unchanged) cleanupErrors.push(new Error("baseline_cleanup_unverified"))
   } catch (error) {
+    await blockPermission(store, error)
     cleanupErrors.push(error)
   }
 
@@ -1686,6 +1936,7 @@ export async function cleanupRun(store, dependencies) {
     recovery.cleanup.unresolvedSessions = unresolvedSessions
     recovery.cleanup.completed =
       cleanupErrors.length === 0 &&
+      !mutationBlocked(recovery) &&
       unresolvedSessions === 0 &&
       recovery.cleanup.probeServiceAbsent === true &&
       recovery.cleanup.productionUnchanged === true
@@ -1704,6 +1955,8 @@ export async function cleanupRun(store, dependencies) {
 }
 
 async function containFromMemory(store, dependencies) {
+  if (mutationBlocked(store.recovery) || dependencies.signal?.aborted)
+    return false
   let state
   try {
     state = await dependencies.readProbe()
@@ -1715,12 +1968,36 @@ async function containFromMemory(store, dependencies) {
     try {
       const current = await dependencies.readSession(session.id)
       if (current && !normalizeSessionObservation(current).terminal) {
+        assertNotAborted(dependencies.signal)
+        if (session.stopAttempts >= 3 || dependencies.now() >= session.deadline)
+          continue
+        const spacing =
+          session.stopAttempts === 0
+            ? 0
+            : session.stopAttempts === 1
+              ? 5_000
+              : 15_000
+        if (dependencies.now() < (session.lastStopAttemptAt ?? 0) + spacing)
+          continue
+        session.stopAttempts += 1
+        session.lastStopAttemptAt = dependencies.now()
         const result = await dependencies.stopSession(session.id)
-        if (result.status === "permission_error") return false
+        session.stopHistory.push(result)
+        if (result.status === "permission_error") {
+          store.recovery.mutationBlocked = true
+          return false
+        }
       }
-    } catch {}
+    } catch (error) {
+      if (permissionFailure(error)) {
+        store.recovery.mutationBlocked = true
+        return false
+      }
+      if (dependencies.signal?.aborted) return false
+    }
   }
   try {
+    assertNotAborted(dependencies.signal)
     await dependencies.deleteProbe()
     return true
   } catch {
@@ -1746,12 +2023,13 @@ async function runLive(runDir) {
   let currentCase = null
   let currentOperation = null
   let secondSignal = false
+  let cleanupStarted = false
   let evidenceWritable = true
   const controller = new AbortController()
   const cleanupController = new AbortController()
   exerciseSignal = controller.signal
   const onSignal = () => {
-    if (controller.signal.aborted) {
+    if (controller.signal.aborted || cleanupStarted) {
       secondSignal = true
       cleanupController.abort()
       return
@@ -1813,6 +2091,9 @@ async function runLive(runDir) {
     })
 
     for (const definition of CASES) {
+      assertNotAborted(controller.signal)
+      if (store.recovery.firstFailure)
+        throw new Error(store.recovery.firstFailure.category)
       currentCase = definition.id
       if (store.recovery.starts >= LIMITS.starts)
         throw new Error("start_limit_exceeded")
@@ -1857,6 +2138,8 @@ async function runLive(runDir) {
       })
       let operatorResponse
       try {
+        if (store.recovery.firstFailure)
+          throw new Error(store.recovery.firstFailure.category)
         operatorResponse = await requestJson(
           `${ORIGIN}/v1/public/${PROBE_AGENT}/start`,
           {
@@ -1899,14 +2182,10 @@ async function runLive(runDir) {
         throw new Error("ambiguous_start_no_retry")
       }
       if (
-        ![
-          operatorResponse?.sessionId,
-          operatorResponse?.dailyRoom,
-          operatorResponse?.dailyToken,
-        ].every((value) => typeof value === "string")
+        typeof operatorResponse?.sessionId !== "string" ||
+        !operatorResponse.sessionId
       )
         throw new Error("start_response_invalid")
-      assertBoundedClaims(decodeClaims(operatorResponse.dailyToken), expiresAt)
       const sessionRef = safeRef(
         store.recovery.salt,
         operatorResponse.sessionId
@@ -1936,6 +2215,13 @@ async function runLive(runDir) {
         operationRef: dispatchRef,
         payload: { sessionRef, applicationVisible: !definition.discard },
       })
+      if (
+        ![operatorResponse.dailyRoom, operatorResponse.dailyToken].every(
+          (value) => typeof value === "string" && value.length > 0
+        )
+      )
+        throw new Error("start_response_invalid")
+      assertBoundedClaims(decodeClaims(operatorResponse.dailyToken), expiresAt)
       await store.append({
         kind: "operation_result",
         source: "application",
@@ -1993,20 +2279,36 @@ async function runLive(runDir) {
         )
         if (ejected.sessionId !== operatorResponse.sessionId)
           throw new Error("agent_ejection_session_mismatch")
+        await reconcileSession(store, sessionRef, {
+          ...cleanupDependencies({
+            operatorToken,
+            organization,
+            signal: controller.signal,
+          }),
+          observeOnly: true,
+        })
       } else if (applicationSessionId) {
         const cleanupRef = safeRef(store.recovery.salt, applicationSessionId)
         await reconcileSession(
           store,
           cleanupRef,
-          cleanupDependencies({ operatorToken, organization })
+          cleanupDependencies({
+            operatorToken,
+            organization,
+            signal: controller.signal,
+          })
         )
         if (definition.stop === "twice")
-          await recordOperation(store, {
-            name: "repeat_stop_session",
-            targetRef: cleanupRef,
-            caseRef: definition.id,
-            perform: () => stopExact(organization, applicationSessionId),
-          })
+          await countedStop(
+            store,
+            cleanupRef,
+            cleanupDependencies({
+              operatorToken,
+              organization,
+              signal: controller.signal,
+            }),
+            "repeat_stop_session"
+          )
       }
       await store.append({
         kind: "verdict",
@@ -2017,6 +2319,7 @@ async function runLive(runDir) {
           reason: "case_observations_complete_usage_unknown",
         },
       })
+      assertCaseComplete(store.recovery, sessionRef)
     }
   } catch (error) {
     try {
@@ -2024,7 +2327,7 @@ async function runLive(runDir) {
         caseRef: currentCase,
         operationRef: currentOperation,
         category: safeCategory(error),
-        predicate: String(error?.message ?? "operation_failed"),
+        predicate: currentOperation ?? "run_preflight",
       })
     } catch {
       evidenceWritable = false
@@ -2034,6 +2337,7 @@ async function runLive(runDir) {
   }
 
   if (!secondSignal) {
+    cleanupStarted = true
     const dependencies = cleanupDependencies({
       operatorToken,
       organization,
@@ -2094,6 +2398,10 @@ async function recover(runDir) {
   if (![operatorToken, organization, runDir].every(Boolean))
     throw new Error("recover_prerequisite_missing")
   const store = await DurableRunStore.open(runDir)
+  const controller = new AbortController()
+  const onSignal = () => controller.abort()
+  process.on("SIGINT", onSignal)
+  process.on("SIGTERM", onSignal)
   try {
     if (store.recovery.organization !== organization) {
       await store.latchFailure({
@@ -2124,7 +2432,11 @@ async function recover(runDir) {
     }
     const completed = await cleanupRun(
       store,
-      cleanupDependencies({ operatorToken, organization })
+      cleanupDependencies({
+        operatorToken,
+        organization,
+        signal: controller.signal,
+      })
     )
     const before = projectSummary(
       store.records,
@@ -2152,7 +2464,21 @@ async function recover(runDir) {
       `${JSON.stringify({ status, reason, runDir: store.runDir })}\n`
     )
     process.exitCode = status === "pass" ? 0 : 1
+  } catch (error) {
+    await store.latchFailure({
+      category: safeCategory(error),
+      predicate: "recovery_cleanup",
+    })
+    await store.append({
+      kind: "verdict",
+      source: "recovery",
+      payload: { status: "blocked", reason: safeCategory(error) },
+    })
+    await store.writeSummary()
+    process.exitCode = 1
   } finally {
+    process.removeListener("SIGINT", onSignal)
+    process.removeListener("SIGTERM", onSignal)
     await store.close()
   }
 }

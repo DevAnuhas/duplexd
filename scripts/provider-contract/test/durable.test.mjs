@@ -379,7 +379,9 @@ test("real 404 needs an independent exact terminal read", async (t) => {
 test("deadline exhaustion never resets the deadline or manufactures terminal status", async (t) => {
   const { store, ref } = await storeFor(t, { deadline: Date.now() - 1 })
   const deadline = store.recovery.sessions[ref].deadline
-  const { deps, calls } = dependencies(store)
+  const { deps, calls } = dependencies(store, {
+    readSession: async () => active,
+  })
   assert.equal(await cleanupRun(store, deps), false)
   assert.equal(store.recovery.sessions[ref].deadline, deadline)
   assert.equal(store.recovery.sessions[ref].terminal, false)

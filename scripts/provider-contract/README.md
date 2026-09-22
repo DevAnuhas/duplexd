@@ -88,7 +88,7 @@ private API key is created.
 Pipecat CLI through an isolated `pipecatcloud==0.6.0` uv overlay for
 build/deploy, exact-session stop and deletion. Direct HTTP is limited to
 public-key start and exact machine-readable readbacks that the CLI does not
-provide. It also creates one runtime-only, mode-600 browser witness page using
+provide. It also creates a unique runtime-only, mode-600 browser witness page per joined case using
 the actual room-scoped Daily token. The witness records only join/ejection
 booleans and timestamps.
 
@@ -107,6 +107,11 @@ API key, OAuth token, callback secret or URL, Daily credential, provider respons
 body, log, audio, or customer data. The journal and summary use salted stable
 references. A single-writer lock prevents live and recovery processes from
 mutating the same run concurrently; a dead process's lock may be taken over.
+Stale-lock replacement is serialized by an exclusive `writer.takeover`
+directory, and release removes only the caller's own lock. If a process dies
+during that brief takeover, recovery fails closed: remove only the empty
+`writer.takeover` directory after independently confirming that every runner
+and recovery process for this run has stopped. Never clear it under an active writer.
 
 ## Offline and live commands
 
@@ -114,7 +119,7 @@ Offline checks do not contact or mutate the provider:
 
 ```sh
 node scripts/provider-contract/run.mjs plan
-node --test scripts/provider-contract/test/run.test.mjs
+node --test scripts/provider-contract/test/*.test.mjs
 cd scripts/provider-contract/probe
 PYTHONPATH=. ../../../agent/.venv/bin/python -m pytest test_bot.py -q
 ```
@@ -164,16 +169,21 @@ ceiling before case 1, performs at most six serial starts, never retries an
 ambiguous start, and retains the original 720-second case deadline across
 recovery. Before every start, stop, and delete it syncs an intent. An accepted
 callback is acknowledged only after its identity and sanitized event are
-durable. Identical callbacks are idempotent; conflicting duplicates are
-rejected without replacing the earlier evidence.
+durable. Concurrent identical callbacks are idempotent; conflicting duplicates
+retain all authenticated identity candidates and durably block the case without
+replacing the earlier evidence. An exact start-response session ID is retained
+before validating the remaining room/token fields.
 
 Stop recovery always reads the exact session first. It makes at most three
-same-ID stop attempts in total, with persisted counters and 5-second then
+same-ID stop attempts in total (including the repeated-stop case), with persisted counters and 5-second then
 15-second minimum spacing, and reads status again before each attempt. CLI exit
 codes, timeouts, and real HTTP statuses are different outcomes. A repeated CLI
 success is not rewritten as `404`, and `404` is not termination until an
 independent exact-session read says the session ended. Permission or ownership
-failures stop destructive mutation.
+failures stop destructive mutation. Readback `401`/`403` and stop permission
+errors persist a mutation barrier across recovery attempts; safe readbacks still
+run. Late recovery takes a bounded final exact-session snapshot before deletion
+without resetting the original deadline or issuing a late stop retry.
 
 On success, failure, or signal, cleanup records independent results without
 overwriting the first case or operation failure. It captures terminal and
@@ -181,6 +191,9 @@ resource observations before deleting the temporary service, verifies the
 service absent, and requires authenticated readback of the unchanged production
 build/digest, min/max 0/3, `duplexd-agent-secrets`, absent duration override,
 zero active sessions, zero private keys, and absent `duplexd-provider-proof`.
+The first exercise signal starts cleanup with a fresh cancellation signal;
+an interruption during cleanup aborts in-flight HTTP/CLI work and prevents
+later stop/delete mutations. Recovery itself is interruptible the same way.
 Unknown starts are never redispatched or matched by timestamp/list proximity.
 An operator-only start response can support labeled emergency containment, but
 cannot pass application recovery; only authenticated registration can supply
@@ -190,7 +203,11 @@ Provider termination, unchanged resource samples, runtime estimates, and
 authoritative billed usage are separate observations. The current provider
 surface has no documented authoritative final-billing source in this runner,
 so `confirmedBilledMinutes` stays `null`, aggregate `usageStatus` stays
-`unknown`, and the verdict stays blocked. Repeated identical metric polls do not
+`unknown`, and the verdict stays blocked. Case advancement requires exact
+provider termination and confirmed usage inside the aggregate budget; with the
+current unknown accounting the runner stops after the first started case.
+Ceiling cases poll exact termination after participant ejection; ejection alone
+never releases the next start. Repeated identical metric polls do not
 upgrade billing to confirmed. This is intentional: the next live release must
 identify and authorize that evidence source rather than inventing an adapter.
 
