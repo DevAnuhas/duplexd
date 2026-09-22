@@ -12,7 +12,10 @@ vi.mock("@/app/(app)/assistants/draft-actions", () => ({
   validateAssistantDraft: mocks.validate,
 }))
 
-import { AssistantForm } from "@/app/(app)/assistants/assistant-form"
+import {
+  AssistantForm,
+  type AssistantFormValues,
+} from "@/app/(app)/assistants/assistant-form"
 import {
   AssistantDraftProvider,
   useAssistantDraft,
@@ -48,7 +51,10 @@ let root: Root | undefined
 let container: HTMLDivElement
 let store: AssistantDraftStore
 let currentSeed: DraftSeed
-const saveAssistant = vi.fn(async () => ({ ok: true as const, revision: 4 }))
+let currentEditorValues: Pick<AssistantFormValues, "name" | "serverUrl">
+const saveAssistant = vi.fn<
+  (data: FormData) => Promise<{ ok: true; revision: number }>
+>(async () => ({ ok: true, revision: 4 }))
 let requests: Array<{ path: string; options?: RequestInit }>
 let sampleReply: () => Response
 function Fixture() {
@@ -69,6 +75,8 @@ function Fixture() {
       ? createElement(AssistantForm, {
           values: {
             ...template.assistant,
+            ...currentEditorValues,
+            hasServerSecret: true,
             id: "assistant-a",
             revision: currentSeed.revision,
             instructions: currentSeed.fields.instructions,
@@ -87,8 +95,15 @@ function Fixture() {
         })
   )
 }
-async function render(seed = initial) {
+async function render(
+  seed = initial,
+  editorValues: Pick<AssistantFormValues, "name" | "serverUrl"> = {
+    name: template.assistant.name,
+    serverUrl: template.assistant.serverUrl,
+  }
+) {
   currentSeed = seed
+  currentEditorValues = editorValues
   await act(async () => {
     root!.render(
       createElement(AssistantDraftProvider, {
@@ -258,6 +273,75 @@ describe("shared Configure and Sandbox drafts", () => {
       container.querySelector<HTMLFieldSetElement>("fieldset")?.disabled
     ).toBe(true)
   })
+  it.each(["discard", "rebase then save"] as const)(
+    "preserves editor-local changes through remote prop refresh until explicit %s",
+    async (resolution) => {
+      const local = {
+        name: "Local unsaved name",
+        url: "https://local.example.test/voice",
+        secret: "synthetic-local-credential",
+      }
+      await typeInto(field('[name="name"]'), local.name)
+      await typeInto(field('[name="serverUrl"]'), local.url)
+      await typeInto(field('[name="serverSecret"]'), local.secret)
+      const removal = () =>
+        container.querySelector<HTMLButtonElement>('[role="checkbox"]')!
+      await click(removal())
+      expect(removal().getAttribute("aria-checked")).toBe("true")
+      expect(store.getSnapshot().editorOnlyDirty).toBe(true)
+      const newer = { ...initial, revision: 4 }
+      const remote = {
+        name: "Remote saved name",
+        serverUrl: "https://remote.example.test/voice",
+      }
+      await render(newer, remote)
+      expect(store.getSnapshot().assistantConflict).toBe(4)
+      expect(field('[name="name"]').value).toBe(local.name)
+      expect(field('[name="serverUrl"]').value).toBe(local.url)
+      expect(field('[name="serverSecret"]').value).toBe(local.secret)
+      expect(removal().getAttribute("aria-checked")).toBe("true")
+      expect(store.getSnapshot().editorOnlyDirty).toBe(true)
+      expect(JSON.stringify(store.getSnapshot())).not.toContain(local.secret)
+      expect(JSON.stringify(store.getSnapshot())).not.toContain(local.url)
+      expect(JSON.stringify(store.getSnapshot())).not.toContain(local.name)
+      expect(saveAssistant).not.toHaveBeenCalled()
+      expect(window.confirm).not.toHaveBeenCalled()
+      if (resolution === "discard") {
+        await click(button("Discard draft / reload saved"))
+        expect(field('[name="name"]').value).toBe(remote.name)
+        expect(field('[name="serverUrl"]').value).toBe(remote.serverUrl)
+      } else {
+        await click(button("Rebase my draft"))
+        expect(field('[name="name"]').value).toBe(local.name)
+        expect(field('[name="serverUrl"]').value).toBe(local.url)
+        expect(field('[name="serverSecret"]').value).toBe(local.secret)
+        expect(removal().getAttribute("aria-checked")).toBe("true")
+        // A replacement credential and a removal are alternatives. Choose the
+        // replacement explicitly before submitting a valid save.
+        await click(removal())
+        await act(async () => {
+          container
+            .querySelector("form")!
+            .dispatchEvent(
+              new Event("submit", { bubbles: true, cancelable: true })
+            )
+        })
+        expect(saveAssistant).toHaveBeenCalledOnce()
+        const submitted = saveAssistant.mock.calls[0]![0]
+        expect(submitted.get("expectedRevision")).toBe("4")
+        expect(submitted.get("name")).toBe(local.name)
+        expect(submitted.get("serverUrl")).toBe(local.url)
+        expect(submitted.get("serverSecret")).toBe(local.secret)
+        expect(submitted.has("clearServerSecret")).toBe(false)
+        expect(field('[name="name"]').value).toBe(local.name)
+        expect(field('[name="serverUrl"]').value).toBe(local.url)
+      }
+      expect(field('[name="serverSecret"]').value).toBe("")
+      expect(removal().getAttribute("aria-checked")).toBe("false")
+      expect(store.getSnapshot().editorOnlyDirty).toBe(false)
+    }
+  )
+
   it("keeps conflicts and edited fields through both screens until explicit rebase", async () => {
     await typeInto(field('[name="instructions"]'), "Local draft survives")
     const newer = {

@@ -259,10 +259,15 @@ function AssistantFormEditor({
     })
     return () => {
       subscription.unsubscribe()
-      store.setEditorOnlyDirty(false)
     }
   }, [store, form, values.name, values.serverUrl])
-  const changes = isDirty || (draft !== undefined && fieldsDirty(draft.state))
+  // Replacing the watcher after a server refresh is not leaving Configure.
+  // Only the form's actual lifetime owns clearing its editor-local dirty flag.
+  useEffect(() => () => store?.setEditorOnlyDirty(false), [store])
+  const changes =
+    isDirty ||
+    (draft !== undefined &&
+      (fieldsDirty(draft.state) || draft.state.editorOnlyDirty))
   const locked = draft?.locked === true
   const conflict =
     draft !== undefined &&
@@ -341,7 +346,11 @@ function AssistantFormEditor({
             setRevision(result.revision)
             store?.savedAssistant(previewFields(input), result.revision)
           }
+          // The explicit save already established the new baseline. Do not
+          // compare this reset with stale server props in the form watcher.
+          resetFromHost.current = true
           form.reset({ ...input, serverSecret: "", clearServerSecret: false })
+          resetFromHost.current = false
           toast.success("Saved")
           if (values.id === undefined && result.assistantId !== undefined) {
             router.replace(`/assistants/${result.assistantId}`)
