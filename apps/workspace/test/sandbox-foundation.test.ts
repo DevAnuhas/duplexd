@@ -527,6 +527,8 @@ describeDatabase("provider-independent Sandbox foundation", () => {
       "startupDeadline",
       "executionDeadline",
       "presenceExpiresAt",
+      "readyAt",
+      "serverTime",
       "expiredAt",
       "preparedAt",
       "reservationExpiresAt",

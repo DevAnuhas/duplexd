@@ -133,8 +133,8 @@ export type SandboxBinding = {
 }
 
 /**
- * No live adapter exists. A future adapter must verify the private API contract
- * and independent deployment.serviceId binding before implementing this seam.
+ * Adapters require independently verified private API/deployment.serviceId
+ * binding. Production has no adapter; injection is not release authorization.
  * Start results must contain only a room-scoped browser participant token,
  * never a provider API key or an agent/admin token. A 404, DELETE response,
  * empty listing or elapsed time is NOT terminal proof.
@@ -142,11 +142,16 @@ export type SandboxBinding = {
 export type SandboxTransport = {
   start(
     input: { callId: string; apiBase: string; agentToken: string },
-    signal: AbortSignal
+    signal: AbortSignal,
+    context: {
+      executionDeadline: Date
+      /** Commit identity before validating media; failures must deny join. */
+      retainSession: (sessionId: string) => Promise<void>
+    }
   ): Promise<
     | { kind: "started"; join: SandboxJoin }
     | { kind: "definite_no_start" }
-    | { kind: "unknown" }
+    | { kind: "unknown"; reason?: string }
   >
   read(
     sessionId: string,
