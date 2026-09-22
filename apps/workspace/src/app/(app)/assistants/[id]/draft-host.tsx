@@ -17,7 +17,7 @@ import {
   readSampleDrafts,
   type DraftSeed,
 } from "@/sandbox/client/draft-store"
-import { SandboxController } from "@/sandbox/client/controller"
+import { SandboxController, sandboxReleased } from "@/sandbox/client/controller"
 import { validateAssistantDraft } from "../draft-actions"
 
 const DraftContext = createContext<{
@@ -43,8 +43,7 @@ export function useAssistantDraft() {
     !attempt.statusKnown ||
     ["loading", "preparing", "canceling", "unknown"].includes(attempt.phase) ||
     attempt.canRetryPreparation ||
-    (attempt.attempt !== null &&
-      !["canceled", "expired"].includes(attempt.attempt.state))
+    (attempt.attempt !== null && !sandboxReleased(attempt.attempt))
   return { ...context, state, attempt, locked }
 }
 export function useOptionalAssistantDraft() {
@@ -73,6 +72,7 @@ export function AssistantDraftProvider({
     return () => {
       clearInterval(interval)
       window.removeEventListener("focus", refresh)
+      controller.leave()
     }
   }, [controller])
   useEffect(() => {
@@ -255,20 +255,21 @@ function DraftStatus() {
             >
               Refresh test status
             </Button>
-            {attempt.attempt !== null &&
-              !["canceled", "expired"].includes(attempt.attempt.state) && (
-                <Button
-                  variant="outline"
-                  type="button"
-                  className="min-h-11"
-                  disabled={attempt.phase === "canceling"}
-                  onClick={() => {
-                    void controller.cancel()
-                  }}
-                >
-                  Cancel active preparation
-                </Button>
-              )}
+            {attempt.attempt !== null && !sandboxReleased(attempt.attempt) && (
+              <Button
+                variant="outline"
+                type="button"
+                className="min-h-11"
+                disabled={attempt.phase === "canceling"}
+                onClick={() => {
+                  void controller.cancel()
+                }}
+              >
+                {attempt.mediaPhase === "off"
+                  ? "Cancel active preparation"
+                  : "End active call"}
+              </Button>
+            )}
           </>
         )}
         {conflict && !locked && (

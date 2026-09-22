@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 
 import { SandboxController } from "@/sandbox/client/controller"
-import type { SandboxAttemptDto } from "@/sandbox/admission"
+import type { SandboxBrowserAttempt } from "@/sandbox/browser-contract"
 
 const input = {
   assistantId: "assistant-a",
@@ -11,8 +11,8 @@ const input = {
   scenario: { transport: "success" as const, overrides: {} },
 }
 function attempt(
-  overrides: Partial<SandboxAttemptDto> = {}
-): SandboxAttemptDto {
+  overrides: Partial<SandboxBrowserAttempt> = {}
+): SandboxBrowserAttempt {
   return {
     attemptId: "attempt-a",
     callId: "call-a",
@@ -29,6 +29,8 @@ function attempt(
     expiredAt: null,
     stopRequestedAt: null,
     execution: "disabled",
+    serverTime: "2026-09-22T09:00:00Z",
+    readyAt: null,
     resourceState: "not_dispatched",
     startupDeadline: null,
     executionDeadline: null,
