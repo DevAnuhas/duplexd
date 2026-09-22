@@ -98,7 +98,21 @@ async function render(observe = false) {
             expiresAt: iso(600000),
           },
         })
-      else if (path.endsWith("/stop"))
+      // Presence renews the lease and hands back the attempt, the way the
+      // real route does. Without its own branch it fell into the generic POST
+      // case below and reset the attempt to a fresh reservation.
+      else if (path.endsWith("/presence")) {
+        current = {
+          ...current!,
+          serverTime: iso(),
+          presenceExpiresAt: iso(60000),
+        }
+        return Response.json({
+          serverTime: iso(),
+          presenceExpiresAt: iso(60000),
+          attempt: current,
+        })
+      } else if (path.endsWith("/stop"))
         current = {
           ...current!,
           state: "stopping",

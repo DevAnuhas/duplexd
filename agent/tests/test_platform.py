@@ -10,7 +10,7 @@ import pytest
 from duplexd_agent.config import RunnerInput
 from duplexd_agent.errors import AgentConfigError, PlatformRequestError
 from duplexd_agent.platform import (
-    CONFIG_FETCH_TIMEOUT_SECS,
+    STARTUP_REQUEST_TIMEOUT_SECS,
     REPORTING_TIMEOUT_SECS,
     PlatformClient,
     encode_json,
@@ -73,10 +73,10 @@ async def test_config_is_fetched_exactly_once_with_fixed_timeout(
     assert requests[0].method == "GET"
     assert requests[0].url.path == "/v1/agent/calls/call_test_123/config"
     assert requests[0].extensions["timeout"] == {
-        "connect": CONFIG_FETCH_TIMEOUT_SECS,
-        "read": CONFIG_FETCH_TIMEOUT_SECS,
-        "write": CONFIG_FETCH_TIMEOUT_SECS,
-        "pool": CONFIG_FETCH_TIMEOUT_SECS,
+        "connect": STARTUP_REQUEST_TIMEOUT_SECS,
+        "read": STARTUP_REQUEST_TIMEOUT_SECS,
+        "write": STARTUP_REQUEST_TIMEOUT_SECS,
+        "pool": STARTUP_REQUEST_TIMEOUT_SECS,
     }
 
 

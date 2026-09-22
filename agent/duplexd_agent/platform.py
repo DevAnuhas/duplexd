@@ -25,8 +25,26 @@ from duplexd_agent.config import (
 )
 from duplexd_agent.errors import PlatformRequestError
 
-CONFIG_FETCH_TIMEOUT_SECS = 5.0
+CONTROL_POLL_TIMEOUT_SECS = 5.0
 REPORTING_TIMEOUT_SECS = 2.0
+
+# Startup requests get a larger budget than the control poll that reuses the
+# same helper, and the difference is load-bearing.
+#
+# Protocol negotiation, registration and the one-shot configuration claim each
+# take a locked database transaction on the platform, behind whatever cold
+# start the platform itself is paying; 5 seconds is a plausible round trip for
+# that and an implausible ceiling. The first real call died here: the claim
+# reached the platform, the platform recorded it and marked the call active,
+# and the agent timed out at 5.0 s on a response that arrived at 4.8 s. That
+# failure is the expensive shape — the platform believes a call is running, the
+# agent is already gone, and nothing notices until the control-loss deadline 30
+# seconds later.
+#
+# A control poll is different and keeps CONTROL_POLL_TIMEOUT_SECS: it repeats
+# every 3 seconds, so a slow one should be abandoned and retried rather than
+# waited on.
+STARTUP_REQUEST_TIMEOUT_SECS = 15.0
 
 
 class PlatformClient:
@@ -66,7 +84,7 @@ class PlatformClient:
         try:
             response = await self._client.get(
                 self._call_url("config"),
-                timeout=CONFIG_FETCH_TIMEOUT_SECS,
+                timeout=STARTUP_REQUEST_TIMEOUT_SECS,
             )
         except httpx.HTTPError:
             raise PlatformRequestError("assistant config request failed") from None
@@ -81,7 +99,7 @@ class PlatformClient:
         return AgentConfig.from_response(payload)
 
     async def negotiate(self) -> str:
-        response = await self._get("protocol")
+        response = await self._get("protocol", STARTUP_REQUEST_TIMEOUT_SECS)
         # Old Integration servers have no negotiation route. A Sandbox server
         # rejects legacy config before plaintext claim, so this cannot downgrade it.
         if response.status_code == 404:
@@ -109,7 +127,7 @@ class PlatformClient:
                 self._call_url("register"),
                 content=encode_json(owner.model_dump()),
                 headers={"Content-Type": "application/json"},
-                timeout=CONFIG_FETCH_TIMEOUT_SECS,
+                timeout=STARTUP_REQUEST_TIMEOUT_SECS,
             )
         except httpx.HTTPError:
             raise PlatformRequestError("runtime registration failed") from None
@@ -118,7 +136,7 @@ class PlatformClient:
 
     async def claim_sandbox(self) -> SandboxConfig:
         self.control_received_at = time.monotonic()
-        response = await self._get("config")
+        response = await self._get("config", STARTUP_REQUEST_TIMEOUT_SECS)
         try:
             config = SandboxConfig.model_validate(self._json_response(response))
         except ValidationError:
@@ -155,9 +173,9 @@ class PlatformClient:
         except (httpx.HTTPError, PlatformRequestError, ValidationError):
             return None
 
-    async def _get(self, suffix: str) -> httpx.Response:
+    async def _get(self, suffix: str, timeout: float = CONTROL_POLL_TIMEOUT_SECS) -> httpx.Response:
         try:
-            return await self._client.get(self._call_url(suffix), timeout=CONFIG_FETCH_TIMEOUT_SECS)
+            return await self._client.get(self._call_url(suffix), timeout=timeout)
         except httpx.HTTPError:
             raise PlatformRequestError("runtime control request failed") from None
 

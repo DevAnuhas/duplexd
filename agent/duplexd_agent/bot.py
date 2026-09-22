@@ -17,7 +17,7 @@ from pipecat.transports.daily.transport import DailyParams
 from duplexd_agent.config import RunnerInput, SandboxOwner
 from duplexd_agent.egress import Connector, EgressPolicy
 from duplexd_agent.errors import AgentStartupError, RuntimeShutdownError
-from duplexd_agent.platform import PlatformClient
+from duplexd_agent.platform import STARTUP_REQUEST_TIMEOUT_SECS, PlatformClient
 from duplexd_agent.provider import (
     Probe,
     ResponsesToolProbe,
@@ -33,6 +33,8 @@ TransportFactory = Callable[
     [RunnerArguments, dict[str, Callable[[], TransportParams]]],
     Awaitable[BaseTransport],
 ]
+
+STARTUP_ENVELOPE_SECS = 3 * STARTUP_REQUEST_TIMEOUT_SECS + 5.0
 
 TRANSPORT_PARAMS: dict[str, Callable[[], TransportParams]] = {
     "daily": lambda: DailyParams(audio_in_enabled=True, audio_out_enabled=True),
@@ -56,8 +58,12 @@ async def bootstrap(
 
     async with platform_client_factory(runner_input) as platform:
         watchdog: SandboxWatchdog | None = None
-        # Bounded even if no configuration ever arrives. No provider work precedes claim.
-        async with asyncio.timeout(20.0):
+        # Bounded even if no configuration ever arrives. No provider work
+        # precedes claim. The envelope covers three startup requests at
+        # STARTUP_REQUEST_TIMEOUT_SECS each plus slack, and still leaves most
+        # of the platform's 120-second startup deadline for the model stack,
+        # the transport join and the readiness barrier.
+        async with asyncio.timeout(STARTUP_ENVELOPE_SECS):
             protocol = await platform.negotiate()
             if protocol == "sandbox-v1":
                 session_id = runner_args.session_id
