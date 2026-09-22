@@ -59,7 +59,7 @@ delivery retries replay one result and conflicting reuse is rejected. The
 per-call Practice secret is encrypted separately and can be purged without
 changing the authored digest. [ADR 012](docs/decisions/012-practice-snapshots.md)
 
-### Disabled Sandbox admission foundation
+### Gated Sandbox server lifecycle
 
 Workspace-authenticated Sandbox preparation is durable but cannot execute. A
 transaction freezes the Practice snapshot, creates a call and attempt, claims
@@ -70,11 +70,7 @@ stored.
 
 Reservations expire after 30 seconds and can be canceled before dispatch. Safe
 current/status reads expose no snapshot, proof, token or provider identifier.
-Start, join and presence terminate at a hard-disabled server boundary that has
-no provider client or token-mint dependency. The stop path cannot cross into
-provider cleanup. This is an additive foundation, not an enabled Sandbox:
-provider dispatch, agent registration, join credentials, runtime protocol and
-cleanup remain absent pending the external safety gate. [ADR 013](docs/decisions/013-disabled-sandbox-admission.md)
+Production start, join and presence still terminate at a hard-disabled server boundary. The lifecycle supports single-dispatch transactions, owner-bound registration/config/control, encrypted joins and exact-session reconciliation through injected offline transports; the production instance has no transport or enable switch. Stop persists intent, and status/control/sweep advance deadlines without provider I/O. Unknown resource outcomes retain capacity independently of call state. Runtime readiness/evidence integration and real private-session proof remain blocked or unfinished; this does not enable Sandbox or complete #62. [ADR 014](docs/decisions/014-gated-sandbox-protocol.md) and the [server protocol](docs/architecture/sandbox-protocol.md) own the staged contract.
 
 ### Sandbox browser preparation
 

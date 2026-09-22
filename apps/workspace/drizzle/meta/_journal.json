@@ -43,6 +43,13 @@
       "when": 1789997127434,
       "tag": "0005_lumpy_arachne",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790070959094,
+      "tag": "0006_harsh_vengeance",
+      "breakpoints": true
     }
   ]
 }

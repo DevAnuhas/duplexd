@@ -702,6 +702,7 @@ async function authenticateAgentCall(
     .select({
       state: calls.state,
       tokenHash: calls.agentTokenHash,
+      source: calls.source,
       configClaimedAt: calls.configClaimedAt,
       snapshot: calls.assistantSnapshot,
     })
@@ -727,7 +728,12 @@ async function authenticateAgentCall(
     }
   }
 
-  if (row.state === "ended" || row.state === "failed") {
+  // The old protocol must never claim a Practice config or mutate its lifecycle.
+  if (
+    row.source === "sandbox" ||
+    row.state === "ended" ||
+    row.state === "failed"
+  ) {
     return { kind: "expired_token" }
   }
 
@@ -948,14 +954,17 @@ export async function sweepStaleCalls(now = new Date()): Promise<{
       })
       .from(calls)
       .where(
-        or(
-          and(
-            eq(calls.state, "active"),
-            lt(calls.lastHeartbeatAt, cutoffs.active)
-          ),
-          and(
-            eq(calls.state, "starting"),
-            lt(calls.createdAt, cutoffs.starting)
+        and(
+          eq(calls.source, "integration"),
+          or(
+            and(
+              eq(calls.state, "active"),
+              lt(calls.lastHeartbeatAt, cutoffs.active)
+            ),
+            and(
+              eq(calls.state, "starting"),
+              lt(calls.createdAt, cutoffs.starting)
+            )
           )
         )
       )

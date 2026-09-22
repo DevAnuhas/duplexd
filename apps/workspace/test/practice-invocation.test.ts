@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto"
 
 import { afterAll, describe, expect, it, vi } from "vitest"
+import { eq } from "drizzle-orm"
+
+import { SANDBOX_PROTOCOL } from "@/sandbox/protocol"
 
 import type {
   AssistantTool,
@@ -16,7 +19,8 @@ const { MAX_PRACTICE_INVOCATIONS, createPracticeSecret, invokePracticeSample } =
   await import("@/practice/samples")
 const { createAssistant } = await import("@/data/assistants")
 const { closeDb, getDb } = await import("@/db/client")
-const { calls, practiceInvocations } = await import("@/db/schema")
+const { calls, practiceInvocations, sandboxAttempts } =
+  await import("@/db/schema")
 const { encryptSecret } = await import("@/lib/crypto")
 const { validateTools } = await import("@/lib/validate")
 const { signUpNewAccount } = await import("./helpers/auth.ts")
@@ -137,6 +141,8 @@ async function invoke(
     signatureSecret?: string
     headers?: Record<string, string>
     sleep?: (milliseconds: number) => Promise<void>
+    now?: Date
+    clock?: () => Date
   } = {}
 ) {
   const body = practiceWebhookBody({
@@ -147,7 +153,8 @@ async function invoke(
     invocationId: input.invocationId ?? `invocation-${randomUUID()}`,
   })
   const rawBody = JSON.stringify(body)
-  const timestamp = input.timestamp ?? String(Math.floor(NOW.getTime() / 1_000))
+  const now = input.now ?? NOW
+  const timestamp = input.timestamp ?? String(Math.floor(now.getTime() / 1_000))
   const headers = practiceWebhookHeaders({
     secret: input.signatureSecret ?? call.secret,
     timestamp,
@@ -169,12 +176,149 @@ async function invoke(
       assistantId: headers.get("duplexd-assistant-id"),
       invocationId: headers.get("duplexd-invocation-id"),
     },
-    now: NOW,
+    now,
+    clock: input.clock,
     sleep: input.sleep,
   })
 }
 
+const LEASE_CASES = [
+  {
+    reason: "startup_deadline",
+    expires: 120_000,
+    heartbeat: 110_000,
+    presence: 170_000,
+    ready: false,
+  },
+  {
+    reason: "presence_expired",
+    expires: 60_000,
+    heartbeat: 50_000,
+    presence: 60_000,
+    ready: true,
+  },
+  {
+    reason: "control_lost",
+    expires: 30_000,
+    heartbeat: 0,
+    presence: 60_000,
+    ready: true,
+  },
+  {
+    reason: "execution_deadline",
+    expires: 600_000,
+    heartbeat: 590_000,
+    presence: 650_000,
+    ready: true,
+  },
+] as const
+
+async function createLeasedPracticeCall(
+  lease: (typeof LEASE_CASES)[number],
+  transport: "success" | "slow"
+) {
+  const time = (elapsed: number) => new Date(NOW.getTime() + elapsed)
+  const call = await createPracticeCall({ transport, deadline: time(600_000) })
+  await getDb()
+    .update(calls)
+    .set({
+      configClaimedAt: NOW,
+      startedAt: NOW,
+      lastHeartbeatAt: time(lease.heartbeat),
+    })
+    .where(eq(calls.id, call.callId))
+  const attemptId = randomUUID()
+  await getDb()
+    .insert(sandboxAttempts)
+    .values({
+      id: attemptId,
+      accountId: call.account.accountId,
+      initiatedByUserId: call.account.userId,
+      callId: call.callId,
+      clientAttemptId: randomUUID(),
+      inputDigest: "synthetic-input-digest",
+      controllerProofHash: "synthetic-controller-hash",
+      state: lease.ready ? "active" : "starting",
+      preparedAt: time(-1_000),
+      reservationExpiresAt: time(30_000),
+      dispatchedAt: NOW,
+      dispatchSettledAt: NOW,
+      protocol: SANDBOX_PROTOCOL,
+      resourceState: "known_running",
+      startupDeadline: time(120_000),
+      presenceExpiresAt: time(lease.presence),
+      readyAt: lease.ready ? NOW : null,
+    })
+  const expectExpiredLease = async () => {
+    const [attempt] = await getDb()
+      .select()
+      .from(sandboxAttempts)
+      .where(eq(sandboxAttempts.id, attemptId))
+    const [persisted] = await getDb()
+      .select()
+      .from(calls)
+      .where(eq(calls.id, call.callId))
+    expect(attempt).toMatchObject({
+      stopReason: lease.reason,
+      stopRequestedAt: time(lease.expires),
+    })
+    expect(persisted?.stopRequestedAt).toEqual(time(lease.expires))
+  }
+  const invocations = () =>
+    getDb()
+      .select()
+      .from(practiceInvocations)
+      .where(eq(practiceInvocations.callId, call.callId))
+  return { call, time, expectExpiredLease, invocations }
+}
+
 describeDatabase("signed Practice invocation", () => {
+  describe.each(LEASE_CASES)("authoritative Sandbox $reason", (lease) => {
+    it("rejects new signed selection when the webhook is the first request at expiry", async () => {
+      const f = await createLeasedPracticeCall(lease, "success")
+      expect(
+        await invoke(f.call, { now: f.time(lease.expires - 1) })
+      ).toMatchObject({ kind: "ok", status: 200 })
+      expect(
+        await invoke(f.call, { now: f.time(lease.expires) })
+      ).toMatchObject({ kind: "not_active" })
+      expect(await f.invocations()).toHaveLength(1)
+      await f.expectExpiredLease()
+    })
+
+    it("rejects a signed replay when the webhook is the first request after expiry", async () => {
+      const f = await createLeasedPracticeCall(lease, "success")
+      const invocationId = randomUUID()
+      expect(
+        await invoke(f.call, { invocationId, now: f.time(lease.expires - 1) })
+      ).toMatchObject({ kind: "ok", status: 200 })
+      expect(
+        await invoke(f.call, { invocationId, now: f.time(lease.expires + 1) })
+      ).toMatchObject({ kind: "not_active" })
+      expect(await f.invocations()).toHaveLength(1)
+      await f.expectExpiredLease()
+    })
+
+    it("rechecks the lease at delayed release without a status, control or sweep request", async () => {
+      const f = await createLeasedPracticeCall(lease, "slow")
+      let releaseNow = f.time(lease.expires - 500)
+      const sleep = vi.fn(async (delay: number) => {
+        expect(delay).toBeGreaterThan(500)
+        expect(await f.invocations()).toHaveLength(1)
+        releaseNow = new Date(releaseNow.getTime() + delay)
+      })
+      expect(
+        await invoke(f.call, {
+          now: releaseNow,
+          clock: () => releaseNow,
+          sleep,
+        })
+      ).toMatchObject({ kind: "not_active" })
+      expect(sleep).toHaveBeenCalledTimes(1)
+      await f.expectExpiredLease()
+    })
+  })
+
   it("accepts an independently pinned raw-body HMAC vector", async () => {
     const timestamp = "1700000000"
     const rawBody =

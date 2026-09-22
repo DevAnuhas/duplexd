@@ -5,6 +5,7 @@
 | [AGENTS.md](../AGENTS.md)                                        | Agent entry point: working rules, invariants, task map, verification                   |
 | [CONTEXT.md](../CONTEXT.md)                                      | What duplexd is and is not, direction, open questions, status                          |
 | [ARCHITECTURE.md](../ARCHITECTURE.md)                            | Components, trust boundaries, call lifecycle, persistence                              |
+| [architecture/sandbox-protocol.md](architecture/sandbox-protocol.md) | Gated server lifecycle, A04 protocol handoff, exact resource reconciliation |
 | [MILESTONE.md](MILESTONE.md)                                     | Current build target, sequence, acceptance evidence                                    |
 | [ENGINEERING.md](ENGINEERING.md)                                 | Setup, tests, CI, data, releases                                                       |
 | [WORKFLOW.md](WORKFLOW.md)                                       | Branching, issues, PRs, worktrees                                                      |
