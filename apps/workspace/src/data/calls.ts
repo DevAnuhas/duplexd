@@ -94,6 +94,8 @@ export type PublicCallEvent = {
 }
 
 export type WorkspaceCall = PublicCall & {
+  source: string
+  testMode: string | null
   assistantName: string | null
   apiKey: { name: string; prefix: string } | null
 }
@@ -468,6 +470,8 @@ export async function getCallForAccount(
 }
 
 type WorkspaceCallRow = PublicCallRow & {
+  source: string
+  testMode: string | null
   assistantName: string | null
   apiKeyName: string | null
   apiKeyPrefix: string | null
@@ -475,6 +479,8 @@ type WorkspaceCallRow = PublicCallRow & {
 
 const workspaceCallColumns = {
   ...publicCallColumns,
+  source: calls.source,
+  testMode: calls.testMode,
   assistantName: assistants.name,
   apiKeyName: apiKeys.name,
   apiKeyPrefix: apiKeys.prefix,
@@ -483,6 +489,8 @@ const workspaceCallColumns = {
 function workspaceCall(row: WorkspaceCallRow): WorkspaceCall {
   return {
     ...publicCall(row),
+    source: row.source,
+    testMode: row.testMode,
     assistantName: row.assistantName,
     apiKey:
       row.apiKeyName === null || row.apiKeyPrefix === null

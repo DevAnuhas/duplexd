@@ -182,6 +182,14 @@ export class SandboxController {
     )
       return
     if (this.pending === null) {
+      if (typeof globalThis.crypto?.randomUUID !== "function") {
+        this.update({
+          phase: "error",
+          message:
+            "This browser cannot securely prepare a test. Open the workspace on HTTPS or localhost in a supported browser.",
+        })
+        return
+      }
       const bytes = crypto.getRandomValues(new Uint8Array(32))
       const proof = btoa(String.fromCharCode(...bytes))
         .replaceAll("+", "-")

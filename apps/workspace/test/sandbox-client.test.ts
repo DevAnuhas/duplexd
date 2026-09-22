@@ -40,6 +40,18 @@ function fetcher() {
 }
 
 describe("Sandbox preparation controller", () => {
+  it("explains unsupported insecure browsers before any request", async () => {
+    vi.stubGlobal("crypto", {})
+    try {
+      const fetch = fetcher()
+      const controller = new SandboxController(fetch)
+      await controller.prepare(input)
+      expect(controller.getSnapshot().message).toContain("HTTPS or localhost")
+      expect(fetch).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
   it("calls native fetch with the global receiver, not the controller", async () => {
     const original = globalThis.fetch
     globalThis.fetch = function (this: unknown) {

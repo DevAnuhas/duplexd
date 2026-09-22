@@ -32,6 +32,10 @@ Each is a ticket, each independently mergeable, in this order because each needs
 
 P04 and P05 can overlap: the agent can be exercised from the CLI before the control API exists, which is exactly how the gate spike ran.
 
+## Sandbox increment status
+
+The accepted #29 launch surface is the in-workspace Sandbox before later separately authorized real-backend acceptance. The current UI increment covers saved Practice preparation, Riley sample creation, local audio checks, cancellation/current state and labeled call history. It does not complete the voice Sandbox or #29. Start/join remain disabled pending provider safety proof and runtime lifecycle/readiness work. Unsaved preview, custom sample editing, media reconnect, evidence reconciliation and durable observations remain unfinished. See [Sandbox usage](ENGINEERING.md#workspace-sandbox-preparation); do not count local audio or preparation as a real call.
+
 ## Acceptance evidence
 
 Report each item as passed, failed, blocked, or not run.

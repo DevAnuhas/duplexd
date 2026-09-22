@@ -25,7 +25,8 @@ export default async function NewAssistantPage({
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
           Riley is a fictional property assistant with sample parking, checkout
           and amenities information. No customer connection is needed to prepare
-          a Practice test. Voice calls are not available yet.
+          a Practice test. Voice calls are not available yet. Switching starting
+          configurations discards unsaved edits below.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
           <Button

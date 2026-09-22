@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/table"
 import { listWorkspaceCallsForAccount } from "@/data/calls"
 import { requireShell } from "../shell-data"
-import { CallStateBadge } from "./call-state-badge"
+import { CallProvenance, WorkspaceCallStateBadge } from "./call-provenance"
 
 export const dynamic = "force-dynamic"
 
@@ -78,7 +78,7 @@ export default async function CallsPage({
         <div className="flex min-h-52 flex-col items-start justify-center border-y py-10">
           <h2 className="text-lg font-medium">No calls yet</h2>
           <p className="mt-1 max-w-md text-sm text-muted-foreground">
-            Calls started through the API appear here.
+            Integration calls and Sandbox preparations appear here.
           </p>
           <Button asChild className="mt-5 h-11">
             <Link href="/keys">View API keys</Link>
@@ -91,6 +91,7 @@ export default async function CallsPage({
               <TableRow className="bg-muted/40 hover:bg-muted/40">
                 <TableHead>Started</TableHead>
                 <TableHead>Assistant</TableHead>
+                <TableHead>Source</TableHead>
                 <TableHead>State</TableHead>
                 <TableHead>Duration</TableHead>
                 <TableHead>API key</TableHead>
@@ -111,12 +112,19 @@ export default async function CallsPage({
                   </TableCell>
                   <TableCell>{call.assistantName ?? "Unavailable"}</TableCell>
                   <TableCell>
-                    <CallStateBadge state={call.state} />
+                    <CallProvenance call={call} />
+                  </TableCell>
+                  <TableCell>
+                    <WorkspaceCallStateBadge call={call} />
                   </TableCell>
                   <TableCell>{formatDuration(call.durationSecs)}</TableCell>
                   <TableCell>
                     {call.apiKey === null ? (
-                      "Unavailable"
+                      call.source === "sandbox" ? (
+                        "Workspace session"
+                      ) : (
+                        "Unavailable"
+                      )
                     ) : (
                       <div>
                         <div>{call.apiKey.name}</div>

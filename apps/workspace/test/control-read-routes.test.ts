@@ -143,6 +143,8 @@ describeDatabase("customer call detail and account scoping", () => {
       events: Array<{ seq: number }>
     }
 
+    expect(body.call).not.toHaveProperty("source")
+    expect(body.call).not.toHaveProperty("testMode")
     expect(typeof body.call.durationSecs).toBe("number")
     expect(body.call.durationSecs).toBe(12.345)
     expect(body.events.map((event) => event.seq)).toStrictEqual([1, 2])

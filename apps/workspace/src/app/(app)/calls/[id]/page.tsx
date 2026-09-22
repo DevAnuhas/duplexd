@@ -2,7 +2,11 @@ import Link from "next/link"
 import { notFound } from "next/navigation"
 import { ArrowLeft, CaretDown, Warning } from "@phosphor-icons/react/ssr"
 
-import { CallStateBadge } from "../call-state-badge"
+import {
+  CallProvenance,
+  WorkspaceCallStateBadge,
+  preparationLabel,
+} from "../call-provenance"
 import { CopyButton } from "@/components/copy-button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -155,7 +159,13 @@ export default async function CallDetailPage({
   }
 
   const { timeline, technical } = arrangeEvents(result.events)
-  const endingLabel = result.call.state === "incomplete" ? "Detected" : "Ended"
+  const preparation = preparationLabel(result.call)
+  const endingLabel =
+    preparation !== null
+      ? "Reservation closed"
+      : result.call.state === "incomplete"
+        ? "Detected"
+        : "Ended"
 
   return (
     <main className="space-y-8">
@@ -179,6 +189,23 @@ export default async function CallDetailPage({
         />
       </div>
 
+      <section className="space-y-2" aria-label="Call source">
+        <CallProvenance call={result.call} />
+        {result.call.source === "sandbox" &&
+          result.call.testMode === "practice" && (
+            <p className="text-sm text-muted-foreground">
+              Practice uses synthetic sample data. It does not prove a real
+              customer lookup or business action.
+            </p>
+          )}
+        {preparation !== null && (
+          <p className="text-sm text-muted-foreground">
+            This record is a Sandbox preparation. Voice execution never started
+            for this reservation.
+          </p>
+        )}
+      </section>
+
       {result.call.state === "incomplete" && (
         <Alert className="border-orange-500/30 bg-orange-500/5">
           <Warning aria-hidden="true" className="size-4" />
@@ -194,7 +221,7 @@ export default async function CallDetailPage({
         <div className="border-b p-4 sm:border-r">
           <dt className="text-xs text-muted-foreground">State</dt>
           <dd className="mt-2">
-            <CallStateBadge state={result.call.state} />
+            <WorkspaceCallStateBadge call={result.call} />
           </dd>
         </div>
         <div className="border-b p-4 lg:border-r">

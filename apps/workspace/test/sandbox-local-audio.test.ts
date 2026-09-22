@@ -57,6 +57,38 @@ afterEach(() => {
 })
 
 describe("local audio lifecycle", () => {
+  it("stops capture even when the audio context never resumes", async () => {
+    vi.stubGlobal("navigator", {
+      mediaDevices: { getUserMedia: vi.fn(async () => stream()) },
+    })
+    vi.stubGlobal(
+      "AudioContext",
+      class extends FakeContext {
+        override resume = vi.fn(() => new Promise<void>(() => {}))
+      }
+    )
+    const audio = new LocalAudioCheck(vi.fn())
+    void audio.microphone()
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(streams[0]?.stop).toHaveBeenCalledOnce()
+    expect(contexts[0]?.close).toHaveBeenCalledOnce()
+  })
+  it("bounds blocked output initialization", async () => {
+    vi.stubGlobal(
+      "AudioContext",
+      class extends FakeContext {
+        override resume = vi.fn(() => new Promise<void>(() => {}))
+      }
+    )
+    const report = vi.fn<(state: LocalAudioState) => void>()
+    const audio = new LocalAudioCheck(report)
+    void audio.sound()
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(contexts[0]?.close).toHaveBeenCalledOnce()
+    expect(report).toHaveBeenLastCalledWith(
+      expect.objectContaining({ kind: "error" })
+    )
+  })
   it("stops every track arriving after cancellation", async () => {
     let resolve!: (stream: MediaStream) => void
     vi.stubGlobal("navigator", {

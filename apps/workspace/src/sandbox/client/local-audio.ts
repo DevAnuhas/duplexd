@@ -128,6 +128,15 @@ export class LocalAudioCheck {
     try {
       const context = new AudioContext()
       this.context = context
+      this.timer = setTimeout(() => {
+        this.stop()
+        this.report({
+          kind: "error",
+          message:
+            "Sound playback did not start. Check browser audio permissions and try again.",
+          level: 0,
+        })
+      }, 5_000)
       await context.resume()
       if (generation !== this.generation) return
       const oscillator = context.createOscillator()
@@ -140,6 +149,7 @@ export class LocalAudioCheck {
       gain.connect(context.destination)
       oscillator.start()
       oscillator.stop(context.currentTime + 0.3)
+      if (this.timer !== null) clearTimeout(this.timer)
       this.timer = setTimeout(() => {
         this.stop()
         this.report({

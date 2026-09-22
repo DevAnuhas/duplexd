@@ -60,6 +60,8 @@ Recording retention, outbound calling compliance, and provider region placement 
 
 ## Status
 
+The workspace now exposes a **Sandbox preparation UI** for saved assistants, a Riley sample chooser, local audio checks and durable prepare/cancel/status records. Voice start is disabled; this is partial progress on #64/#65, not a working browser call or Stage A acceptance. [Usage and remaining limits](docs/ENGINEERING.md#workspace-sandbox-preparation).
+
 The engine milestone is retired. Its packages, specs, and wire-contract documentation have been removed from the tree — `docs/decisions/` keeps every superseded ADR, and git history keeps the code.
 
 What exists at this commit: the documentation and decision trail, the CI workflow with its path classifier, and `apps/workspace`, the Next.js app. The Pipecat gate spike that proved the runtime end to end has served its purpose and been removed; git history keeps it.
