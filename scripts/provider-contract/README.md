@@ -92,6 +92,15 @@ private API key is created.
 Pipecat CLI through an isolated `pipecatcloud==0.6.0` uv overlay for
 build/deploy and service deletion. Public-key start and operator control-plane
 readbacks remain distinct from server-only private-key session management.
+`PIPECAT_ORGANIZATION` is the CLI organization **namespace**, not its UUID.
+Before live setup, the operator-authenticated `/v1/organizations` lookup must
+uniquely match that namespace by `name` and supply a valid UUID `id`. The private
+checkpoint retains `organization` (namespace) and `organizationId` (UUID)
+separately: control-plane URLs and CLI commands keep the namespace; private
+session responses must match the UUID. Recovery repeats the lookup and requires
+both retained identities to match before provider mutation. Missing, ambiguous
+or malformed mappings and legacy checkpoints without a verified UUID fail
+closed; recovery never guesses or migrates this binding.
 Exact GET/DELETE use the documented
 `https://api.pipecat.daily.co/v1/agents/{agentName}/sessions/{sessionId}`
 route with `PIPECAT_PRIVATE_API_KEY`, never an OAuth or public-key substitute.

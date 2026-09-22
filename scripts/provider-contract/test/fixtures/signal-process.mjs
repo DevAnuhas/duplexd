@@ -22,6 +22,11 @@ const baselineDigest =
   "sha256:032aa1f121bc91a22748c725966bfd21e6659daaf8b159d367fd6e0f7a745242"
 let sessionId = "response-session-canary"
 const serviceId = "33333333-3333-4333-8333-333333333333"
+const organization =
+  mode === "organization-recover-wrong-name"
+    ? "different-namespace"
+    : "fixture-namespace"
+const organizationId = "22222222-2222-4222-8222-222222222222"
 const retainedSessions = new Map()
 const terminal = {
   status: "ended",
@@ -105,6 +110,8 @@ async function probeCallback(event) {
   if (response.status !== 204) throw new Error("fixture callback rejected")
 }
 childProcess.spawn = (command, args) => {
+  if (command === "ngrok" || command === "open")
+    calls.push(["local-process", command])
   const child = new EventEmitter()
   child.stdout = new PassThrough()
   child.stderr = new PassThrough()
@@ -196,6 +203,24 @@ globalThis.fetch = async (url, options = {}) => {
     })
   if (parsed.origin !== "https://api.pipecat.daily.co")
     throw new Error("unexpected fixture origin")
+  if (parsed.pathname === "/v1/organizations") {
+    if (options.headers.authorization !== "Bearer operator-key-canary")
+      throw new Error("wrong_fixture_operator_credential")
+    const row = {
+      name: organization,
+      id: organizationId,
+      properties: {},
+      verboseName: "Synthetic org",
+    }
+    if (mode.endsWith("-missing")) return Response.json({ organizations: [] })
+    if (mode.endsWith("-ambiguous"))
+      return Response.json({ organizations: [row, row] })
+    if (mode.endsWith("-malformed"))
+      return Response.json({ organizations: [{ ...row, id: "not-a-uuid" }] })
+    if (mode === "organization-recover-wrong-uuid")
+      row.id = "99999999-9999-4999-8999-999999999999"
+    return Response.json({ organizations: [row] })
+  }
   if (parsed.pathname.endsWith("/start")) {
     starts++
     if (mode === "pending") {
@@ -332,12 +357,25 @@ process.env.PIPECAT_OPERATOR_TOKEN = "operator-key-canary"
 if (mode.startsWith("missing-private-key"))
   delete process.env.PIPECAT_PRIVATE_API_KEY
 else process.env.PIPECAT_PRIVATE_API_KEY = "private-key-canary"
-process.env.PIPECAT_ORGANIZATION = "22222222-2222-4222-8222-222222222222"
+process.env.PIPECAT_ORGANIZATION = organization
+const recovering =
+  mode === "missing-private-key-recover" ||
+  mode.startsWith("organization-recover")
+if (mode.startsWith("organization-recover")) {
+  const state = JSON.parse(await fs.readFile(`${runDir}/recovery.json`, "utf8"))
+  probePresent = true
+  for (const session of Object.values(state.sessions))
+    retainedSessions.set(session.id, {
+      proof: { case: session.caseRef },
+      stopped: false,
+      reads: 0,
+    })
+}
 const runner = fileURLToPath(new URL("../../run.mjs", import.meta.url))
 process.argv = [
   process.execPath,
   runner,
-  mode === "missing-private-key-recover" ? "recover" : "live",
+  recovering ? "recover" : "live",
   "--run-dir",
   runDir,
 ]

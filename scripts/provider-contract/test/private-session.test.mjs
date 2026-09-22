@@ -13,7 +13,8 @@ import {
 import { fixtureChild, runDirectory } from "./fixtures/test-support.mjs"
 
 const scope = {
-  organization: "22222222-2222-4222-8222-222222222222",
+  organization: "fixture-namespace",
+  organizationId: "22222222-2222-4222-8222-222222222222",
   serviceName: "duplexd-provider-proof",
   probe: {
     serviceId: "33333333-3333-4333-8333-333333333333",
@@ -26,7 +27,7 @@ const detail = () => ({
   sessionId,
   serviceId: scope.probe.serviceId,
   deploymentId: scope.probe.deploymentId,
-  organizationId: scope.organization,
+  organizationId: scope.organizationId,
   resourceMetrics: { ...ended.resourceMetrics, sessionId },
 })
 const request = () => ({
@@ -399,15 +400,15 @@ for (const change of [
 
 for (const field of [
   "serviceName",
-  "organization",
+  "organizationId",
   "serviceId",
   "deploymentId",
 ])
   test(`private session operations reject invalid retained scope ${field} before HTTP`, async (t) => {
     const args = request()
     if (field === "serviceName") args.recovery.serviceName = "duplexd-agent"
-    else if (field === "organization")
-      args.recovery.organization = "not-an-organization-uuid"
+    else if (field === "organizationId")
+      args.recovery.organizationId = "not-an-organization-uuid"
     else args.recovery.probe[field] = "not-a-scope-uuid"
     let calls = 0
     t.mock.method(globalThis, "fetch", async () => {

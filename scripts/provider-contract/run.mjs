@@ -179,6 +179,7 @@ function safeCategory(error) {
       "session_scope_mismatch",
       "private_key_missing",
       "private_key_inventory_invalid",
+      "organization_mapping_invalid",
       "provider_timeout",
       "provider_network_failure",
       "session_stop_unverified",
@@ -535,7 +536,7 @@ export class DurableRunStore {
     this.closed = false
   }
 
-  static async create(runDir, { runId, organization }) {
+  static async create(runDir, { runId, organization, organizationId }) {
     const absolute = await validateRunDirectory(runDir)
     await mkdir(absolute, { mode: 0o700 })
     await chmod(absolute, 0o700)
@@ -547,6 +548,7 @@ export class DurableRunStore {
       runId,
       salt: randomBytes(32).toString("base64url"),
       organization,
+      organizationId,
       serviceName: PROBE_AGENT,
       productionServiceName: PROD_AGENT,
       createdAt: new Date().toISOString(),
@@ -1204,6 +1206,20 @@ async function requestJson(
   return returnResponse ? { httpStatus: response.status, value } : value
 }
 
+async function resolveOrganizationId(operatorToken, organization) {
+  const value = await requestJson(`${ORIGIN}/v1/organizations`, {
+    token: operatorToken,
+  })
+  if (!Array.isArray(value?.organizations))
+    throw new Error("organization_mapping_invalid")
+  const matches = value.organizations.filter(
+    (row) => row?.name === organization
+  )
+  if (matches.length !== 1 || !isUuid(matches[0].id))
+    throw new Error("organization_mapping_invalid")
+  return matches[0].id
+}
+
 async function readControlPlane(
   operatorToken,
   organization,
@@ -1255,7 +1271,7 @@ function privateSessionUrl(privateKey, recovery, sessionId) {
     recovery.serviceName !== PROBE_AGENT ||
     !isUuid(recovery.probe?.serviceId) ||
     !isUuid(recovery.probe?.deploymentId) ||
-    !isUuid(recovery.organization)
+    !isUuid(recovery.organizationId)
   )
     throw new Error("ownership_unresolved")
   return `${ORIGIN}/v1/agents/${encodeURIComponent(recovery.serviceName)}/sessions${sessionId == null ? "" : `/${encodeURIComponent(sessionId)}`}`
@@ -1286,7 +1302,7 @@ export async function readExactSession({
     fail("session_identity_mismatch")
   if (
     value.serviceId !== recovery.probe.serviceId ||
-    value.organizationId !== recovery.organization ||
+    value.organizationId !== recovery.organizationId ||
     value.deploymentId !== recovery.probe.deploymentId
   )
     fail("session_scope_mismatch")
@@ -2354,7 +2370,15 @@ async function runLive(runDir) {
   if (![runId, publicKey, operatorToken, organization, runDir].every(Boolean))
     throw new Error("live_prerequisite_missing")
 
-  const store = await DurableRunStore.create(runDir, { runId, organization })
+  const organizationId = await resolveOrganizationId(
+    operatorToken,
+    organization
+  )
+  const store = await DurableRunStore.create(runDir, {
+    runId,
+    organization,
+    organizationId,
+  })
   const scratch = join(store.runDir, ".runtime")
   await mkdir(scratch, { mode: 0o700 })
   let collector = null
@@ -2789,13 +2813,21 @@ async function recover(runDir) {
   if (!privateKey) throw new Error("private_key_missing")
   if (![operatorToken, organization, runDir].every(Boolean))
     throw new Error("recover_prerequisite_missing")
+  const organizationId = await resolveOrganizationId(
+    operatorToken,
+    organization
+  )
   const store = await DurableRunStore.open(runDir)
   const controller = new AbortController()
   const onSignal = () => controller.abort()
   process.on("SIGINT", onSignal)
   process.on("SIGTERM", onSignal)
   try {
-    if (store.recovery.organization !== organization) {
+    if (
+      store.recovery.organization !== organization ||
+      !isUuid(store.recovery.organizationId) ||
+      store.recovery.organizationId !== organizationId
+    ) {
       await store.latchFailure({
         category: "ownership_mismatch",
         predicate: "recovery_organization_mismatch",
