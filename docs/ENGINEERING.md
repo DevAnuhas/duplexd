@@ -139,6 +139,8 @@ returning a join credential. The authenticated sweep expires never-dispatched re
 
 ### Running the app
 
+The disconnected Sandbox Pipecat adapter is exercised with injected fake HTTP only. It adds no environment variables, dependencies, migrations or default provider wiring. Its required browser-media verifier is intentionally absent; unknown media retains the exact session for reconciliation rather than returning a join credential. Source contracts and remaining live checks are in the [Sandbox protocol](architecture/sandbox-protocol.md#disconnected-pipecat-transport-contract). Safe attempt projections include server time and persisted readiness; production execution still reports disabled.
+
 #### Workspace Sandbox preparation
 
 Open **Assistants → Create assistant → Riley sample**, then create the assistant through the normal form. Open its **Sandbox** destination (or **Test assistant** from the list). Configure and Sandbox share an in-tab draft of conversation, voice, model and tool fields. Choose **Saved configuration** or **Unsaved conversation preview** explicitly. Preparing a preview never saves the assistant; name, connection URL and credential edits stay in Configure and are excluded from preview. A navigation warning protects unsaved editor-only changes.

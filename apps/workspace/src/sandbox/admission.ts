@@ -68,6 +68,8 @@ export type SandboxAttemptDto = {
   startupDeadline: string | null
   executionDeadline: string | null
   presenceExpiresAt: string | null
+  serverTime: string
+  readyAt: string | null
 }
 
 export type PrepareSandboxAttemptResult =
@@ -94,6 +96,7 @@ export type CancelSandboxAttemptResult =
   | { kind: "provider_cleanup_disabled"; attempt: SandboxAttemptDto }
 
 type AttemptProjection = {
+  readyAt: Date | null
   resourceState: string
   startupDeadline: Date | null
   executionDeadline: Date | null
@@ -127,6 +130,7 @@ class UserAdmissionLimitError extends Error {}
 class AccountAdmissionLimitError extends Error {}
 
 const attemptColumns = {
+  readyAt: sandboxAttempts.readyAt,
   resourceState: sandboxAttempts.resourceState,
   startupDeadline: sandboxAttempts.startupDeadline,
   executionDeadline: calls.executionDeadline,
@@ -250,8 +254,13 @@ export function hashSandboxControllerProof(value: string): string | null {
   return createHash("sha256").update(decoded).digest("hex")
 }
 
-function projectAttempt(row: AttemptProjection): SandboxAttemptDto {
+function projectAttempt(
+  row: AttemptProjection,
+  now = new Date()
+): SandboxAttemptDto {
   return {
+    serverTime: now.toISOString(),
+    readyAt: row.readyAt?.toISOString() ?? null,
     attemptId: row.attemptId,
     callId: row.callId,
     assistantId: row.assistantId,
@@ -410,7 +419,7 @@ export async function prepareSandboxAttempt(input: {
         }
         const row = await readAttempt(tx, input.accountId, existing.id)
         if (row === null) throw new Error("Sandbox attempt lost its call row.")
-        return { kind: "replay", attempt: projectAttempt(row) } as const
+        return { kind: "replay", attempt: projectAttempt(row, now) } as const
       }
 
       const assistantRows = await tx
@@ -512,7 +521,7 @@ export async function prepareSandboxAttempt(input: {
         if (row === null) throw new Error("Sandbox slot lost its attempt row.")
         return {
           kind: "user_slot_occupied",
-          attempt: projectAttempt(row),
+          attempt: projectAttempt(row, now),
         } as const
       }
 
@@ -600,7 +609,7 @@ export async function prepareSandboxAttempt(input: {
 
       const row = await readAttempt(tx, input.accountId, attemptId)
       if (row === null) throw new Error("Created Sandbox attempt is missing.")
-      return { kind: "created", attempt: projectAttempt(row) } as const
+      return { kind: "created", attempt: projectAttempt(row, now) } as const
     })
   } catch (error) {
     if (error instanceof UserAdmissionLimitError) {
@@ -638,7 +647,7 @@ export async function getCurrentSandboxAttempt(input: {
   const attemptId = rows[0]?.attemptId
   if (attemptId === undefined) return null
   const row = await readAttempt(getDb(), input.accountId, attemptId)
-  return row === null ? null : projectAttempt(row)
+  return row === null ? null : projectAttempt(row, input.now)
 }
 
 export async function getSandboxAttemptForAccount(input: {
@@ -648,7 +657,7 @@ export async function getSandboxAttemptForAccount(input: {
 }): Promise<SandboxAttemptDto | null> {
   await expireSandboxReservations(input.now)
   const row = await readAttempt(getDb(), input.accountId, input.attemptId)
-  return row === null ? null : projectAttempt(row)
+  return row === null ? null : projectAttempt(row, input.now)
 }
 
 /**
@@ -671,7 +680,7 @@ export async function refuseDisabledSandboxExecution(input: {
   if (!secretsMatch(row.controllerProofHash, input.controllerProofHash)) {
     return { kind: "invalid_controller" }
   }
-  return { kind: "disabled", attempt: projectAttempt(row) }
+  return { kind: "disabled", attempt: projectAttempt(row, input.now) }
 }
 
 export async function cancelSandboxAttempt(input: {
@@ -731,16 +740,19 @@ export async function cancelSandboxAttempt(input: {
       const canceled = await readAttempt(tx, input.accountId, input.attemptId)
       if (canceled === null)
         throw new Error("Canceled Sandbox attempt is missing.")
-      return { kind: "canceled", attempt: projectAttempt(canceled) } as const
+      return {
+        kind: "canceled",
+        attempt: projectAttempt(canceled, now),
+      } as const
     }
 
     if (row.state === "canceled" || row.state === "expired") {
-      return { kind: "unchanged", attempt: projectAttempt(row) } as const
+      return { kind: "unchanged", attempt: projectAttempt(row, now) } as const
     }
 
     return {
       kind: "provider_cleanup_disabled",
-      attempt: projectAttempt(row),
+      attempt: projectAttempt(row, now),
     } as const
   })
 }
