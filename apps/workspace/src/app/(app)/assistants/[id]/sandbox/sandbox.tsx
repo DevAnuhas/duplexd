@@ -46,7 +46,7 @@ const scenarios: Array<{
 }> = [
   {
     value: "success",
-    label: "Property information",
+    label: "Default responses",
     description: "Use each tool’s explicit default sample.",
   },
   {

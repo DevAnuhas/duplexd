@@ -34,7 +34,7 @@ P04 and P05 can overlap: the agent can be exercised from the CLI before the cont
 
 ## Sandbox increment status
 
-The accepted #29 launch surface is the in-workspace Sandbox before later separately authorized real-backend acceptance. The current UI increment covers saved Practice preparation, Riley sample creation, local audio checks, cancellation/current state and labeled call history. It does not complete the voice Sandbox or #29. Start/join remain disabled pending provider safety proof and runtime lifecycle/readiness work. Unsaved preview, custom sample editing, media reconnect, evidence reconciliation and durable observations remain unfinished. See [Sandbox usage](ENGINEERING.md#workspace-sandbox-preparation); do not count local audio or preparation as a real call.
+The accepted #29 launch surface is the in-workspace Sandbox before later separately authorized real-backend acceptance. The current UI increment covers saved and unsaved-preview Practice preparation, shared in-tab drafts, explicit sample editing/review/save, revision-conflict recovery, Riley sample creation, local audio checks, cancellation/current state and labeled call history. It does not complete the voice Sandbox or #29. Start/join remain disabled pending provider safety proof and runtime lifecycle/readiness work. Runtime media/reconnect, evidence reconciliation and durable observations remain unfinished. See [Sandbox usage](ENGINEERING.md#workspace-sandbox-preparation); do not count local audio or preparation as a real call.
 
 ## Acceptance evidence
 

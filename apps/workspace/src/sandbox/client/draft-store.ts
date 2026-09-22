@@ -213,12 +213,11 @@ export class AssistantDraftStore {
     if (version === this.state.version) this.update({ validation }, false)
   }
   conflict(kind: "assistant" | "samples", revision: number) {
-    if (
-      (kind === "assistant"
+    const current =
+      kind === "assistant"
         ? this.state.assistantConflict
-        : this.state.sampleConflict) === revision
-    )
-      return
+        : this.state.sampleConflict
+    if (current !== null && current >= revision) return
     this.update(
       kind === "assistant"
         ? { assistantConflict: revision }
@@ -242,17 +241,38 @@ export class AssistantDraftStore {
       this.state.sampleConflict === null
     )
       return
+    const previous = this.state.latest
+    const assistantSeed =
+      previous !== null && previous.revision > seed.revision ? previous : seed
+    const sampleSeed =
+      previous !== null && previous.sampleRevision > seed.sampleRevision
+        ? previous
+        : seed
     this.update(
       {
         latest: {
           assistantId: seed.assistantId,
-          revision: seed.revision,
-          sampleRevision: seed.sampleRevision,
-          definitions: structuredClone(seed.definitions),
-          fields: previewFields(seed.fields),
+          revision: assistantSeed.revision,
+          sampleRevision: sampleSeed.sampleRevision,
+          definitions: structuredClone(sampleSeed.definitions),
+          fields: previewFields(assistantSeed.fields),
         },
-        ...(assistantChanged ? { assistantConflict: seed.revision } : {}),
-        ...(samplesChanged ? { sampleConflict: seed.sampleRevision } : {}),
+        ...(assistantChanged
+          ? {
+              assistantConflict: Math.max(
+                seed.revision,
+                this.state.assistantConflict ?? 0
+              ),
+            }
+          : {}),
+        ...(samplesChanged
+          ? {
+              sampleConflict: Math.max(
+                seed.sampleRevision,
+                this.state.sampleConflict ?? 0
+              ),
+            }
+          : {}),
       },
       false
     )

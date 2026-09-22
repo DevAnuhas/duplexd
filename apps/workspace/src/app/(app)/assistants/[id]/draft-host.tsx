@@ -92,6 +92,21 @@ export function AssistantDraftProvider({
         event.returnValue = ""
       }
     }
+    const shouldStay = (url: URL) => {
+      if (
+        url.origin === window.location.origin &&
+        (url.pathname === base || url.pathname === `${base}/sandbox`)
+      ) {
+        return (
+          url.pathname !== window.location.pathname &&
+          store.getSnapshot().editorOnlyDirty &&
+          !window.confirm(
+            "Unsaved name or connection fields cannot move to Sandbox and will be discarded. Your conversation draft is kept. Continue?"
+          )
+        )
+      }
+      return warn()
+    }
     const onClick = (event: MouseEvent) => {
       if (
         event.defaultPrevented ||
@@ -111,32 +126,28 @@ export function AssistantDraftProvider({
       )
         return
       const url = new URL(anchor.href, window.location.href)
-      if (
-        url.origin === window.location.origin &&
-        (url.pathname === base || url.pathname === `${base}/sandbox`)
-      ) {
-        if (
-          url.pathname !== window.location.pathname &&
-          store.getSnapshot().editorOnlyDirty &&
-          !window.confirm(
-            "Unsaved name or connection fields cannot move to Sandbox and will be discarded. Your conversation draft is kept. Continue?"
-          )
-        ) {
-          event.preventDefault()
-          event.stopPropagation()
-        }
-        return
-      }
-      if (warn()) {
+      if (shouldStay(url)) {
         event.preventDefault()
         event.stopPropagation()
       }
     }
+    // App Router Back/Forward is same-document navigation: beforeunload does
+    // not run. Modern browsers expose a cancelable traversal here.
+    const onTraverse = (event: NavigateEvent) => {
+      if (
+        event.navigationType === "traverse" &&
+        event.cancelable &&
+        shouldStay(new URL(event.destination.url))
+      )
+        event.preventDefault()
+    }
     window.addEventListener("beforeunload", beforeUnload)
     document.addEventListener("click", onClick, true)
+    window.navigation?.addEventListener("navigate", onTraverse)
     return () => {
       window.removeEventListener("beforeunload", beforeUnload)
       document.removeEventListener("click", onClick, true)
+      window.navigation?.removeEventListener("navigate", onTraverse)
     }
   }, [store, seed.assistantId])
   return (

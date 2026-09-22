@@ -119,6 +119,10 @@ function field(selector: string) {
 }
 beforeEach(async () => {
   requests = []
+  Object.defineProperty(window, "navigation", {
+    configurable: true,
+    value: new EventTarget(),
+  })
   vi.clearAllMocks()
   vi.spyOn(window, "confirm").mockReturnValue(true)
   sampleReply = () =>
@@ -338,6 +342,53 @@ describe("shared Configure and Sandbox drafts", () => {
     expect(store.getSnapshot().samples[0]!.defaultText).toContain('"edited"')
     expect(saveAssistant).not.toHaveBeenCalled()
   })
+  it("locks explicit sample saves synchronously across duplicate clicks", async () => {
+    await click(button("Switch screen"))
+    await typeInto(field("#sample-default-0"), "null")
+    await validated()
+    const original = globalThis.fetch
+    let release!: (response: Response) => void
+    const fetch = vi.fn<typeof globalThis.fetch>(async (path, options) => {
+      if (String(path).endsWith("/csrf"))
+        return new Promise<Response>((resolve) => {
+          release = resolve
+        })
+      return original(path, options)
+    })
+    vi.stubGlobal("fetch", fetch)
+    const save = button("Save sample mappings")
+    await act(async () => {
+      save.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true })
+      )
+      save.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true })
+      )
+    })
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(store.getSnapshot().saving).toBe(true)
+    await act(async () => {
+      release(Response.json({ token: "csrf" }))
+    })
+    expect(
+      requests.filter((request) => request.options?.method === "PUT")
+    ).toHaveLength(1)
+    expect(store.getSnapshot().saving).toBe(false)
+  })
+
+  it("cancels supported same-document Back/Forward traversal before discarding edits", async () => {
+    await typeInto(field('[name="instructions"]'), "Keep across history")
+    vi.mocked(window.confirm).mockReturnValue(false)
+    const event = Object.assign(new Event("navigate", { cancelable: true }), {
+      navigationType: "traverse",
+      destination: { url: "http://localhost/calls" },
+    })
+    window.navigation.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+    expect(window.confirm).toHaveBeenCalledOnce()
+    expect(store.getSnapshot().fields.instructions).toBe("Keep across history")
+  })
+
   it("warns before link navigation or closing with an unsaved draft", async () => {
     await typeInto(field('[name="instructions"]'), "Unsaved")
     vi.mocked(window.confirm).mockReturnValue(false)

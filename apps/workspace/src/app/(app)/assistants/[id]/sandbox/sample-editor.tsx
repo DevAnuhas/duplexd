@@ -52,7 +52,7 @@ export function SampleEditor() {
     setMessage(null)
   }
   async function save() {
-    if (!canSave) return
+    if (!canSave || store.getSnapshot().saving) return
     store.setSaving(true)
     setMessage(null)
     try {

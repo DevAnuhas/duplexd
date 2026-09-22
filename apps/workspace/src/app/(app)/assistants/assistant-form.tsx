@@ -305,7 +305,7 @@ function AssistantFormEditor({
   }
 
   async function submit(input: AssistantFormInput) {
-    if (locked || conflict) return
+    if (locked || conflict || store?.getSnapshot().saving) return
     store?.setSaving(true)
     const data = new FormData()
     const expectedRevision = draft?.state.baseRevision ?? revision

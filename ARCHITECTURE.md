@@ -78,7 +78,7 @@ cleanup remain absent pending the external safety gate. [ADR 013](docs/decisions
 
 ### Sandbox browser preparation
 
-The assistant-local Sandbox renders account-scoped saved configuration and compiler validation, then uses the existing session/Origin/CSRF-protected admission routes. The client retains retry input and a controller proof in tab memory, never browser storage. It has no provider start or join integration. Local microphone checks and synthesized test tones stay on the device and release resources on completion, cancellation, tab hiding and navigation. Workspace-only call projections include source/test mode so Practice reservations remain labeled in history; public integration API projections are unchanged.
+The assistant-local Configure/Sandbox layout owns an in-tab allowlisted conversation draft and authored sample JSON. Saved and unsaved-preview sources are explicit; names, connection URLs and credentials never enter the shared host or preview. A bounded, authenticated read-only server action reuses the Practice compiler/parser/fingerprints for preflight, while preparation and explicit sample saves use the existing session/Origin/CSRF-protected routes. Revision conflicts preserve local drafts until explicit rebase or discard; active/uncertain preparation locks editing. The client retains retry input and a controller proof in tab memory, never browser storage. It has no provider start or join integration. Local microphone checks and synthesized test tones stay on the device and release resources on completion, cancellation, tab hiding and navigation. Workspace-only call projections include source/test mode so Practice reservations remain labeled in history; public integration API projections are unchanged.
 
 ## Lifecycle of one call
 
