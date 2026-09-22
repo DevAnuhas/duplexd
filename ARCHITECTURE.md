@@ -76,6 +76,10 @@ provider cleanup. This is an additive foundation, not an enabled Sandbox:
 provider dispatch, agent registration, join credentials, runtime protocol and
 cleanup remain absent pending the external safety gate. [ADR 013](docs/decisions/013-disabled-sandbox-admission.md)
 
+### Sandbox browser preparation
+
+The assistant-local Sandbox renders account-scoped saved configuration and compiler validation, then uses the existing session/Origin/CSRF-protected admission routes. The client retains retry input and a controller proof in tab memory, never browser storage. It has no provider start or join integration. Local microphone checks and synthesized test tones stay on the device and release resources on completion, cancellation, tab hiding and navigation. Workspace-only call projections include source/test mode so Practice reservations remain labeled in history; public integration API projections are unchanged.
+
 ## Lifecycle of one call
 
 ```mermaid

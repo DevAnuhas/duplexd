@@ -139,6 +139,18 @@ as the still-blocked provider cleanup evidence.
 
 ### Running the app
 
+#### Workspace Sandbox preparation
+
+Open **Assistants → Create assistant → Riley sample**, then create the assistant through the normal form. Open its **Sandbox** destination (or **Test assistant** from the list). This increment tests saved configurations only: save editor changes before entering Sandbox.
+
+Sandbox validates configuration and sample coverage using the existing Practice compiler. When an assistant has Riley's exact tool schema and no saved samples, the UI offers the fictional Riley pack for that test snapshot; it does not overwrite saved samples. Review the sample results and choose the default, unavailable, bounded-delay or controlled-failure scenario. An unavailable scenario uses explicitly authored overrides, with visible default fallback for other tools. Custom sample editing and unsaved-preview testing remain unfinished.
+
+**Check microphone** requests audio only after a click, measures local input for at most five seconds after acquisition, then releases all tracks. Permission prompts time out after twenty seconds; a stream granted after cancellation is immediately stopped. **Play test sound** generates a short local tone. Neither check records or sends audio. Navigation, tab hiding and explicit cancellation release local audio. A successful local check is not agent readiness.
+
+**Prepare test** creates the immutable, authenticated reservation through the existing Sandbox API. Duplicate clicks and uncertain-response retries retain one attempt identifier and controller proof in memory. Refresh does not start anything; another tab observes the existing reservation and can cancel it as the same user. Reservations expire after thirty seconds. Call records and Calls history label Practice and distinguish preparation cancellation/expiry from a voice ending.
+
+**Start voice call remains disabled.** There is no browser media adapter or client start/join request in this increment. Provider dispatch/cleanup proof, the integrated runtime control/readiness contract, real audible acceptance, live evidence reconciliation and complete Stage A review remain blocked or unimplemented. Preparation consumes no voice/model usage. The existing public integration API is unchanged; a workspace session is not a customer API key.
+
 #### Riley demo seed
 
 The fastest way to inspect a Riley configuration is:

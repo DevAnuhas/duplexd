@@ -34,7 +34,11 @@ const { POST: stopRoute } =
   await import("@/app/api/workspace/sandbox/attempts/[id]/stop/route")
 const { POST: createPublicCall } = await import("@/app/v1/calls/route")
 const { createAssistant } = await import("@/data/assistants")
-const { listCallsForAccount } = await import("@/data/calls")
+const {
+  listCallsForAccount,
+  getWorkspaceCallForAccount,
+  listWorkspaceCallsForAccount,
+} = await import("@/data/calls")
 const { closeDb, getDb } = await import("@/db/client")
 const { calls, sandboxAttempts, sandboxSlots, users } =
   await import("@/db/schema")
@@ -142,6 +146,40 @@ async function directPrepare(
 }
 
 describeDatabase("provider-independent Sandbox foundation", () => {
+  it("projects Practice provenance only through account-scoped workspace history", async () => {
+    const setup = await fixture()
+    const foreign = await fixture()
+    const prepared = await directPrepare(setup)
+    expect(prepared.kind).toBe("created")
+    if (!("attempt" in prepared)) throw new Error("Missing attempt")
+    const detail = await getWorkspaceCallForAccount(
+      setup.account.accountId,
+      prepared.attempt.callId
+    )
+    expect(detail?.call).toMatchObject({
+      source: "sandbox",
+      testMode: "practice",
+      state: "reserved",
+      startedAt: null,
+      durationSecs: null,
+    })
+    expect(JSON.stringify(detail)).not.toContain("practiceSnapshot")
+    expect(JSON.stringify(detail)).not.toContain(setup.proof)
+    expect(
+      await getWorkspaceCallForAccount(
+        foreign.account.accountId,
+        prepared.attempt.callId
+      )
+    ).toBeNull()
+    const history = await listWorkspaceCallsForAccount(setup.account.accountId)
+    if (history.kind !== "ok") throw new Error("History unavailable")
+    expect(
+      history.calls.find((call) => call.id === prepared.attempt.callId)
+    ).toMatchObject({ source: "sandbox", testMode: "practice" })
+    const publicCalls = await listCallsForAccount(setup.account.accountId)
+    if (publicCalls.kind !== "ok") throw new Error("Public history unavailable")
+    expect(publicCalls.calls).toHaveLength(0)
+  })
   it("atomically replays identical same-attempt requests and conflicts changed input", async () => {
     const setup = await fixture()
     const request = prepareInput(setup.assistant.id)
