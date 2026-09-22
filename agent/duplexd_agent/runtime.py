@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from pipecat.frames.frames import ErrorFrame, LLMRunFrame
@@ -18,7 +20,8 @@ from pipecat.processors.aggregators.llm_response_universal import (
 from pipecat.transports.base_transport import BaseTransport
 from pipecat.workers.runner import WorkerRunner
 
-from duplexd_agent.config import AgentConfig
+from duplexd_agent.config import SANDBOX_END_REASONS, AgentConfig, SandboxControl
+from duplexd_agent.platform import PlatformClient
 from duplexd_agent.provider import ModelStack
 from duplexd_agent.reporting import EventReporter, ReportingObserver
 
@@ -28,6 +31,96 @@ class ObservedEnd:
     reason: str | None = None
 
 
+class SandboxWatchdog:
+    """Independent monotonic leases: reporting or a slow probe cannot hold them open."""
+
+    def __init__(
+        self,
+        platform: PlatformClient,
+        control: SandboxControl,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.platform = platform
+        self.clock = clock
+        self.stopped = asyncio.Event()
+        self.reason: str | None = None
+        self.ready = False
+        self._deadlines: dict[str, float] = {}
+        self._presence_expiry: float | None = None
+        self._tasks: list[asyncio.Task[None]] = []
+        self.update(control, platform.control_received_at)
+
+    def request_stop(self, reason: str) -> None:
+        if self.reason is None:
+            self.reason = reason if reason in SANDBOX_END_REASONS else "pipeline_error"
+            self.stopped.set()
+
+    def check(self) -> None:
+        if self.reason is not None:
+            return
+        due = [
+            (at, reason)
+            for reason, at in self._deadlines.items()
+            if not (reason == "startup_deadline" and self.ready)
+        ]
+        if due:
+            at, reason = min(due)
+            if self.clock() >= at:
+                self.request_stop(reason)
+
+    def update(self, control: SandboxControl, request_started: float) -> None:
+        # Evaluate OLD leases first. A response arriving after expiry cannot
+        # resurrect execution; account for request latency conservatively.
+        self.check()
+        if self.reason is not None:
+            return
+        server_time = datetime.fromisoformat(control.serverTime.replace("Z", "+00:00")).timestamp()
+        for reason, stamp in (
+            ("startup_deadline", control.startupDeadline),
+            ("execution_deadline", control.executionDeadline),
+            ("presence_expired", control.presenceExpiresAt),
+        ):
+            absolute = datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+            deadline = request_started + absolute - server_time
+            renewed_presence = reason == "presence_expired" and (
+                self._presence_expiry is None or absolute > self._presence_expiry
+            )
+            if not renewed_presence and reason in self._deadlines:
+                deadline = min(deadline, self._deadlines[reason])
+            if reason == "presence_expired":
+                self._presence_expiry = max(absolute, self._presence_expiry or absolute)
+            self._deadlines[reason] = deadline
+        self._deadlines["control_lost"] = request_started + 30.0
+        if control.stopRequested:
+            self.request_stop(control.stopReason or "user_stopped")
+        self.check()
+
+    async def start(self) -> None:
+        self._tasks = [asyncio.create_task(self._poll()), asyncio.create_task(self._watch())]
+
+    async def close(self) -> None:
+        for task in self._tasks:
+            task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
+
+    async def _poll(self) -> None:
+        while not self.stopped.is_set():
+            try:
+                control = await self.platform.poll_control()
+                self.update(control, self.platform.control_received_at)
+            except Exception:
+                # Independent watchdog enforces the last accepted control lease.
+                pass
+            await asyncio.sleep(3.0)
+
+    async def _watch(self) -> None:
+        while not self.stopped.is_set():
+            self.check()
+            await asyncio.sleep(0.1)
+
+
 async def run_call(
     *,
     transport: BaseTransport,
@@ -35,10 +128,30 @@ async def run_call(
     config: AgentConfig,
     models: ModelStack,
     reporter: EventReporter,
+    watchdog: SandboxWatchdog | None = None,
 ) -> None:
     del config
     started_at = time.monotonic()
     observed_end = ObservedEnd()
+    greeted = False
+    room_connected = False
+    voice_connected = False
+    ready_sent = False
+
+    async def ready_barrier() -> None:
+        nonlocal ready_sent
+        if watchdog is not None:
+            watchdog.check()
+            if (
+                room_connected
+                and voice_connected
+                and not ready_sent
+                and not watchdog.stopped.is_set()
+            ):
+                ready_sent = True
+                watchdog.ready = True
+                await reporter.record("agent_ready", {})
+
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(models.voice_context)
     pipeline = Pipeline(
         [
@@ -61,7 +174,27 @@ async def run_call(
 
     @transport.event_handler("on_client_connected")  # type: ignore[misc]
     async def on_client_connected(_transport: BaseTransport, _client: Any) -> None:
+        nonlocal greeted
+        if watchdog:
+            watchdog.check()
+        if greeted or (watchdog and watchdog.stopped.is_set()):
+            return
+        greeted = True
         await worker.queue_frames([LLMRunFrame()])
+
+    if watchdog is not None:
+
+        @transport.event_handler("on_connected")  # type: ignore[misc]
+        async def on_connected(_transport: BaseTransport, _data: Any) -> None:
+            nonlocal room_connected
+            room_connected = True
+            await ready_barrier()
+
+        @models.voice_service.event_handler("on_session_started")  # type: ignore[misc]
+        async def on_session_started(_service: Any, _session: Any) -> None:
+            nonlocal voice_connected
+            voice_connected = True
+            await ready_barrier()
 
     @transport.event_handler("on_client_disconnected")  # type: ignore[misc]
     async def on_client_disconnected(_transport: BaseTransport, _client: Any) -> None:
@@ -101,8 +234,13 @@ async def run_call(
         observed_end.reason = "pipeline_error"
         failure = error
     finally:
-        await reporter.stop()
-        if observed_end.reason is not None:
-            await reporter.complete(observed_end.reason, time.monotonic() - started_at)
+        if watchdog is not None:
+            await runner.cancel()
+            if observed_end.reason is not None:
+                watchdog.request_stop(observed_end.reason)
+        else:
+            await reporter.stop()
+            if observed_end.reason is not None:
+                await reporter.complete(observed_end.reason, time.monotonic() - started_at)
     if failure is not None:
         raise failure

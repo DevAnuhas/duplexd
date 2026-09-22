@@ -25,12 +25,16 @@ class SharedToolHandler:
         event_sink: EventSink,
         *,
         monotonic: Callable[[], float] | None = None,
+        execution_allowed: Callable[[], bool] | None = None,
     ) -> None:
         self._dispatcher = dispatcher
         self._events = event_sink
         self._monotonic = monotonic or time.monotonic
+        self._execution_allowed = execution_allowed
 
     async def __call__(self, params: FunctionCallParams, *, tool_name: str) -> None:
+        if self._execution_allowed is not None and not self._execution_allowed():
+            return
         started = self._monotonic()
         invocation = self._dispatcher.new_invocation(tool_name, params.arguments)
         await self._events.record(
@@ -38,6 +42,8 @@ class SharedToolHandler:
             {"tool": tool_name, "invocationId": invocation.invocation_id},
         )
         try:
+            if self._execution_allowed is not None and not self._execution_allowed():
+                return
             request = self._dispatcher.build_request(invocation)
             outcome = await self._dispatcher.deliver(request)
         except Exception:  # noqa: BLE001 - never escape into Pipecat's generic template
