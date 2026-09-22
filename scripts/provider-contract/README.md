@@ -86,12 +86,27 @@ private API key is created.
 
 `run.mjs` is the single operator program. It uses the authenticated official
 Pipecat CLI through an isolated `pipecatcloud==0.6.0` uv overlay for
-build/deploy, exact-session stop, status and deletion. Direct HTTP is limited
-to public-key start and exact machine-readable
-readbacks that the CLI does not provide. It also creates one runtime-only,
-mode-600 browser witness page using the actual room-scoped Daily token. The
-witness records only join/ejection booleans and timestamps; the token, room URL,
-callback secrets, raw session IDs and provider responses never enter evidence.
+build/deploy, exact-session stop and deletion. Direct HTTP is limited to
+public-key start and exact machine-readable readbacks that the CLI does not
+provide. It also creates one runtime-only, mode-600 browser witness page using
+the actual room-scoped Daily token. The witness records only join/ejection
+booleans and timestamps.
+
+The runner now writes a durable run directory selected by the operator. The
+directory must be new, outside every Git worktree, and outside the operating
+system's temporary directory. It is created mode 700 and contains:
+
+- `events.ndjson`: append-only, synced, sanitized observations;
+- `recovery.json`: mode-600 private recovery state with exact provider IDs;
+- `summary.json`: an atomic projection that can be regenerated from the
+  journal and recovery state.
+
+The private checkpoint is the only local file allowed to contain exact session,
+build, deployment, service, and organization identifiers. It never contains an
+API key, OAuth token, callback secret or URL, Daily credential, provider response
+body, log, audio, or customer data. The journal and summary use salted stable
+references. A single-writer lock prevents live and recovery processes from
+mutating the same run concurrently; a dead process's lock may be taken over.
 
 ## Offline and live commands
 
@@ -112,12 +127,29 @@ shell tracing disabled:
 set +x
 export PROVIDER_PROOF_LIVE_RELEASE=stage-a-disposable-probe-release
 export PROVIDER_PROOF_RUN_ID=...
-export PROVIDER_PROOF_EVIDENCE_PATH=/absolute/mode-600/path.json
 export PIPECAT_API_KEY=...          # existing public start key
 export PIPECAT_OPERATOR_TOKEN=...  # existing CLI/OAuth operator token
 export PIPECAT_ORGANIZATION=...
-node scripts/provider-contract/run.mjs live
+node scripts/provider-contract/run.mjs live --run-dir \
+  "$HOME/.local/state/duplexd/provider-proof/$PROVIDER_PROOF_RUN_ID"
 ```
+
+If the live process is killed or its cleanup is interrupted, supply only the
+existing operator credentials and reopen the same directory:
+
+```sh
+set +x
+export PIPECAT_OPERATOR_TOKEN=...
+export PIPECAT_ORGANIZATION=...
+node scripts/provider-contract/run.mjs recover --run-dir \
+  "$HOME/.local/state/duplexd/provider-proof/$PROVIDER_PROOF_RUN_ID"
+```
+
+`recover` is cleanup-only. It cannot deploy, start or resume a case, open a
+browser witness, or reconstruct a lost callback credential. It reads exact
+owned identities from `recovery.json`, records resource snapshots, reconciles
+known sessions, deletes the exactly owned probe service, then verifies probe
+absence and the unchanged production baseline.
 
 The runner fails closed unless the production baseline is exact, it has no
 active session, and the temporary service is absent.
@@ -127,27 +159,47 @@ CLI exit code, an allowlisted failure category, a salted build reference, and
 whether readback reconciled the outcome. Raw CLI output and provider
 identifiers are never written.
 It creates the temporary probe service with min/max 0/1 and no secret set,
-refuses inherited secrets, applies and reads back
-the 600-second provider ceiling before case 1, performs at most six serial
-starts, never retries an ambiguous start, and caps the operator envelope at 720
-seconds per case and calculated usage at 72 billed minutes. For the two ceiling
-cases it requires both agent and browser ejection plus independently stable
-provider ended-state/resource metrics. A second exact-session stop must report
-`404` and is accepted only after that reconciliation.
+refuses inherited secrets, applies and reads back the 600-second provider
+ceiling before case 1, performs at most six serial starts, never retries an
+ambiguous start, and retains the original 720-second case deadline across
+recovery. Before every start, stop, and delete it syncs an intent. An accepted
+callback is acknowledged only after its identity and sanitized event are
+durable. Identical callbacks are idempotent; conflicting duplicates are
+rejected without replacing the earlier evidence.
 
-On success, failure, or signal, cleanup stops every known exact probe session,
-uses the official CLI to delete the temporary service, verifies it absent, and
-requires authenticated readback of the unchanged production build/digest,
-min/max 0/3, `duplexd-agent-secrets`, absent
-duration override, zero active sessions, zero private keys, and absent
-`duplexd-provider-proof`. If cleanup cannot prove those facts, the result stays
-blocked and the safer 600-second containment remains visible.
+Stop recovery always reads the exact session first. It makes at most three
+same-ID stop attempts in total, with persisted counters and 5-second then
+15-second minimum spacing, and reads status again before each attempt. CLI exit
+codes, timeouts, and real HTTP statuses are different outcomes. A repeated CLI
+success is not rewritten as `404`, and `404` is not termination until an
+independent exact-session read says the session ended. Permission or ownership
+failures stop destructive mutation.
+
+On success, failure, or signal, cleanup records independent results without
+overwriting the first case or operation failure. It captures terminal and
+resource observations before deleting the temporary service, verifies the
+service absent, and requires authenticated readback of the unchanged production
+build/digest, min/max 0/3, `duplexd-agent-secrets`, absent duration override,
+zero active sessions, zero private keys, and absent `duplexd-provider-proof`.
+Unknown starts are never redispatched or matched by timestamp/list proximity.
+An operator-only start response can support labeled emergency containment, but
+cannot pass application recovery; only authenticated registration can supply
+the application's lost-response identity.
+
+Provider termination, unchanged resource samples, runtime estimates, and
+authoritative billed usage are separate observations. The current provider
+surface has no documented authoritative final-billing source in this runner,
+so `confirmedBilledMinutes` stays `null`, aggregate `usageStatus` stays
+`unknown`, and the verdict stays blocked. Repeated identical metric polls do not
+upgrade billing to confirmed. This is intentional: the next live release must
+identify and authorize that evidence source rather than inventing an adapter.
 
 ## Merge rule
 
-**A01 and dependent A03 remain blocked pending a redesigned durable
-evidence-retention and cleanup mechanism.** The current runner loses the exact
-case/registration stage on cleanup failure and cannot prove stable usage after
-the temporary service is deleted. Keep PR #71 draft and retain the disposable
-probe until that design is settled; do not infer acceptance from the recorded
-zero or perform another live run with this mechanism.
+**A01 and dependent A03 remain blocked pending new live evidence and an
+authoritative usage source.** Offline crash/recovery tests validate the local
+mechanism only; they cannot establish provider termination, Daily ejection,
+delayed billing finality, or equivalence between OAuth CLI stop and the planned
+server private-key path. Keep PR #71 draft and retain the disposable probe. The
+historical `live-evidence.json` remains unchanged: one session started, zero
+cases completed, and billed usage is unknown.

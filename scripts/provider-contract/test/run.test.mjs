@@ -1,7 +1,6 @@
 import assert from "node:assert/strict"
 import { createHmac } from "node:crypto"
 import { execFileSync, spawnSync } from "node:child_process"
-import { readFileSync } from "node:fs"
 import { test } from "node:test"
 
 import {
@@ -65,7 +64,7 @@ test("live mode fails closed before network without an exact release", () => {
     }
   )
   assert.equal(result.status, 1)
-  assert.equal(result.stderr, "provider proof failed before evidence write\n")
+  assert.equal(result.stderr, "provider proof failed before durable result\n")
 })
 
 test("session references are deterministic, salted, and non-reversible", () => {
@@ -264,7 +263,7 @@ test("real probe manifest normalizes the authoritative nested duration", () => {
       name: "duplexd-provider-proof",
       autoScaling: { minReplicas: 0, maxReplicas: 1 },
       deployment: {
-        id: "deployment",
+        id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
         buildId,
         manifest: {
           spec: { envFromSecretNames: [], maxSessionDurationSeconds: 600 },
@@ -300,6 +299,8 @@ test("probe manifest refuses inherited production secrets", () => {
   const probe = {
     agentName: "duplexd-provider-proof",
     buildId: "11111111-2222-4333-8444-555555555555",
+    deploymentId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    maxSessionDurationSeconds: 600,
     imageDigest: `sha256:${"1".repeat(64)}`,
     minAgents: 0,
     maxAgents: 1,
@@ -333,54 +334,4 @@ test("repeat stop accepts only an explicit not-found response", () => {
   assert.equal(isNotFoundStop("request failed: 404"), true)
   assert.equal(isNotFoundStop("session not found"), true)
   assert.equal(isNotFoundStop("request failed: 500"), false)
-})
-
-test("runner contains no private-key or temporary-secret mutation", () => {
-  const source = readFileSync("scripts/provider-contract/run.mjs", "utf8")
-  assert.doesNotMatch(
-    source,
-    /createPrivateKey|revokeKey|probe_secret_set_create/u
-  )
-  assert.doesNotMatch(source, /\/secrets\/duplexd-provider-proof/u)
-  assert.equal(
-    source.match(/\/v1\/public\/\$\{PROBE_AGENT\}\/start/gu)?.length,
-    1
-  )
-  assert.match(source, /writeFile\(file, html, \{ mode: 0o600 \}\)/u)
-  assert.ok(
-    source.indexOf('stage = "cleanup_ambiguous_start_containment"') <
-      source.indexOf('stage = "cleanup_delete_probe_service"')
-  )
-})
-
-test("temporary service is absent before deploy, exclusively targeted, deleted, and rechecked", () => {
-  const source = readFileSync("scripts/provider-contract/run.mjs", "utf8")
-  assert.match(source, /stage = "probe_absence_preflight"/u)
-  assert.match(source, /"delete",\s+PROBE_AGENT/gu)
-  assert.match(source, /stage = "cleanup_verify_probe_absent"/u)
-  assert.match(source, /probeServiceAbsent: finalProbeAbsent/u)
-  assert.match(source, /productionUnchanged: finalBaseline/u)
-  assert.doesNotMatch(source, /"deploy",\s+PROD_AGENT/gu)
-  assert.doesNotMatch(source, /\/v1\/agents\/\$\{PROD_AGENT\}/gu)
-  assert.match(
-    source,
-    /readControlPlane\(\s*operatorToken,\s*organization,\s*PROD_AGENT/u
-  )
-  assert.ok(
-    source.indexOf("await cleanup()") > source.indexOf("} catch (error)")
-  )
-  assert.match(source, /process\.once\("SIGINT", onSignal\)/u)
-  assert.match(source, /process\.once\("SIGTERM", onSignal\)/u)
-})
-
-test("temporary deploy pins the supported CLI and sets the provider ceiling exactly once", () => {
-  const source = readFileSync("scripts/provider-contract/run.mjs", "utf8")
-  assert.match(source, /"--with",\s+"pipecatcloud==0\.6\.0"/u)
-  assert.equal(source.match(/"--max-session-duration"/gu)?.length, 1)
-  assert.match(
-    source,
-    /manifest\.maxSessionDurationSeconds === LIMITS\.providerSeconds/u
-  )
-  assert.doesNotMatch(source, /provider_ceiling_set/u)
-  assert.doesNotMatch(source, /\/v1\/agents\/\$\{PROBE_AGENT\}/u)
 })

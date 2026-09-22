@@ -8,10 +8,19 @@ import {
   timingSafeEqual,
 } from "node:crypto"
 import { spawn } from "node:child_process"
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import {
+  chmod,
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  realpath,
+  rename,
+  rm,
+} from "node:fs/promises"
 import { createServer } from "node:http"
 import { tmpdir } from "node:os"
-import { dirname, join, resolve } from "node:path"
+import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..")
@@ -19,6 +28,8 @@ const PROBE_ROOT = join(ROOT, "scripts/provider-contract/probe")
 const PROD_AGENT = "duplexd-agent"
 const PROBE_AGENT = "duplexd-provider-proof"
 const ORIGIN = "https://api.pipecat.daily.co"
+const SCHEMA_VERSION = 1
+const LIVE_RELEASE = "stage-a-disposable-probe-release"
 const BASELINE = Object.freeze({
   buildId: "3010f496-fd84-4f39-a75c-c4a58a1bd922",
   imageDigest:
@@ -33,6 +44,27 @@ const LIMITS = Object.freeze({
   caseSeconds: 720,
   billedMinutes: 72,
 })
+const EVENT_KINDS = new Set([
+  "run_created",
+  "operation_intent",
+  "operation_result",
+  "callback",
+  "witness_observation",
+  "session_identity",
+  "session_status",
+  "resource_observation",
+  "first_failure",
+  "cleanup_result",
+  "verdict",
+])
+const TERMINAL_STATES = new Set([
+  "ended",
+  "stopped",
+  "failed",
+  "cancelled",
+  "terminated",
+])
+
 export const CASES = Object.freeze([
   { id: "cold_start", join: true, stop: "once" },
   { id: "cancel_before_join", join: false, stop: "once" },
@@ -47,11 +79,10 @@ export const CASES = Object.freeze([
   { id: "known_session_stop_retry", join: false, stop: "twice" },
 ])
 
-let liveSignal = null
+let exerciseSignal = null
 
-const delay = (milliseconds) =>
+const sleep = (milliseconds, signal = null) =>
   new Promise((resolvePromise, reject) => {
-    const signal = liveSignal
     const finish = () => {
       signal?.removeEventListener("abort", abort)
       resolvePromise()
@@ -63,12 +94,520 @@ const delay = (milliseconds) =>
     }
     signal?.addEventListener("abort", abort, { once: true })
   })
+const delay = (milliseconds) => sleep(milliseconds, exerciseSignal)
+
+function isInside(path, parent) {
+  const rel = relative(parent, path)
+  return rel === "" || (!rel.startsWith("..") && !rel.startsWith("/"))
+}
+
+async function exists(path) {
+  try {
+    await lstat(path)
+    return true
+  } catch (error) {
+    if (error?.code === "ENOENT") return false
+    throw error
+  }
+}
+
+async function assertOutsideWorktree(parent) {
+  let current = parent
+  while (true) {
+    if (await exists(join(current, ".git")))
+      throw new Error("run_dir_inside_git_worktree")
+    const next = dirname(current)
+    if (next === current) return
+    current = next
+  }
+}
+
+export async function validateRunDirectory(runDir) {
+  if (!runDir || !resolve(runDir).startsWith("/"))
+    throw new Error("run_dir_absolute_required")
+  const absolute = resolve(runDir)
+  const parent = await realpath(dirname(absolute))
+  if (await exists(absolute)) {
+    const info = await lstat(absolute)
+    if (info.isSymbolicLink() || !info.isDirectory())
+      throw new Error("run_dir_invalid")
+  }
+  if (isInside(absolute, await realpath(tmpdir())))
+    throw new Error("run_dir_temporary_forbidden")
+  await assertOutsideWorktree(parent)
+  return absolute
+}
 
 export function safeRef(salt, value) {
   return createHash("sha256")
     .update(`${salt}\0${value}`)
     .digest("hex")
     .slice(0, 24)
+}
+
+function safeCategory(error) {
+  const value = String(error?.message ?? "unknown")
+  if (/^provider_http_\d{3}$/u.test(value)) return value
+  if (
+    [
+      "operator_signal",
+      "callback_persist_failed",
+      "journal_invalid",
+      "journal_sequence_gap",
+      "journal_truncated_tail",
+      "ownership_unresolved",
+      "ownership_mismatch",
+      "session_status_unknown",
+      "session_stop_exhausted",
+      "session_permission_denied",
+      "cleanup_deadline_exceeded",
+      "usage_unknown",
+    ].includes(value)
+  )
+    return value
+  return "operation_failed"
+}
+
+async function syncDirectory(path) {
+  const handle = await open(path, "r")
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
+async function atomicJson(path, value) {
+  const temporary = `${path}.tmp-${process.pid}-${randomUUID()}`
+  const handle = await open(temporary, "wx", 0o600)
+  try {
+    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`)
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+  await chmod(temporary, 0o600)
+  await rename(temporary, path)
+  await syncDirectory(dirname(path))
+}
+
+export async function replayJournal(path) {
+  let text = ""
+  try {
+    text = await readFile(path, "utf8")
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error
+  }
+  const complete = text.endsWith("\n")
+    ? text
+    : text.slice(0, text.lastIndexOf("\n") + 1)
+  const needsContinuation = complete.length !== text.length
+  let truncatedTail = needsContinuation
+  const records = []
+  const lines = complete.split("\n")
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]
+    if (!line) continue
+    let record
+    try {
+      record = JSON.parse(line)
+    } catch {
+      let continuation = null
+      try {
+        continuation = JSON.parse(lines[index + 1] ?? "")
+      } catch {}
+      if (
+        (continuation?.kind === "first_failure" &&
+          continuation?.payload?.category === "journal_truncated_tail") ||
+        (continuation?.kind === "cleanup_result" &&
+          continuation?.payload?.check === "journal_truncated_tail")
+      ) {
+        truncatedTail = true
+        continue
+      }
+      throw new Error("journal_invalid")
+    }
+    if (record.sequence !== records.length + 1)
+      throw new Error("journal_sequence_gap")
+    if (
+      record.schemaVersion !== SCHEMA_VERSION ||
+      !EVENT_KINDS.has(record.kind)
+    )
+      throw new Error("journal_invalid")
+    records.push(record)
+  }
+  return { records, truncatedTail, needsContinuation }
+}
+
+export function projectSummary(records, recovery, truncatedTail = false) {
+  const firstFailure =
+    records.find((record) => record.kind === "first_failure") ?? null
+  const latestVerdict =
+    records.findLast((record) => record.kind === "verdict") ?? null
+  const cases = {}
+  for (const record of records) {
+    if (!record.caseRef) continue
+    const current = cases[record.caseRef] ?? { observations: 0, callbacks: [] }
+    current.observations += 1
+    if (record.kind === "callback") current.callbacks.push(record.payload.event)
+    if (record.kind === "session_status")
+      current.lastSessionStatus = record.payload
+    if (record.kind === "verdict") current.status = record.payload.status
+    cases[record.caseRef] = current
+  }
+  const sessions = Object.values(recovery.sessions ?? {})
+  const usageConfirmed =
+    sessions.length > 0 &&
+    sessions.every((session) => session.usageStatus === "confirmed") &&
+    !(recovery.dispatches ?? []).some(
+      (dispatch) => dispatch.outcome === "unknown"
+    )
+  const caseComplete = (definition) => {
+    const observed = records.filter(
+      (record) => record.caseRef === definition.id
+    )
+    const callbacks = new Set(
+      observed
+        .filter((record) => record.kind === "callback")
+        .map((record) => record.payload.event)
+    )
+    const witnesses = new Set(
+      observed
+        .filter((record) => record.kind === "witness_observation")
+        .map((record) => record.payload.event)
+    )
+    const expectedStartStatus = definition.discard ? "lost_response" : "success"
+    const hasStartResult = observed.some(
+      (record) =>
+        record.kind === "operation_result" &&
+        record.payload.name === "start_session" &&
+        record.payload.status === expectedStartStatus &&
+        record.payload.browserClaimsBounded === true
+    )
+    const sessionRefs = new Set(
+      observed
+        .filter(
+          (record) =>
+            record.kind === "session_identity" && !record.payload.conflict
+        )
+        .map((record) => record.payload.sessionRef)
+    )
+    const hasTerminalStatus = observed.some(
+      (record) =>
+        record.kind === "session_status" &&
+        record.payload.terminal === true &&
+        sessionRefs.has(record.payload.sessionRef)
+    )
+    const hasConfirmedUsage = observed.some(
+      (record) =>
+        record.kind === "resource_observation" &&
+        record.payload.resource === "authoritative_usage" &&
+        sessionRefs.has(record.payload.sessionRef) &&
+        record.payload.usageStatus === "confirmed" &&
+        Number.isFinite(record.payload.confirmedBilledMinutes)
+    )
+    const registrationCorrect =
+      definition.id === "no_registration_startup"
+        ? !callbacks.has("registered")
+        : callbacks.has("registered")
+    const joinCorrect =
+      !definition.join ||
+      (observed.some(
+        (record) =>
+          record.kind === "callback" &&
+          record.payload.event === "agent_joined" &&
+          record.payload.dailyClaimsBounded === true
+      ) &&
+        witnesses.has("browser_joined"))
+    const ceilingCorrect =
+      definition.stop !== "ceiling" ||
+      (callbacks.has("agent_ejected") && witnesses.has("browser_ejected"))
+    const stopCorrect =
+      definition.stop === "ceiling" ||
+      observed.some(
+        (record) =>
+          record.kind === "operation_result" &&
+          record.payload.name === "stop_session"
+      )
+    const repeatCorrect =
+      definition.stop !== "twice" ||
+      observed.some(
+        (record) =>
+          record.kind === "operation_result" &&
+          record.payload.name === "repeat_stop_session" &&
+          record.payload.httpStatus === 404
+      )
+    const applicationIdentityCorrect =
+      definition.id === "lost_start_response_registered"
+        ? observed.some(
+            (record) =>
+              record.kind === "session_identity" &&
+              record.source === "application_registration"
+          )
+        : definition.id !== "no_registration_startup" ||
+          !observed.some(
+            (record) =>
+              record.kind === "session_identity" &&
+              record.source === "application_registration"
+          )
+    return (
+      cases[definition.id]?.status === "pass" &&
+      hasStartResult &&
+      hasTerminalStatus &&
+      hasConfirmedUsage &&
+      registrationCorrect &&
+      joinCorrect &&
+      ceilingCorrect &&
+      stopCorrect &&
+      repeatCorrect &&
+      applicationIdentityCorrect
+    )
+  }
+  const cleanupChecks = new Map(
+    records
+      .filter((record) => record.kind === "cleanup_result")
+      .map((record) => [record.payload.check, record.payload.status])
+  )
+  const cleanupObserved =
+    cleanupChecks.get("probe_service_absent") === "confirmed" &&
+    cleanupChecks.get("production_unchanged") === "confirmed" &&
+    cleanupChecks.get("containment") === "confirmed"
+  const requirementsComplete =
+    CASES.every(caseComplete) &&
+    cleanupObserved &&
+    recovery.cleanup?.completed === true &&
+    usageConfirmed &&
+    !firstFailure &&
+    !truncatedTail
+  const requestedStatus = latestVerdict?.payload.status ?? "incomplete"
+  const status =
+    requestedStatus === "pass" && !requirementsComplete
+      ? "blocked"
+      : requestedStatus
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    runRef: safeRef(recovery.salt, recovery.runId),
+    status,
+    reason:
+      requestedStatus === "pass" && !requirementsComplete
+        ? "required_observations_missing"
+        : (latestVerdict?.payload.reason ?? null),
+    journal: {
+      completeRecords: records.length,
+      truncatedTail,
+      valid: !truncatedTail,
+    },
+    firstFailure: firstFailure?.payload ?? null,
+    cases,
+    cleanup: recovery.cleanup ?? {},
+    usageStatus: usageConfirmed ? "confirmed" : "unknown",
+    confirmedBilledMinutes: usageConfirmed
+      ? sessions.reduce(
+          (total, session) => total + session.confirmedBilledMinutes,
+          0
+        )
+      : null,
+  }
+}
+
+function processAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid < 1) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return error?.code === "EPERM"
+  }
+}
+
+export class DurableRunStore {
+  constructor(runDir, recovery, records, lockHandle) {
+    this.runDir = runDir
+    this.recovery = recovery
+    this.records = records
+    this.lockHandle = lockHandle
+    this.startedAt = Date.now()
+    this.queue = Promise.resolve()
+    this.truncatedTail = false
+    this.needsJournalContinuation = false
+    this.closed = false
+  }
+
+  static async create(runDir, { runId, organization }) {
+    const absolute = await validateRunDirectory(runDir)
+    await mkdir(absolute, { mode: 0o700 })
+    await chmod(absolute, 0o700)
+    const lockHandle = await open(join(absolute, "writer.lock"), "wx", 0o600)
+    await lockHandle.writeFile(`${JSON.stringify({ pid: process.pid })}\n`)
+    await lockHandle.sync()
+    const recovery = {
+      schemaVersion: SCHEMA_VERSION,
+      runId,
+      salt: randomBytes(32).toString("base64url"),
+      organization,
+      serviceName: PROBE_AGENT,
+      productionServiceName: PROD_AGENT,
+      createdAt: new Date().toISOString(),
+      starts: 0,
+      dispatches: [],
+      sessions: {},
+      cleanup: {},
+      firstFailure: null,
+    }
+    const store = new DurableRunStore(absolute, recovery, [], lockHandle)
+    await store.persistRecovery()
+    await store.append({ kind: "run_created", source: "operator", payload: {} })
+    return store
+  }
+
+  static async open(runDir) {
+    const absolute = await validateRunDirectory(runDir)
+    const lockPath = join(absolute, "writer.lock")
+    for (const name of ["recovery.json", "events.ndjson"]) {
+      const info = await lstat(join(absolute, name))
+      if (info.isSymbolicLink() || !info.isFile())
+        throw new Error("recovery_invalid")
+    }
+    try {
+      if ((await lstat(lockPath)).isSymbolicLink())
+        throw new Error("recovery_invalid")
+      const lock = JSON.parse(await readFile(lockPath, "utf8"))
+      if (processAlive(lock.pid)) throw new Error("run_writer_active")
+      await rm(lockPath)
+    } catch (error) {
+      if (error?.message === "run_writer_active") throw error
+      if (error?.message === "recovery_invalid") throw error
+      if (error?.code !== "ENOENT") throw error
+    }
+    const lockHandle = await open(lockPath, "wx", 0o600)
+    await lockHandle.writeFile(`${JSON.stringify({ pid: process.pid })}\n`)
+    await lockHandle.sync()
+    try {
+      const recovery = JSON.parse(
+        await readFile(join(absolute, "recovery.json"), "utf8")
+      )
+      if (recovery.schemaVersion !== SCHEMA_VERSION)
+        throw new Error("recovery_invalid")
+      const replay = await replayJournal(join(absolute, "events.ndjson"))
+      const store = new DurableRunStore(
+        absolute,
+        recovery,
+        replay.records,
+        lockHandle
+      )
+      store.truncatedTail = replay.truncatedTail
+      store.needsJournalContinuation = replay.needsContinuation
+      return store
+    } catch (error) {
+      await lockHandle.close()
+      await rm(lockPath, { force: true })
+      throw error
+    }
+  }
+
+  serialize(operation) {
+    const next = this.queue.then(operation)
+    this.queue = next.catch(() => {})
+    return next
+  }
+
+  persistRecovery() {
+    return atomicJson(join(this.runDir, "recovery.json"), this.recovery)
+  }
+
+  checkpoint(mutator) {
+    return this.serialize(async () => {
+      mutator(this.recovery)
+      await this.persistRecovery()
+    })
+  }
+
+  append({ kind, source, payload, caseRef = null, operationRef = null }) {
+    return this.serialize(async () => {
+      if (!EVENT_KINDS.has(kind)) throw new Error("journal_invalid")
+      const tailMarker =
+        (kind === "first_failure" &&
+          payload.category === "journal_truncated_tail") ||
+        (kind === "cleanup_result" &&
+          payload.check === "journal_truncated_tail")
+      if (this.needsJournalContinuation && !tailMarker)
+        throw new Error("journal_truncated_tail")
+      const record = {
+        schemaVersion: SCHEMA_VERSION,
+        sequence: this.records.length + 1,
+        receivedAt: new Date().toISOString(),
+        elapsedMs: Date.now() - this.startedAt,
+        runRef: safeRef(this.recovery.salt, this.recovery.runId),
+        caseRef,
+        operationRef,
+        kind,
+        source,
+        payload,
+      }
+      const handle = await open(join(this.runDir, "events.ndjson"), "a", 0o600)
+      try {
+        const separator = this.needsJournalContinuation ? "\n" : ""
+        await handle.writeFile(`${separator}${JSON.stringify(record)}\n`)
+        await handle.sync()
+      } finally {
+        await handle.close()
+      }
+      this.needsJournalContinuation = false
+      this.records.push(record)
+      return record
+    })
+  }
+
+  async latchFailure({
+    caseRef = null,
+    operationRef = null,
+    category,
+    predicate = null,
+  }) {
+    if (this.recovery.firstFailure) {
+      if (!this.records.some((record) => record.kind === "first_failure")) {
+        const failure = this.recovery.firstFailure
+        await this.append({
+          kind: "first_failure",
+          source: "recovery",
+          caseRef: failure.caseRef,
+          operationRef: failure.operationRef,
+          payload: { category: failure.category, predicate: failure.predicate },
+        })
+      }
+      return
+    }
+    const payload = { category, predicate }
+    await this.checkpoint((recovery) => {
+      recovery.firstFailure ??= { ...payload, caseRef, operationRef }
+    })
+    await this.append({
+      kind: "first_failure",
+      source: "operator",
+      caseRef,
+      operationRef,
+      payload,
+    })
+  }
+
+  async writeSummary() {
+    await this.queue
+    const summary = projectSummary(
+      this.records,
+      this.recovery,
+      this.truncatedTail
+    )
+    await atomicJson(join(this.runDir, "summary.json"), summary)
+    return summary
+  }
+
+  async close() {
+    if (this.closed) return
+    this.closed = true
+    await this.queue
+    await this.lockHandle.close()
+    await rm(join(this.runDir, "writer.lock"), { force: true })
+  }
 }
 
 function deployBuildId(output) {
@@ -141,9 +680,8 @@ export function assertBoundedClaims(claims, expiresAt) {
     claims.ejectAtTokenExpiry !== true ||
     claims.isOwner !== false ||
     claims.roomScoped !== true
-  ) {
+  )
     throw new Error("daily_claims_unbounded")
-  }
 }
 
 export function manifestFacts(value, imageDigest) {
@@ -191,7 +729,7 @@ export function verifyBaseline(manifest, sessions, keys, secretSets) {
     !Object.hasOwn(manifest, "maxSessionDurationSeconds") &&
     active.length === 0 &&
     privateKeys.length === 0 &&
-    !sets.some((set) => set.name === "duplexd-provider-proof")
+    !sets.some((set) => set.name === PROBE_AGENT)
   )
 }
 
@@ -199,37 +737,109 @@ export function verifyProbeManifest(manifest, buildId) {
   return (
     manifest.agentName === PROBE_AGENT &&
     manifest.buildId === buildId &&
+    /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(
+      manifest.deploymentId
+    ) &&
     /^sha256:[a-f0-9]{64}$/u.test(manifest.imageDigest) &&
     manifest.imageDigest !== BASELINE.imageDigest &&
     manifest.minAgents === 0 &&
     manifest.maxAgents === 1 &&
-    manifest.secretSets.length === 0
+    manifest.secretSets.length === 0 &&
+    manifest.maxSessionDurationSeconds === LIMITS.providerSeconds
   )
 }
 
-export function stableUsageMarker(session) {
-  const metrics = session.resourceMetrics
+export function normalizeSessionObservation(session) {
+  const metrics = session?.resourceMetrics
   const lastSample = Array.isArray(metrics?.timeseries)
     ? metrics.timeseries.at(-1)
     : null
-  if (
-    session.endedAt == null ||
-    !Number.isSafeInteger(metrics?.sampleCount) ||
-    metrics.sampleCount < 1 ||
-    !Number.isFinite(lastSample?.t)
-  ) {
-    return null
+  const rawState = String(
+    session?.status ?? session?.state ?? "unknown"
+  ).toLowerCase()
+  const state = [...TERMINAL_STATES, "active", "starting", "pending"].includes(
+    rawState
+  )
+    ? rawState
+    : "unknown"
+  const safeTimestamp = (value) =>
+    typeof value === "string" && Number.isFinite(Date.parse(value))
+      ? new Date(Date.parse(value)).toISOString()
+      : null
+  const providerStartedAt = safeTimestamp(
+    session?.startedAt ?? session?.createdAt
+  )
+  const providerEndedAt = safeTimestamp(session?.endedAt)
+  const terminal = providerEndedAt != null || TERMINAL_STATES.has(state)
+  const start = Date.parse(providerStartedAt)
+  const end = Date.parse(providerEndedAt)
+  return {
+    terminal,
+    state,
+    providerStartedAt,
+    providerEndedAt,
+    updatedAt: safeTimestamp(session?.updatedAt),
+    metricSampleCount: Number.isSafeInteger(metrics?.sampleCount)
+      ? metrics.sampleCount
+      : null,
+    lastMetricSampleAt: Number.isFinite(lastSample?.t) ? lastSample.t : null,
+    observedRuntimeMinutes:
+      Number.isFinite(start) && Number.isFinite(end) && end >= start
+        ? (end - start) / 60_000
+        : null,
+    confirmedBilledMinutes: null,
+    usageStatus: "unknown",
   }
+}
+
+export function stableUsageMarker(session) {
+  const observation = normalizeSessionObservation(session)
+  if (
+    !observation.terminal ||
+    !observation.metricSampleCount ||
+    observation.lastMetricSampleAt == null
+  )
+    return null
   return JSON.stringify({
-    endedAt: session.endedAt,
-    updatedAt: session.updatedAt,
-    sampleCount: metrics.sampleCount,
-    lastSampleAt: lastSample.t,
+    providerEndedAt: observation.providerEndedAt,
+    updatedAt: observation.updatedAt,
+    metricSampleCount: observation.metricSampleCount,
+    lastMetricSampleAt: observation.lastMetricSampleAt,
   })
 }
 
 export function isNotFoundStop(output) {
   return /(?:404|not found)/iu.test(output)
+}
+
+export function classifyStopCommandResult(result) {
+  if (result.status === "timeout")
+    return { status: "timeout", httpStatus: null, exitCode: result.exitCode }
+  if (result.status === "network_failure")
+    return { status: "network_failure", httpStatus: null, exitCode: null }
+  if (result.exitCode === 0)
+    return { status: "success", httpStatus: null, exitCode: 0 }
+  const notFound = /(?:^|\D)404(?:\D|$)/u.test(result.output)
+  const permission = /(?:401|403|unauthorized|forbidden|permission)/iu.test(
+    result.output
+  )
+  return {
+    status: notFound
+      ? "http_error"
+      : permission
+        ? "permission_error"
+        : "cli_failure",
+    httpStatus: notFound ? 404 : null,
+    exitCode: result.exitCode,
+  }
+}
+
+export function applicationSessionIdentity(
+  definition,
+  operatorSessionId,
+  registeredSessionId
+) {
+  return definition.discard ? (registeredSessionId ?? null) : operatorSessionId
 }
 
 export function acceptProbeCallback({
@@ -244,9 +854,8 @@ export function acceptProbeCallback({
   if (
     !/^\d{10}$/u.test(timestamp ?? "") ||
     !/^[a-f0-9]{32}$/u.test(nonce ?? "")
-  ) {
+  )
     throw new Error("callback_auth_invalid")
-  }
   if (Math.abs(now - Number(timestamp) * 1_000) > 30_000)
     throw new Error("callback_expired")
   const actual = Buffer.from(signature ?? "", "hex")
@@ -254,9 +863,8 @@ export function acceptProbeCallback({
     .update(`${timestamp}.${nonce}.`)
     .update(raw)
     .digest()
-  if (actual.length !== wanted.length || !timingSafeEqual(actual, wanted)) {
+  if (actual.length !== wanted.length || !timingSafeEqual(actual, wanted))
     throw new Error("callback_auth_invalid")
-  }
   const body = JSON.parse(raw.toString("utf8"))
   if (
     body.runId !== expected.runId ||
@@ -264,21 +872,35 @@ export function acceptProbeCallback({
     body.bootId !== expected.bootId ||
     typeof body.sessionId !== "string" ||
     !["registered", "agent_joined", "agent_ejected"].includes(body.event)
-  ) {
+  )
     throw new Error("callback_correlation_invalid")
-  }
-  if (expected.sessionId && body.sessionId !== expected.sessionId) {
+  const observedAt = Number.isSafeInteger(body.observedAt)
+    ? body.observedAt * 1_000
+    : Date.parse(body.observedAt)
+  if (!Number.isFinite(observedAt))
+    throw new Error("callback_correlation_invalid")
+  if (expected.sessionId && body.sessionId !== expected.sessionId)
     throw new Error("callback_session_mismatch")
-  }
-  return { ...body, nonce }
+  if (expected.expiresAtEpochSeconds != null)
+    assertBoundedClaims(body.dailyClaims, expected.expiresAtEpochSeconds)
+  return { ...body, sourceTimestamp: Number(timestamp) * 1_000, nonce }
 }
 
-async function runCommand(
-  args,
-  { timeoutMs = 10 * 60_000, allowFailure = false } = {}
-) {
-  return new Promise((resolvePromise, reject) => {
-    const signal = liveSignal
+function callbackIdentity(event) {
+  const normalized = {
+    runId: event.runId,
+    case: event.case,
+    bootId: event.bootId,
+    sessionId: event.sessionId,
+    event: event.event,
+    observedAt: event.observedAt,
+    dailyClaims: event.dailyClaims ?? null,
+  }
+  return createHash("sha256").update(JSON.stringify(normalized)).digest("hex")
+}
+
+async function runCommand(args, { timeoutMs = 10 * 60_000 } = {}) {
+  return new Promise((resolvePromise) => {
     const child = spawn(
       "uv",
       [
@@ -298,11 +920,10 @@ async function runCommand(
     )
     let output = ""
     let timedOut = false
-    for (const stream of [child.stdout, child.stderr]) {
+    for (const stream of [child.stdout, child.stderr])
       stream.on("data", (chunk) => {
         if (output.length < 32_000) output += chunk.toString("utf8")
       })
-    }
     const timer = setTimeout(() => {
       timedOut = true
       try {
@@ -314,22 +935,23 @@ async function runCommand(
         } catch {}
       }, 5_000).unref()
     }, timeoutMs)
-    const abort = () => {
-      try {
-        process.kill(-child.pid, "SIGTERM")
-      } catch {}
-    }
-    signal?.addEventListener("abort", abort, { once: true })
     child.once("error", () => {
       clearTimeout(timer)
-      signal?.removeEventListener("abort", abort)
-      reject(new Error("cli_start_failed"))
+      resolvePromise({
+        status: "network_failure",
+        exitCode: null,
+        output: "",
+        timedOut,
+      })
     })
     child.once("exit", (code) => {
       clearTimeout(timer)
-      signal?.removeEventListener("abort", abort)
-      if (code === 0 || allowFailure) resolvePromise({ code, output, timedOut })
-      else reject(new Error("cli_command_failed"))
+      resolvePromise({
+        status: timedOut ? "timeout" : code === 0 ? "success" : "cli_failure",
+        exitCode: Number.isInteger(code) ? code : null,
+        output,
+        timedOut,
+      })
     })
   })
 }
@@ -338,17 +960,24 @@ async function requestJson(
   url,
   { token, method = "GET", body, timeoutMs = 30_000 }
 ) {
-  const signals = [AbortSignal.timeout(timeoutMs)]
-  if (liveSignal) signals.push(liveSignal)
-  const response = await fetch(url, {
-    method,
-    headers: {
-      authorization: `Bearer ${token}`,
-      ...(body === undefined ? {} : { "content-type": "application/json" }),
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    signal: AbortSignal.any(signals),
-  })
+  let response
+  try {
+    const signals = [AbortSignal.timeout(timeoutMs)]
+    if (exerciseSignal) signals.push(exerciseSignal)
+    response = await fetch(url, {
+      method,
+      headers: {
+        authorization: `Bearer ${token}`,
+        ...(body === undefined ? {} : { "content-type": "application/json" }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.any(signals),
+    })
+  } catch (error) {
+    if (error?.name === "TimeoutError" || error?.name === "AbortError")
+      throw new Error("provider_timeout")
+    throw new Error("provider_network_failure")
+  }
   const text = await response.text()
   let value
   try {
@@ -369,9 +998,7 @@ async function readControlPlane(operatorToken, organization, agentName) {
   if (typeof buildId !== "string") throw new Error("manifest_build_missing")
   const buildValue = await requestJson(
     `${base}/builds/${encodeURIComponent(buildId)}`,
-    {
-      token: operatorToken,
-    }
+    { token: operatorToken }
   )
   const build = buildValue?.body?.build ?? buildValue?.build ?? buildValue
   const imageDigest = build?.imageDigest ?? build?.digest
@@ -379,9 +1006,7 @@ async function readControlPlane(operatorToken, organization, agentName) {
     throw new Error("manifest_digest_missing")
   const sessionValue = await requestJson(
     `${base}/services/${agentName}/sessions`,
-    {
-      token: operatorToken,
-    }
+    { token: operatorToken }
   )
   const sessions =
     sessionValue?.sessions ?? sessionValue?.body?.sessions ?? sessionValue
@@ -399,38 +1024,128 @@ async function readControlPlane(operatorToken, organization, agentName) {
   }
 }
 
-async function readSession(base, operatorToken, sessionId) {
+async function stopExact(organization, sessionId) {
+  const result = await runCommand(
+    [
+      "cloud",
+      "agent",
+      "stop",
+      PROBE_AGENT,
+      "--session-id",
+      sessionId,
+      "--organization",
+      organization,
+      "--force",
+    ],
+    { timeoutMs: 60_000 }
+  )
+  return classifyStopCommandResult(result)
+}
+
+async function deployProbe(organization, salt) {
+  const result = await runCommand([
+    "cloud",
+    "deploy",
+    PROBE_AGENT,
+    "--build-dir",
+    PROBE_ROOT,
+    "--dockerfile",
+    "Dockerfile",
+    "--min-agents",
+    "0",
+    "--max-agents",
+    "1",
+    "--profile",
+    "agent-1x",
+    "--max-session-duration",
+    String(LIMITS.providerSeconds),
+    "--organization",
+    organization,
+    "--no-credentials",
+    "--force",
+    "--yes",
+  ])
+  return {
+    buildId: deployBuildId(result.output),
+    diagnostic:
+      result.exitCode === 0
+        ? { category: "deploy_cli_success", exitCode: 0 }
+        : deployFailureDiagnostic(result.output, {
+            code: result.exitCode,
+            timedOut: result.timedOut,
+            salt,
+          }),
+  }
+}
+
+async function deleteProbe(organization) {
+  const result = await runCommand([
+    "cloud",
+    "agent",
+    "delete",
+    PROBE_AGENT,
+    "--organization",
+    organization,
+    "--force",
+  ])
+  return classifyStopCommandResult(result)
+}
+
+async function waitForManifest(
+  operatorToken,
+  organization,
+  agentName,
+  predicate,
+  deadline
+) {
+  while (Date.now() < deadline) {
+    const current = await readControlPlane(
+      operatorToken,
+      organization,
+      agentName
+    )
+    if (predicate(current.manifest)) return current
+    await delay(5_000)
+  }
+  throw new Error("manifest_readback_timeout")
+}
+
+async function probeAbsent(operatorToken, organization) {
+  try {
+    await readControlPlane(operatorToken, organization, PROBE_AGENT)
+    return false
+  } catch (error) {
+    if (error?.message === "provider_http_404") return true
+    throw error
+  }
+}
+
+async function readSession(operatorToken, organization, sessionId) {
+  const base = `${ORIGIN}/v1/organizations/${encodeURIComponent(organization)}`
   const value = await requestJson(`${base}/services/${PROBE_AGENT}/sessions`, {
     token: operatorToken,
   })
   const sessions = value?.sessions ?? value?.body?.sessions ?? value
   if (!Array.isArray(sessions)) throw new Error("session_list_invalid")
-  const session = sessions.find(
-    (item) => (item.sessionId ?? item.id) === sessionId
+  return (
+    sessions.find((item) => (item.sessionId ?? item.id) === sessionId) ?? null
   )
-  if (!session) throw new Error("session_detail_missing")
-  return session
 }
 
-async function waitForStableEnd(base, operatorToken, sessionId, deadline) {
-  let previous = null
-  while (Date.now() < deadline) {
-    const session = await readSession(base, operatorToken, sessionId)
-    const marker = stableUsageMarker(session)
-    if (marker && marker === previous) return session
-    previous = marker
-    await delay(5_000)
-  }
-  throw new Error("session_usage_not_stable")
-}
-
-async function startCollector({ scratch }) {
+export async function startCollector({ store, scratch }) {
   const expected = new Map()
   const events = new Map()
-  const usedNonces = new Set()
+  const logicalCallbacks = new Map()
+  const bootSessions = new Map()
   let witness = null
+  let fatalWrite = null
   const server = createServer(async (request, response) => {
+    let persistenceAttempt = false
     try {
+      if (fatalWrite) {
+        persistenceAttempt = true
+        throw fatalWrite
+      }
       const url = new URL(request.url ?? "/", "http://127.0.0.1")
       if (
         request.method === "GET" &&
@@ -445,7 +1160,12 @@ async function startCollector({ scratch }) {
         return
       }
       const chunks = []
-      for await (const chunk of request) chunks.push(chunk)
+      let size = 0
+      for await (const chunk of request) {
+        size += chunk.length
+        if (size > 64 * 1024) throw new Error("callback_body_too_large")
+        chunks.push(chunk)
+      }
       const raw = Buffer.concat(chunks)
       if (
         request.method === "POST" &&
@@ -458,11 +1178,17 @@ async function startCollector({ scratch }) {
         if (
           body.case !== witness.caseId ||
           !["browser_joined", "browser_ejected"].includes(body.event)
-        ) {
+        )
           throw new Error("witness_event")
-        }
-        const key = `${body.case}:${body.event}`
-        events.set(key, { ...body, observedAt: new Date().toISOString() })
+        const observed = { ...body, observedAt: new Date().toISOString() }
+        persistenceAttempt = true
+        await store.append({
+          kind: "witness_observation",
+          source: "operator_witness",
+          caseRef: body.case,
+          payload: { event: body.event, observedAt: observed.observedAt },
+        })
+        events.set(`${body.case}:${body.event}`, observed)
         response.writeHead(204).end()
         return
       }
@@ -475,12 +1201,107 @@ async function startCollector({ scratch }) {
         headers: request.headers,
         expected: probe,
       })
-      if (usedNonces.has(event.nonce)) throw new Error("callback_replay")
-      usedNonces.add(event.nonce)
-      events.set(`${event.case}:${event.event}`, event)
+      const identity = callbackIdentity(event)
+      const logicalKey = `${event.bootId}:${event.event}`
+      const previous = logicalCallbacks.get(logicalKey)
+      const previousSessionId = bootSessions.get(event.bootId)
+      if (
+        (previous && previous !== identity) ||
+        (previousSessionId && previousSessionId !== event.sessionId)
+      ) {
+        const sessionRef = safeRef(store.recovery.salt, event.sessionId)
+        persistenceAttempt = true
+        await store.checkpoint((recovery) => {
+          recovery.sessions[sessionRef] ??= {
+            id: event.sessionId,
+            caseRef: event.case,
+            sources: ["conflicting_authenticated_callback"],
+            stopAttempts: 0,
+            stopHistory: [],
+            usageStatus: "unknown",
+            confirmedBilledMinutes: null,
+            deadline: recovery.dispatches.find(
+              (item) => item.caseRef === event.case
+            )?.deadline,
+          }
+        })
+        await store.append({
+          kind: "session_identity",
+          source: "conflicting_authenticated_callback",
+          caseRef: event.case,
+          payload: { sessionRef, conflict: true },
+        })
+        persistenceAttempt = false
+        throw new Error("callback_conflict")
+      }
+      if (!previous) {
+        const sessionRef = safeRef(store.recovery.salt, event.sessionId)
+        const identitySource =
+          event.event === "registered"
+            ? "application_registration"
+            : "probe_media_observation"
+        persistenceAttempt = true
+        await store.checkpoint((recovery) => {
+          const session = recovery.sessions[sessionRef] ?? {
+            id: event.sessionId,
+            caseRef: event.case,
+            sources: [],
+            stopAttempts: 0,
+            stopHistory: [],
+            usageStatus: "unknown",
+            confirmedBilledMinutes: null,
+            deadline: recovery.dispatches.find(
+              (item) => item.caseRef === event.case
+            )?.deadline,
+          }
+          if (!session.sources.includes(identitySource))
+            session.sources.push(identitySource)
+          recovery.sessions[sessionRef] = session
+          if (identitySource === "application_registration") {
+            const dispatch = recovery.dispatches.find(
+              (item) =>
+                item.caseRef === event.case && item.outcome === "unknown"
+            )
+            if (dispatch) dispatch.outcome = "identity_recovered"
+          }
+        })
+        await store.append({
+          kind: "session_identity",
+          source: identitySource,
+          caseRef: event.case,
+          payload: { sessionRef },
+        })
+        await store.append({
+          kind: "callback",
+          source: "authenticated_probe",
+          caseRef: event.case,
+          payload: {
+            event: event.event,
+            bootRef: safeRef(store.recovery.salt, event.bootId),
+            sessionRef,
+            sourceTimestamp: new Date(event.sourceTimestamp).toISOString(),
+            sourceObservedAt: new Date(
+              Number.isSafeInteger(event.observedAt)
+                ? event.observedAt * 1_000
+                : Date.parse(event.observedAt)
+            ).toISOString(),
+            dailyClaimsBounded:
+              probe.expiresAtEpochSeconds == null ? null : true,
+            callbackIdentity: identity,
+          },
+        })
+        logicalCallbacks.set(logicalKey, identity)
+        bootSessions.set(event.bootId, event.sessionId)
+        events.set(`${event.case}:${event.event}`, event)
+      }
       response.writeHead(204).end()
-    } catch {
-      response.writeHead(401).end()
+    } catch (error) {
+      if (persistenceAttempt) {
+        fatalWrite = new Error("callback_persist_failed")
+        response.writeHead(503).end()
+      } else if (error?.message === "callback_conflict")
+        response.writeHead(409).end()
+      else response.writeHead(401).end()
     }
   })
   await new Promise((resolvePromise, reject) => {
@@ -496,15 +1317,14 @@ async function startCollector({ scratch }) {
     bindSession(bootId, sessionId) {
       const config = expected.get(bootId)
       config.sessionId = sessionId
-      for (const event of events.values()) {
-        if (event.bootId === bootId && event.sessionId !== sessionId) {
+      for (const event of events.values())
+        if (event.bootId === bootId && event.sessionId !== sessionId)
           throw new Error("callback_session_mismatch")
-        }
-      }
     },
     async wait(caseId, event, deadline) {
       const key = `${caseId}:${event}`
       while (Date.now() < deadline) {
+        if (fatalWrite) throw fatalWrite
         if (events.has(key)) return events.get(key)
         await delay(100)
       }
@@ -521,13 +1341,13 @@ async function startCollector({ scratch }) {
       const file = join(scratch, "browser-witness.html")
       const html = `<!doctype html><meta charset="utf-8"><title>Provider proof witness</title><script src="https://unpkg.com/@daily-co/daily-js"></script><script>
 const report=(event)=>fetch(${JSON.stringify(reportPath)},{method:"POST",headers:{"authorization":${JSON.stringify(`Bearer ${secret}`)},"content-type":"application/json"},body:JSON.stringify({case:${JSON.stringify(caseId)},event})});
-const call=window.DailyIframe.createCallObject();
-call.on("joined-meeting",()=>report("browser_joined"));
-call.on("left-meeting",()=>report("browser_ejected"));
-call.join({url:${JSON.stringify(dailyRoom)},token:${JSON.stringify(dailyToken)}});
-</script>`
-      await writeFile(file, html, { mode: 0o600 })
-      await chmod(file, 0o600)
+const call=window.DailyIframe.createCallObject();call.on("joined-meeting",()=>report("browser_joined"));call.on("left-meeting",()=>report("browser_ejected"));call.join({url:${JSON.stringify(dailyRoom)},token:${JSON.stringify(dailyToken)}});</script>`
+      const handle = await open(file, "wx", 0o600)
+      try {
+        await handle.writeFile(html)
+      } finally {
+        await handle.close()
+      }
       witness = { caseId, path, reportPath, secret, file }
       await new Promise((resolvePromise, reject) => {
         const child = spawn("open", [`http://127.0.0.1:${port}${path}`], {
@@ -574,7 +1394,7 @@ async function startTunnel(port) {
           item.proto === "https" &&
           String(item.config?.addr ?? "").endsWith(`:${port}`)
       )?.public_url
-      if (typeof url === "string" && url.startsWith("https://")) {
+      if (typeof url === "string" && url.startsWith("https://"))
         return {
           url,
           close() {
@@ -583,7 +1403,6 @@ async function startTunnel(port) {
             } catch {}
           },
         }
-      }
     } catch {}
     await delay(250)
   }
@@ -593,266 +1412,354 @@ async function startTunnel(port) {
   throw new Error("tunnel_start_failed")
 }
 
-async function stopExact(organization, sessionId, retry = false) {
-  const result = await runCommand(
-    [
-      "cloud",
-      "agent",
-      "stop",
-      PROBE_AGENT,
-      "--session-id",
-      sessionId,
-      "--organization",
-      organization,
-      "--force",
-    ],
-    { timeoutMs: 60_000, allowFailure: retry }
-  )
-  if (retry && result.code !== 0 && !isNotFoundStop(result.output)) {
-    throw new Error("repeat_stop_not_404")
-  }
-  return retry ? 404 : 200
-}
-
-async function deployProbe(organization, salt) {
-  const result = await runCommand(
-    [
-      "cloud",
-      "deploy",
-      PROBE_AGENT,
-      "--build-dir",
-      PROBE_ROOT,
-      "--dockerfile",
-      "Dockerfile",
-      "--min-agents",
-      "0",
-      "--max-agents",
-      "1",
-      "--profile",
-      "agent-1x",
-      "--max-session-duration",
-      String(LIMITS.providerSeconds),
-      "--organization",
-      organization,
-      "--no-credentials",
-      "--force",
-      "--yes",
-    ],
-    { allowFailure: true }
-  )
-  if (result.code !== 0) {
-    return {
-      buildId: deployBuildId(result.output),
-      diagnostic: deployFailureDiagnostic(result.output, {
-        code: result.code,
-        timedOut: result.timedOut,
-        salt,
-      }),
-    }
-  }
-  return {
-    buildId: deployBuildId(result.output),
-    diagnostic: { category: "deploy_cli_success", exitCode: 0 },
-  }
-}
-
-async function deleteProbe(organization) {
-  await runCommand([
-    "cloud",
-    "agent",
-    "delete",
-    PROBE_AGENT,
-    "--organization",
-    organization,
-    "--force",
-  ])
-}
-
-async function waitForManifest(
+function cleanupDependencies({
   operatorToken,
   organization,
-  agentName,
-  predicate,
-  deadline
-) {
-  while (Date.now() < deadline) {
-    const current = await readControlPlane(
-      operatorToken,
-      organization,
-      agentName
-    )
-    if (predicate(current.manifest)) return current
-    await delay(5_000)
+  signal = null,
+  waitForUnknown = true,
+}) {
+  return {
+    now: () => Date.now(),
+    sleep: (milliseconds) => sleep(milliseconds, signal),
+    readProbe: () => readControlPlane(operatorToken, organization, PROBE_AGENT),
+    readProduction: () =>
+      readControlPlane(operatorToken, organization, PROD_AGENT),
+    readSession: (sessionId) =>
+      readSession(operatorToken, organization, sessionId),
+    stopSession: (sessionId) => stopExact(organization, sessionId),
+    deleteProbe: () => deleteProbe(organization),
+    probeAbsent: () => probeAbsent(operatorToken, organization),
+    waitForUnknown,
   }
-  throw new Error("manifest_readback_timeout")
 }
 
-async function probeAbsent(operatorToken, organization) {
+function assertOwnedProbe(recovery, state) {
+  if (!state?.manifest) throw new Error("ownership_unresolved")
+  if (
+    state.manifest.agentName !== recovery.serviceName ||
+    state.manifest.buildId !== recovery.probe?.buildId ||
+    state.manifest.deploymentId !== recovery.probe?.deploymentId
+  )
+    throw new Error("ownership_mismatch")
+}
+
+async function recordOperation(
+  store,
+  { name, targetRef = null, caseRef = null, source = "operator", perform }
+) {
+  const operationRef = safeRef(store.recovery.salt, `${name}:${randomUUID()}`)
+  await store.append({
+    kind: "operation_intent",
+    source,
+    caseRef,
+    operationRef,
+    payload: { name, targetRef },
+  })
   try {
-    await readControlPlane(operatorToken, organization, PROBE_AGENT)
-    return false
+    const result = await perform()
+    await store.append({
+      kind: "operation_result",
+      source,
+      caseRef,
+      operationRef,
+      payload: { name, targetRef, ...result },
+    })
+    return result
   } catch (error) {
-    if (error?.message === "provider_http_404") return true
+    await store.append({
+      kind: "operation_result",
+      source,
+      caseRef,
+      operationRef,
+      payload: {
+        name,
+        targetRef,
+        status: "unknown",
+        category: safeCategory(error),
+      },
+    })
     throw error
   }
 }
 
-async function waitForProbeAbsent(operatorToken, organization, deadline) {
-  while (Date.now() < deadline) {
-    if (await probeAbsent(operatorToken, organization)) return true
-    await delay(5_000)
+export async function reconcileSession(store, sessionRef, dependencies) {
+  const session = store.recovery.sessions[sessionRef]
+  if (!session) throw new Error("session_status_unknown")
+  const deadline = session.deadline
+  let lastObservation = null
+  while (dependencies.now() < deadline) {
+    const raw = await dependencies.readSession(session.id)
+    if (!raw) throw new Error("session_status_unknown")
+    const observation = normalizeSessionObservation(raw)
+    lastObservation = observation
+    await store.append({
+      kind: "session_status",
+      source: "provider_readback",
+      caseRef: session.caseRef,
+      payload: { sessionRef, ...observation },
+    })
+    await store.checkpoint((recovery) =>
+      Object.assign(recovery.sessions[sessionRef], observation)
+    )
+    if (observation.terminal) return observation
+    if (session.stopAttempts >= 3) throw new Error("session_stop_exhausted")
+    const spacing =
+      session.stopAttempts === 0
+        ? 0
+        : session.stopAttempts === 1
+          ? 5_000
+          : 15_000
+    const lastAttemptAt = session.lastStopAttemptAt ?? 0
+    if (dependencies.now() < lastAttemptAt + spacing) {
+      await dependencies.sleep(lastAttemptAt + spacing - dependencies.now())
+      continue
+    }
+    const attempt = session.stopAttempts + 1
+    await store.checkpoint((recovery) => {
+      recovery.sessions[sessionRef].stopAttempts = attempt
+      recovery.sessions[sessionRef].lastStopAttemptAt = dependencies.now()
+    })
+    const result = await recordOperation(store, {
+      name: "stop_session",
+      targetRef: sessionRef,
+      caseRef: session.caseRef,
+      source: session.sources.includes("application_registration")
+        ? "application_recovery"
+        : "operator_intervention",
+      perform: () => dependencies.stopSession(session.id),
+    })
+    await store.checkpoint((recovery) =>
+      recovery.sessions[sessionRef].stopHistory.push(result)
+    )
+    if (result.status === "permission_error")
+      throw new Error("session_permission_denied")
+    // A 404 is not a terminal observation. The next exact read must prove termination.
   }
-  throw new Error("probe_service_delete_unverified")
+  await store.append({
+    kind: "resource_observation",
+    source: "provider_readback",
+    caseRef: session.caseRef,
+    payload: { sessionRef, ...lastObservation, deadlineExceeded: true },
+  })
+  throw new Error("cleanup_deadline_exceeded")
 }
 
-function billedMinutes(session) {
-  const start = Date.parse(session.createdAt)
-  const end = Date.parse(session.endedAt)
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
-    throw new Error("session_usage_invalid")
+export async function cleanupRun(store, dependencies) {
+  if (store.truncatedTail) {
+    if (store.recovery.firstFailure) {
+      await store.append({
+        kind: "cleanup_result",
+        source: "recovery",
+        payload: { check: "journal_truncated_tail", status: "blocked" },
+      })
+    } else await store.latchFailure({ category: "journal_truncated_tail" })
   }
-  return (end - start) / 60_000
-}
+  const cleanupErrors = []
+  let ownedState = null
+  let mutationBlocked = false
+  for (const dispatch of store.recovery.dispatches ?? []) {
+    if (
+      dependencies.waitForUnknown !== false &&
+      dispatch.outcome === "unknown" &&
+      dependencies.now() < dispatch.deadline
+    ) {
+      await dependencies.sleep(dispatch.deadline - dependencies.now())
+    }
+  }
+  try {
+    const candidate = await dependencies.readProbe()
+    assertOwnedProbe(store.recovery, candidate)
+    ownedState = candidate
+    await store.append({
+      kind: "resource_observation",
+      source: "provider_readback",
+      payload: {
+        resource: "probe_service",
+        buildRef: safeRef(store.recovery.salt, ownedState.manifest.buildId),
+        deploymentRef: safeRef(
+          store.recovery.salt,
+          ownedState.manifest.deploymentId
+        ),
+        activeSessionCount: ownedState.sessions.filter(
+          (session) => session.endedAt == null
+        ).length,
+      },
+    })
+  } catch (error) {
+    if (error?.message !== "provider_http_404") cleanupErrors.push(error)
+    if (["ownership_mismatch", "ownership_unresolved"].includes(error?.message))
+      mutationBlocked = true
+  }
 
-async function main() {
-  if (process.argv[2] === "plan") {
-    process.stdout.write(
-      `${JSON.stringify({ agent: PROBE_AGENT, productionAgent: PROD_AGENT, baseline: BASELINE, limits: LIMITS, cases: CASES })}\n`
-    )
-    return
-  }
-  if (process.argv[2] !== "live") throw new Error("usage: run.mjs plan|live")
-  if (
-    process.env.PROVIDER_PROOF_LIVE_RELEASE !==
-    "stage-a-disposable-probe-release"
-  ) {
-    throw new Error("live_release_missing")
-  }
-  const runId = process.env.PROVIDER_PROOF_RUN_ID
-  const evidencePath = process.env.PROVIDER_PROOF_EVIDENCE_PATH
-  const publicKey = process.env.PIPECAT_API_KEY
-  const operatorToken = process.env.PIPECAT_OPERATOR_TOKEN
-  const organization = process.env.PIPECAT_ORGANIZATION
-  if (
-    ![runId, evidencePath, publicKey, operatorToken, organization].every(
-      (value) => value
-    )
-  ) {
-    throw new Error("live_prerequisite_missing")
-  }
-
-  let stage = "baseline_preflight"
-  let collector = null
-  let tunnel = null
-  let probeDeployed = false
-  let cleanupStarted = false
-  let starts = 0
-  let totalBilled = 0
-  let probeDeploymentId = null
-  let ambiguousStart = false
-  let ambiguousStartedAt = null
-  const knownSessions = new Set()
-  const caseEvidence = []
-  const salt = randomBytes(32).toString("base64url")
-  const scratch = await mkdtemp(join(tmpdir(), "duplexd-provider-proof-"))
-  await chmod(scratch, 0o700)
-  let finalStatus
-  let finalReason
-  let failureDiagnostic = null
-  let finalBaseline = false
-  let finalProbeAbsent = false
-  const controller = new AbortController()
-  liveSignal = controller.signal
-
-  const cleanup = async () => {
-    if (cleanupStarted) return
-    cleanupStarted = true
-    try {
-      if (ambiguousStart) {
-        stage = "cleanup_ambiguous_start_containment"
-        await delay(
-          Math.max(
-            0,
-            ambiguousStartedAt + LIMITS.providerSeconds * 1_000 - Date.now()
-          )
-        )
-        let empty = 0
-        const deadline = ambiguousStartedAt + LIMITS.caseSeconds * 1_000
-        while (Date.now() < deadline && empty < 2) {
-          const state = await readControlPlane(
-            operatorToken,
-            organization,
-            PROBE_AGENT
-          )
-          const active = state.sessions.filter(
-            (session) =>
-              session.deploymentId === probeDeploymentId &&
-              session.endedAt == null
-          )
-          empty = active.length === 0 ? empty + 1 : 0
-          if (empty < 2) await delay(5_000)
-        }
-        if (empty < 2) throw new Error("ambiguous_start_uncontained")
-        ambiguousStart = false
+  if (ownedState) {
+    for (const sessionRef of Object.keys(store.recovery.sessions)) {
+      if (mutationBlocked) break
+      try {
+        await reconcileSession(store, sessionRef, dependencies)
+      } catch (error) {
+        cleanupErrors.push(error)
+        if (error?.message === "session_permission_denied")
+          mutationBlocked = true
       }
-      stage = "cleanup_stop_known_sessions"
-      for (const sessionId of knownSessions) {
-        await stopExact(organization, sessionId, true)
-        const base = `${ORIGIN}/v1/organizations/${encodeURIComponent(organization)}`
-        await waitForStableEnd(
-          base,
-          operatorToken,
-          sessionId,
-          Date.now() + 120_000
-        )
+    }
+    for (const dispatch of store.recovery.dispatches ?? [])
+      if (dispatch.outcome === "unknown") {
+        await store.append({
+          kind: "resource_observation",
+          source: "application_recovery",
+          caseRef: dispatch.caseRef,
+          payload: {
+            dispatchRef: dispatch.dispatchRef,
+            sessionRef: null,
+            identityStatus: "unknown",
+            deadlineExceeded: dependencies.now() > dispatch.deadline,
+          },
+        })
+        cleanupErrors.push(new Error("session_status_unknown"))
       }
-      if (probeDeployed) {
-        if (!(await probeAbsent(operatorToken, organization))) {
-          stage = "cleanup_delete_probe_service"
-          await deleteProbe(organization)
-        }
+    if (!mutationBlocked) {
+      try {
+        const result = await recordOperation(store, {
+          name: "delete_probe_service",
+          targetRef: safeRef(
+            store.recovery.salt,
+            store.recovery.probe.deploymentId
+          ),
+          perform: dependencies.deleteProbe,
+        })
+        await store.checkpoint((recovery) => {
+          recovery.cleanup.deleteProbe = result
+        })
+      } catch (error) {
+        cleanupErrors.push(error)
       }
-      stage = "cleanup_verify_probe_absent"
-      finalProbeAbsent = await waitForProbeAbsent(
-        operatorToken,
-        organization,
-        Date.now() + 120_000
-      )
-      stage = "cleanup_verify_baseline"
-      const state = await waitForManifest(
-        operatorToken,
-        organization,
-        PROD_AGENT,
-        (manifest) =>
-          manifest.buildId === BASELINE.buildId &&
-          manifest.imageDigest === BASELINE.imageDigest &&
-          manifest.minAgents === 0 &&
-          manifest.maxAgents === 3 &&
-          JSON.stringify(manifest.secretSets) ===
-            JSON.stringify([BASELINE.secretSet]) &&
-          !Object.hasOwn(manifest, "maxSessionDurationSeconds"),
-        Date.now() + 120_000
-      )
-      finalBaseline = verifyBaseline(
-        state.manifest,
-        state.sessions,
-        state.keys,
-        state.secretSets
-      )
-      if (!finalBaseline) throw new Error("baseline_cleanup_unverified")
-      knownSessions.clear()
-    } finally {
-      tunnel?.close()
-      await collector?.close()
     }
   }
 
+  try {
+    const absent = await dependencies.probeAbsent()
+    await store.append({
+      kind: "cleanup_result",
+      source: "provider_readback",
+      payload: {
+        check: "probe_service_absent",
+        status: absent ? "confirmed" : "failed",
+      },
+    })
+    await store.checkpoint((recovery) => {
+      recovery.cleanup.probeServiceAbsent = absent
+    })
+    if (!absent)
+      cleanupErrors.push(new Error("probe_service_delete_unverified"))
+  } catch (error) {
+    cleanupErrors.push(error)
+  }
+
+  try {
+    const production = await dependencies.readProduction()
+    const unchanged = verifyBaseline(
+      production.manifest,
+      production.sessions,
+      production.keys,
+      production.secretSets
+    )
+    await store.append({
+      kind: "cleanup_result",
+      source: "provider_readback",
+      payload: {
+        check: "production_unchanged",
+        status: unchanged ? "confirmed" : "failed",
+      },
+    })
+    await store.checkpoint((recovery) => {
+      recovery.cleanup.productionUnchanged = unchanged
+    })
+    if (!unchanged) cleanupErrors.push(new Error("baseline_cleanup_unverified"))
+  } catch (error) {
+    cleanupErrors.push(error)
+  }
+
+  const unresolvedSessions = Object.values(store.recovery.sessions).filter(
+    (session) => !session.terminal
+  ).length
+  await store.checkpoint((recovery) => {
+    recovery.cleanup.unresolvedSessions = unresolvedSessions
+    recovery.cleanup.completed =
+      cleanupErrors.length === 0 &&
+      unresolvedSessions === 0 &&
+      recovery.cleanup.probeServiceAbsent === true &&
+      recovery.cleanup.productionUnchanged === true
+  })
+  await store.append({
+    kind: "cleanup_result",
+    source: "operator",
+    payload: {
+      check: "containment",
+      status: store.recovery.cleanup.completed ? "confirmed" : "blocked",
+      unresolvedSessions,
+      errorCategories: [...new Set(cleanupErrors.map(safeCategory))],
+    },
+  })
+  return store.recovery.cleanup.completed
+}
+
+async function containFromMemory(store, dependencies) {
+  let state
+  try {
+    state = await dependencies.readProbe()
+    assertOwnedProbe(store.recovery, state)
+  } catch {
+    return false
+  }
+  for (const session of Object.values(store.recovery.sessions)) {
+    try {
+      const current = await dependencies.readSession(session.id)
+      if (current && !normalizeSessionObservation(current).terminal) {
+        const result = await dependencies.stopSession(session.id)
+        if (result.status === "permission_error") return false
+      }
+    } catch {}
+  }
+  try {
+    await dependencies.deleteProbe()
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function runLive(runDir) {
+  if (process.env.PROVIDER_PROOF_LIVE_RELEASE !== LIVE_RELEASE)
+    throw new Error("live_release_missing")
+  const runId = process.env.PROVIDER_PROOF_RUN_ID
+  const publicKey = process.env.PIPECAT_API_KEY
+  const operatorToken = process.env.PIPECAT_OPERATOR_TOKEN
+  const organization = process.env.PIPECAT_ORGANIZATION
+  if (![runId, publicKey, operatorToken, organization, runDir].every(Boolean))
+    throw new Error("live_prerequisite_missing")
+
+  const store = await DurableRunStore.create(runDir, { runId, organization })
+  const scratch = join(store.runDir, ".runtime")
+  await mkdir(scratch, { mode: 0o700 })
+  let collector = null
+  let tunnel = null
+  let currentCase = null
+  let currentOperation = null
+  let secondSignal = false
+  let evidenceWritable = true
+  const controller = new AbortController()
+  const cleanupController = new AbortController()
+  exerciseSignal = controller.signal
   const onSignal = () => {
-    finalReason = "operator_signal"
+    if (controller.signal.aborted) {
+      secondSignal = true
+      cleanupController.abort()
+      return
+    }
     controller.abort()
   }
-  process.once("SIGINT", onSignal)
-  process.once("SIGTERM", onSignal)
+  process.on("SIGINT", onSignal)
+  process.on("SIGTERM", onSignal)
 
   try {
     const preflight = await readControlPlane(
@@ -867,314 +1774,418 @@ async function main() {
         preflight.keys,
         preflight.secretSets
       )
-    ) {
+    )
       throw new Error("baseline_preflight_failed")
-    }
-    stage = "probe_absence_preflight"
-    if (!(await probeAbsent(operatorToken, organization))) {
+    if (!(await probeAbsent(operatorToken, organization)))
       throw new Error("probe_service_already_exists")
-    }
-    stage = "collector_start"
-    collector = await startCollector({ scratch })
-    stage = "tunnel_start"
+    collector = await startCollector({ store, scratch })
     tunnel = await startTunnel(collector.port)
-    stage = "probe_deploy"
-    // Delete even when the CLI deploy succeeds but its response is lost.
-    probeDeployed = true
-    const reconciledDeploy = await reconcileProbeDeployment({
-      deploy: () => deployProbe(organization, salt),
-      readManifest: (probeBuildId) => {
-        stage = "probe_manifest_readback"
-        return waitForManifest(
+    currentOperation = "deploy_probe"
+    const deployRef = safeRef(store.recovery.salt, "deploy_probe")
+    await store.append({
+      kind: "operation_intent",
+      source: "operator",
+      operationRef: deployRef,
+      payload: { name: "deploy_probe" },
+    })
+    const reconciled = await reconcileProbeDeployment({
+      deploy: () => deployProbe(organization, store.recovery.salt),
+      readManifest: (buildId) =>
+        waitForManifest(
           operatorToken,
           organization,
           PROBE_AGENT,
-          (manifest) =>
-            verifyProbeManifest(manifest, probeBuildId) &&
-            manifest.maxSessionDurationSeconds === LIMITS.providerSeconds &&
-            /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(
-              manifest.deploymentId
-            ),
+          (manifest) => verifyProbeManifest(manifest, buildId),
           Date.now() + 120_000
-        )
-      },
+        ),
     })
-    const probeState = reconciledDeploy.state
-    if (reconciledDeploy.diagnostic.exitCode !== 0) {
-      failureDiagnostic = reconciledDeploy.diagnostic
-    }
-    probeDeploymentId = probeState.manifest.deploymentId
+    await store.checkpoint((recovery) => {
+      recovery.probe = {
+        buildId: reconciled.state.manifest.buildId,
+        deploymentId: reconciled.state.manifest.deploymentId,
+      }
+    })
+    await store.append({
+      kind: "operation_result",
+      source: "operator",
+      operationRef: deployRef,
+      payload: { name: "deploy_probe", ...reconciled.diagnostic },
+    })
 
     for (const definition of CASES) {
-      stage = `case_${definition.id}_start`
-      if (starts >= LIMITS.starts) throw new Error("start_limit_exceeded")
+      currentCase = definition.id
+      if (store.recovery.starts >= LIMITS.starts)
+        throw new Error("start_limit_exceeded")
       const dispatchedAt = Date.now()
       const deadline = dispatchedAt + LIMITS.caseSeconds * 1_000
       const expiresAt = Math.floor(dispatchedAt / 1_000) + 300
       const bootId = randomUUID()
       const callbackSecret = randomBytes(32).toString("base64url")
       const callbackPath = `/probe/${runId}/${definition.id}/${bootId}`
+      const dispatchRef = safeRef(store.recovery.salt, bootId)
       collector.register({
         runId,
         caseId: definition.id,
         bootId,
         path: callbackPath,
         secret: Buffer.from(callbackSecret, "base64url"),
+        expiresAtEpochSeconds: expiresAt,
       })
-      starts += 1
-      ambiguousStart = true
-      ambiguousStartedAt = dispatchedAt
-      let start
+      await store.checkpoint((recovery) => {
+        recovery.starts += 1
+        recovery.dispatches.push({
+          dispatchRef,
+          caseRef: definition.id,
+          dispatchedAt,
+          deadline,
+          providerDeadline: dispatchedAt + LIMITS.providerSeconds * 1_000,
+          expiresAtEpochSeconds: expiresAt,
+          providerLifetimeStart: "local_dispatch_pending_provider_timestamp",
+          outcome: "unknown",
+        })
+      })
+      currentOperation = "start_session"
+      await store.append({
+        kind: "operation_intent",
+        source: "application",
+        caseRef: definition.id,
+        operationRef: dispatchRef,
+        payload: {
+          name: "start_session",
+          deadline: new Date(deadline).toISOString(),
+        },
+      })
+      let operatorResponse
       try {
-        start = await requestJson(`${ORIGIN}/v1/public/${PROBE_AGENT}/start`, {
-          token: publicKey,
-          method: "POST",
-          body: {
-            createDailyRoom: true,
-            transport: "daily",
-            dailyRoomProperties: { exp: expiresAt, eject_at_room_exp: true },
-            dailyMeetingTokenProperties: {
-              exp: expiresAt,
-              eject_at_token_exp: true,
-              is_owner: false,
-            },
+        operatorResponse = await requestJson(
+          `${ORIGIN}/v1/public/${PROBE_AGENT}/start`,
+          {
+            token: publicKey,
+            method: "POST",
+            timeoutMs: 120_000,
             body: {
-              providerProof: {
-                case: definition.id,
-                runId,
-                bootId,
-                callbackUrl: `${tunnel.url}${callbackPath}`,
-                callbackSecret,
+              createDailyRoom: true,
+              transport: "daily",
+              dailyRoomProperties: { exp: expiresAt, eject_at_room_exp: true },
+              dailyMeetingTokenProperties: {
+                exp: expiresAt,
+                eject_at_token_exp: true,
+                is_owner: false,
+              },
+              body: {
+                providerProof: {
+                  case: definition.id,
+                  runId,
+                  bootId,
+                  callbackUrl: `${tunnel.url}${callbackPath}`,
+                  callbackSecret,
+                },
               },
             },
-          },
-          timeoutMs: 120_000,
-        })
-      } catch {
-        stage = `case_${definition.id}_ambiguous_start`
-        try {
-          const registered = await collector.wait(
-            definition.id,
-            "registered",
-            dispatchedAt + 120_000
-          )
-          knownSessions.add(registered.sessionId)
-          await stopExact(organization, registered.sessionId)
-          ambiguousStart = false
-        } catch {
-          await delay(
-            Math.max(
-              0,
-              dispatchedAt + LIMITS.providerSeconds * 1_000 - Date.now()
-            )
-          )
-          let empty = 0
-          while (Date.now() < deadline && empty < 2) {
-            const state = await readControlPlane(
-              operatorToken,
-              organization,
-              PROBE_AGENT
-            )
-            const active = state.sessions.filter(
-              (session) =>
-                session.deploymentId === probeDeploymentId &&
-                session.endedAt == null
-            )
-            empty = active.length === 0 ? empty + 1 : 0
-            if (empty < 2) await delay(5_000)
           }
-          if (empty < 2) throw new Error("ambiguous_start_uncontained")
-          ambiguousStart = false
-        }
+        )
+      } catch (error) {
+        await store.append({
+          kind: "operation_result",
+          source: "application",
+          caseRef: definition.id,
+          operationRef: dispatchRef,
+          payload: {
+            name: "start_session",
+            status: "unknown",
+            category: safeCategory(error),
+          },
+        })
         throw new Error("ambiguous_start_no_retry")
       }
       if (
-        ![start?.sessionId, start?.dailyRoom, start?.dailyToken].every(
-          (value) => typeof value === "string"
-        )
-      ) {
+        ![
+          operatorResponse?.sessionId,
+          operatorResponse?.dailyRoom,
+          operatorResponse?.dailyToken,
+        ].every((value) => typeof value === "string")
+      )
         throw new Error("start_response_invalid")
-      }
-      collector.bindSession(bootId, start.sessionId)
-      ambiguousStart = false
-      knownSessions.add(start.sessionId)
-      const browserClaims = decodeClaims(start.dailyToken)
-      assertBoundedClaims(browserClaims, expiresAt)
+      assertBoundedClaims(decodeClaims(operatorResponse.dailyToken), expiresAt)
+      const sessionRef = safeRef(
+        store.recovery.salt,
+        operatorResponse.sessionId
+      )
+      await store.checkpoint((recovery) => {
+        recovery.dispatches.find(
+          (item) => item.dispatchRef === dispatchRef
+        ).outcome = "accepted"
+        const session = recovery.sessions[sessionRef] ?? {
+          id: operatorResponse.sessionId,
+          caseRef: definition.id,
+          sources: [],
+          stopAttempts: 0,
+          stopHistory: [],
+          usageStatus: "unknown",
+          confirmedBilledMinutes: null,
+          deadline,
+        }
+        if (!session.sources.includes("operator_start_response"))
+          session.sources.push("operator_start_response")
+        recovery.sessions[sessionRef] = session
+      })
+      await store.append({
+        kind: "session_identity",
+        source: "operator_start_response",
+        caseRef: definition.id,
+        operationRef: dispatchRef,
+        payload: { sessionRef, applicationVisible: !definition.discard },
+      })
+      await store.append({
+        kind: "operation_result",
+        source: "application",
+        caseRef: definition.id,
+        operationRef: dispatchRef,
+        payload: {
+          name: "start_session",
+          status: definition.discard ? "lost_response" : "success",
+          sessionRef: definition.discard ? null : sessionRef,
+          browserClaimsBounded: true,
+        },
+      })
+      if (!definition.discard)
+        collector.bindSession(bootId, operatorResponse.sessionId)
+
       let registered = null
       if (definition.id !== "no_registration_startup") {
-        stage = `case_${definition.id}_registration`
         registered = await collector.wait(definition.id, "registered", deadline)
-        if (registered.sessionId !== start.sessionId)
+        if (registered.sessionId !== operatorResponse.sessionId)
           throw new Error("registration_session_mismatch")
       }
-      let browserEjected = null
-      let agentEjected = null
-      let agentJoined = null
-      let browserJoined = null
+      const applicationSessionId = applicationSessionIdentity(
+        definition,
+        operatorResponse.sessionId,
+        registered?.sessionId
+      )
+      if (
+        definition.discard &&
+        definition.id === "no_registration_startup" &&
+        collector.has(definition.id, "registered")
+      )
+        throw new Error("unexpected_registration")
       if (definition.join) {
-        stage = `case_${definition.id}_participants_join`
         await collector.openWitness({
           caseId: definition.id,
-          dailyRoom: start.dailyRoom,
-          dailyToken: start.dailyToken,
+          dailyRoom: operatorResponse.dailyRoom,
+          dailyToken: operatorResponse.dailyToken,
         })
-        browserJoined = await collector.wait(
-          definition.id,
-          "browser_joined",
-          deadline
-        )
-        agentJoined = await collector.wait(
+        await collector.wait(definition.id, "browser_joined", deadline)
+        const joined = await collector.wait(
           definition.id,
           "agent_joined",
           deadline
         )
-        if (agentJoined.sessionId !== start.sessionId) {
+        if (joined.sessionId !== operatorResponse.sessionId)
           throw new Error("agent_join_session_mismatch")
-        }
-        assertBoundedClaims(agentJoined.dailyClaims, expiresAt)
-        if (!browserJoined) throw new Error("browser_join_failed")
+        assertBoundedClaims(joined.dailyClaims, expiresAt)
       }
-      if (
-        definition.id === "no_registration_startup" &&
-        collector.has(definition.id, "registered")
-      ) {
-        throw new Error("unexpected_registration")
-      }
-      const stopAttempts = []
       if (definition.stop === "ceiling") {
-        stage = `case_${definition.id}_media_ejection`
-        browserEjected = await collector.wait(
-          definition.id,
-          "browser_ejected",
-          deadline
-        )
-        agentEjected = await collector.wait(
+        await collector.wait(definition.id, "browser_ejected", deadline)
+        const ejected = await collector.wait(
           definition.id,
           "agent_ejected",
           deadline
         )
-        if (agentEjected.sessionId !== start.sessionId) {
+        if (ejected.sessionId !== operatorResponse.sessionId)
           throw new Error("agent_ejection_session_mismatch")
-        }
-        if (
-          Date.parse(browserEjected.observedAt) < expiresAt * 1_000 - 5_000 ||
-          agentEjected.observedAt * 1_000 < expiresAt * 1_000 - 5_000
-        ) {
-          throw new Error("participant_ejected_before_expiry")
-        }
-      } else {
-        stage = `case_${definition.id}_stop`
-        const cleanupId = definition.discard
-          ? registered.sessionId
-          : start.sessionId
-        stopAttempts.push({
-          status: await stopExact(organization, cleanupId),
-          observedAt: new Date().toISOString(),
-        })
-        if (definition.stop === "twice") {
-          stage = `case_${definition.id}_stop_retry`
-          stopAttempts.push({
-            status: await stopExact(organization, cleanupId, true),
-            observedAt: new Date().toISOString(),
+      } else if (applicationSessionId) {
+        const cleanupRef = safeRef(store.recovery.salt, applicationSessionId)
+        await reconcileSession(
+          store,
+          cleanupRef,
+          cleanupDependencies({ operatorToken, organization })
+        )
+        if (definition.stop === "twice")
+          await recordOperation(store, {
+            name: "repeat_stop_session",
+            targetRef: cleanupRef,
+            caseRef: definition.id,
+            perform: () => stopExact(organization, applicationSessionId),
           })
-        }
       }
-      stage = `case_${definition.id}_reconcile`
-      const ended = await waitForStableEnd(
-        probeState.base,
-        operatorToken,
-        start.sessionId,
-        deadline
-      )
-      knownSessions.delete(start.sessionId)
-      const used = billedMinutes(ended)
-      totalBilled += used
-      if (totalBilled > LIMITS.billedMinutes)
-        throw new Error("billed_limit_exceeded")
-      caseEvidence.push({
-        case: definition.id,
-        sessionRef: safeRef(salt, start.sessionId),
-        dispatchedAt: new Date(dispatchedAt).toISOString(),
-        expiresAt: new Date(expiresAt * 1_000).toISOString(),
-        startFields: true,
-        registrationMatched: definition.id !== "no_registration_startup",
-        registeredAt: registered
-          ? new Date(registered.observedAt * 1_000).toISOString()
-          : null,
-        applicationStartResponseDiscarded: definition.discard === true,
-        stopAttempts,
-        browserClaimsBounded: definition.join ? true : null,
-        agentClaimsBounded: definition.join ? true : null,
-        browserJoinedAt:
-          definition.join && browserJoined ? browserJoined.observedAt : null,
-        agentJoinedAt: agentJoined
-          ? new Date(agentJoined.observedAt * 1_000).toISOString()
-          : null,
-        browserEjectedAt: browserEjected?.observedAt ?? null,
-        agentEjectedAt: agentEjected
-          ? new Date(agentEjected.observedAt * 1_000).toISOString()
-          : null,
-        cessationBoundary:
-          definition.stop === "ceiling"
-            ? "provider_execution_ceiling"
-            : "exact_session_stop",
-        providerEndedAt: ended.endedAt,
-        usageStableAt: new Date().toISOString(),
-        usageStable: true,
-        billedMinutes: used,
+      await store.append({
+        kind: "verdict",
+        source: "operator",
+        caseRef: definition.id,
+        payload: {
+          status: "partial",
+          reason: "case_observations_complete_usage_unknown",
+        },
       })
     }
-    finalStatus = "pass"
-    finalReason = "six_cases_observed"
   } catch (error) {
-    finalStatus = "blocked"
-    finalReason = stage
-    if (error?.deployDiagnostic) {
-      failureDiagnostic = error.deployDiagnostic
+    try {
+      await store.latchFailure({
+        caseRef: currentCase,
+        operationRef: currentOperation,
+        category: safeCategory(error),
+        predicate: String(error?.message ?? "operation_failed"),
+      })
+    } catch {
+      evidenceWritable = false
+    }
+  } finally {
+    exerciseSignal = null
+  }
+
+  if (!secondSignal) {
+    const dependencies = cleanupDependencies({
+      operatorToken,
+      organization,
+      signal: cleanupController.signal,
+      waitForUnknown: !controller.signal.aborted,
+    })
+    try {
+      await cleanupRun(store, dependencies)
+    } catch (error) {
+      evidenceWritable = false
+      if (!secondSignal) await containFromMemory(store, dependencies)
+      try {
+        await store.latchFailure({ category: safeCategory(error) })
+      } catch {}
     }
   }
-
-  liveSignal = null
-  try {
-    await cleanup()
-  } catch {
-    finalStatus = "blocked"
-    finalReason = "cleanup_unverified"
+  tunnel?.close()
+  await collector?.close()
+  await rm(scratch, { recursive: true, force: true })
+  const before = projectSummary(store.records, store.recovery)
+  const status =
+    store.recovery.cleanup.completed === true &&
+    !store.recovery.firstFailure &&
+    before.usageStatus === "confirmed"
+      ? "pass"
+      : "blocked"
+  const reason = secondSignal
+    ? "cleanup_interrupted_recovery_required"
+    : (store.recovery.firstFailure?.category ??
+      (before.usageStatus !== "confirmed"
+        ? "usage_unknown"
+        : "cleanup_unverified"))
+  let summary = { status: "blocked" }
+  if (evidenceWritable) {
+    try {
+      await store.append({
+        kind: "verdict",
+        source: "operator",
+        payload: { status, reason },
+      })
+      summary = await store.writeSummary()
+    } catch {
+      evidenceWritable = false
+    }
   }
-  const evidence = {
-    status: finalStatus,
-    reason: finalReason,
-    runId,
-    starts,
-    totalBilledMinutes: totalBilled,
-    limits: LIMITS,
-    cases: caseEvidence,
-    cleanup: {
-      productionUnchanged: finalBaseline,
-      probeServiceAbsent: finalProbeAbsent,
-      zeroKnownSessions: knownSessions.size === 0,
-    },
-    ...(failureDiagnostic ? { diagnostic: failureDiagnostic } : {}),
-  }
-  try {
-    await writeFile(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, {
-      mode: 0o600,
-    })
-    await chmod(evidencePath, 0o600)
-  } finally {
-    await rm(scratch, { recursive: true, force: true })
-    process.removeListener("SIGINT", onSignal)
-    process.removeListener("SIGTERM", onSignal)
-  }
+  process.removeListener("SIGINT", onSignal)
+  process.removeListener("SIGTERM", onSignal)
+  await store.close()
   process.stdout.write(
-    `${JSON.stringify({ status: finalStatus, reason: finalReason, evidencePath })}\n`
+    `${JSON.stringify({ status, reason, runDir: store.runDir })}\n`
   )
-  process.exitCode = finalStatus === "pass" ? 0 : 1
+  process.exitCode = summary.status === "pass" ? 0 : 1
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+async function recover(runDir) {
+  const operatorToken = process.env.PIPECAT_OPERATOR_TOKEN
+  const organization = process.env.PIPECAT_ORGANIZATION
+  if (![operatorToken, organization, runDir].every(Boolean))
+    throw new Error("recover_prerequisite_missing")
+  const store = await DurableRunStore.open(runDir)
+  try {
+    if (store.recovery.organization !== organization) {
+      await store.latchFailure({
+        category: "ownership_mismatch",
+        predicate: "recovery_organization_mismatch",
+      })
+      await store.append({
+        kind: "cleanup_result",
+        source: "recovery",
+        payload: {
+          check: "containment",
+          status: "blocked",
+          unresolvedSessions: Object.keys(store.recovery.sessions).length,
+          errorCategories: ["ownership_mismatch"],
+        },
+      })
+      await store.append({
+        kind: "verdict",
+        source: "recovery",
+        payload: { status: "blocked", reason: "ownership_mismatch" },
+      })
+      await store.writeSummary()
+      process.stdout.write(
+        `${JSON.stringify({ status: "blocked", reason: "ownership_mismatch", runDir: store.runDir })}\n`
+      )
+      process.exitCode = 1
+      return
+    }
+    const completed = await cleanupRun(
+      store,
+      cleanupDependencies({ operatorToken, organization })
+    )
+    const before = projectSummary(
+      store.records,
+      store.recovery,
+      store.truncatedTail
+    )
+    const status =
+      completed &&
+      !store.recovery.firstFailure &&
+      before.usageStatus === "confirmed"
+        ? "pass"
+        : "blocked"
+    const reason =
+      store.recovery.firstFailure?.category ??
+      (before.usageStatus !== "confirmed"
+        ? "usage_unknown"
+        : "cleanup_unverified")
+    await store.append({
+      kind: "verdict",
+      source: "recovery",
+      payload: { status, reason },
+    })
+    await store.writeSummary()
+    process.stdout.write(
+      `${JSON.stringify({ status, reason, runDir: store.runDir })}\n`
+    )
+    process.exitCode = status === "pass" ? 0 : 1
+  } finally {
+    await store.close()
+  }
+}
+
+function parseRunDir(argv) {
+  const index = argv.indexOf("--run-dir")
+  return index >= 0 ? argv[index + 1] : null
+}
+
+async function main() {
+  const command = process.argv[2]
+  if (command === "plan") {
+    process.stdout.write(
+      `${JSON.stringify({
+        agent: PROBE_AGENT,
+        productionAgent: PROD_AGENT,
+        baseline: BASELINE,
+        limits: LIMITS,
+        cases: CASES,
+      })}\n`
+    )
+    return
+  }
+  const runDir = parseRunDir(process.argv.slice(3))
+  if (command === "live") return runLive(runDir)
+  if (command === "recover") return recover(runDir)
+  throw new Error(
+    "usage: run.mjs plan|live --run-dir PATH|recover --run-dir PATH"
+  )
+}
+
+if (import.meta.url === `file://${process.argv[1]}`)
   main().catch(() => {
-    process.stderr.write("provider proof failed before evidence write\n")
+    process.stderr.write("provider proof failed before durable result\n")
     process.exitCode = 1
   })
-}
