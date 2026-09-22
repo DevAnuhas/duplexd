@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@better-auth/core": "1.7.5",
+    "@daily-co/daily-js": "0.92.2",
     "@hookform/resolvers": "5.9.1",
     "@phosphor-icons/react": "2.1.10",
     "ajv": "8.20.0",

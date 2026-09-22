@@ -61,6 +61,10 @@ function stubFetch() {
             expiredAt: null,
             stopRequestedAt: null,
             execution: "disabled",
+            resourceState: "not_dispatched",
+            startupDeadline: null,
+            executionDeadline: null,
+            presenceExpiresAt: null,
           },
         })
       return Response.json({ attempt: null })

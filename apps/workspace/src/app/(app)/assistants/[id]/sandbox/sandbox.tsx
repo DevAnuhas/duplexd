@@ -26,6 +26,9 @@ import {
   LocalAudioCheck,
   type LocalAudioState,
 } from "@/sandbox/client/local-audio"
+import { sandboxReleased } from "@/sandbox/client/controller"
+import { DailySandboxMedia } from "@/sandbox/client/daily-media"
+import { LiveSandboxTimeline } from "@/components/sandbox/timeline"
 import { AssistantNavigation } from "../../assistant-navigation"
 
 export type SandboxProps = {
@@ -113,9 +116,7 @@ export function Sandbox({ assistant }: SandboxProps) {
   })
   const [audio] = useState(() => new LocalAudioCheck(setAudioState))
   const busy = ["loading", "preparing", "canceling"].includes(state.phase)
-  const unresolved =
-    state.attempt !== null &&
-    !["canceled", "expired"].includes(state.attempt.state)
+  const unresolved = state.attempt !== null && !sandboxReleased(state.attempt)
   const listening =
     audioState.kind === "listening" || audioState.kind === "requesting"
   const unavailableCount = samples.filter((sample) =>
@@ -125,6 +126,7 @@ export function Sandbox({ assistant }: SandboxProps) {
   useEffect(() => {
     const release = () => {
       audio.stop()
+      controller.leave()
       setAudioState({
         kind: "stopped",
         message: "Local audio stopped. No voice call is connected.",
@@ -140,8 +142,9 @@ export function Sandbox({ assistant }: SandboxProps) {
       window.removeEventListener("pagehide", release)
       document.removeEventListener("visibilitychange", visibility)
       audio.stop()
+      controller.leave()
     }
-  }, [audio])
+  }, [audio, controller])
 
   async function prepare() {
     audio.stop()
@@ -218,22 +221,24 @@ export function Sandbox({ assistant }: SandboxProps) {
       </header>
       <AssistantNavigation assistantId={assistant.id} active="sandbox" />
 
-      <section
-        aria-labelledby="availability-title"
-        className="flex items-start gap-3 rounded-lg border bg-muted/30 p-5"
-      >
-        <Flask className="mt-0.5 size-5 shrink-0" aria-hidden="true" />
-        <div className="min-w-0">
-          <h2 id="availability-title" className="font-semibold">
-            Voice calls are not available yet
-          </h2>
-          <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">
-            You can prepare a Practice test and check local audio. Starting a
-            voice call is disabled while runtime safety checks are unfinished.
-            Preparation starts no agent and incurs no voice/model usage.
-          </p>
-        </div>
-      </section>
+      {state.attempt?.execution !== "enabled" && (
+        <section
+          aria-labelledby="availability-title"
+          className="flex items-start gap-3 rounded-lg border bg-muted/30 p-5"
+        >
+          <Flask className="mt-0.5 size-5 shrink-0" aria-hidden="true" />
+          <div className="min-w-0">
+            <h2 id="availability-title" className="font-semibold">
+              Voice calls are not available yet
+            </h2>
+            <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+              You can prepare a Practice test and check local audio. Starting a
+              voice call is disabled while runtime safety checks are unfinished.
+              Preparation starts no agent and incurs no voice/model usage.
+            </p>
+          </div>
+        </section>
+      )}
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
         <div className="flex min-w-0 flex-col gap-6">
@@ -322,8 +327,8 @@ export function Sandbox({ assistant }: SandboxProps) {
                     </Link>
                   </Button>
                   <p className="text-sm text-muted-foreground">
-                    Custom sample editing is not available here yet. To try a
-                    complete sample mapping, create a{" "}
+                    Review the sample mappings below. For a complete starting
+                    example, create a{" "}
                     <Link
                       className="underline underline-offset-4"
                       href="/assistants/new?template=riley"
@@ -443,7 +448,7 @@ export function Sandbox({ assistant }: SandboxProps) {
                   onClick={() => {
                     void audio.microphone()
                   }}
-                  disabled={listening}
+                  disabled={listening || state.mediaPhase !== "off"}
                 >
                   <Microphone className="size-4" aria-hidden="true" />
                   Check microphone
@@ -454,7 +459,7 @@ export function Sandbox({ assistant }: SandboxProps) {
                   onClick={() => {
                     void audio.sound()
                   }}
-                  disabled={listening}
+                  disabled={listening || state.mediaPhase !== "off"}
                 >
                   <SpeakerHigh className="size-4" aria-hidden="true" />
                   Play test sound
@@ -526,7 +531,9 @@ export function Sandbox({ assistant }: SandboxProps) {
                           ? "Preparation canceled"
                           : state.attempt.state === "expired"
                             ? "Preparation expired"
-                            : "Existing test needs attention"}
+                            : sandboxReleased(state.attempt)
+                              ? "Test resources released · review the record"
+                              : "Existing call · resource cleanup remains required"}
                     </p>
                     <p className="mt-2 text-muted-foreground">
                       {state.attempt.assistantId !== assistant.id
@@ -587,10 +594,66 @@ export function Sandbox({ assistant }: SandboxProps) {
                   Refresh status
                 </Button>
               </div>
+              {state.mediaPhase !== "off" && (
+                <section
+                  aria-label="Voice connection"
+                  className="space-y-3 rounded-md border p-4"
+                >
+                  <p role="status" className="font-medium">
+                    {
+                      {
+                        checking: "Checking local audio",
+                        starting: "Starting agent",
+                        joining: "Connecting audio",
+                        waiting: "Waiting for agent readiness",
+                        ready: "Ready",
+                        reconnecting: "Reconnecting to the same call",
+                        finishing: "Finishing · cleanup not yet confirmed",
+                      }[state.mediaPhase]
+                    }
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {state.mediaPhase === "ready"
+                      ? "Local audio is connected and agent readiness is persisted. Practice uses sample data."
+                      : "Audio connection alone does not mean the agent is ready. Ending stops local audio immediately."}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {["ready", "waiting", "reconnecting"].includes(
+                      state.mediaPhase
+                    ) && (
+                      <Button
+                        variant="outline"
+                        className="min-h-11"
+                        aria-pressed={state.muted}
+                        onClick={() => controller.mute()}
+                      >
+                        {state.muted ? "Unmute microphone" : "Mute microphone"}
+                      </Button>
+                    )}
+                    <Button
+                      variant="destructive"
+                      className="min-h-11"
+                      onClick={() => {
+                        void controller.end()
+                      }}
+                    >
+                      {state.mediaPhase === "finishing"
+                        ? "Retry stop"
+                        : "End call"}
+                    </Button>
+                  </div>
+                </section>
+              )}
               <div className="border-t pt-4">
                 <Button
                   className="min-h-11 w-full"
-                  disabled
+                  disabled={!controller.canStart()}
+                  onClick={() => {
+                    audio.stop()
+                    void controller.start(
+                      (report) => new DailySandboxMedia(report)
+                    )
+                  }}
                   aria-describedby="voice-disabled"
                 >
                   Start voice call
@@ -599,12 +662,21 @@ export function Sandbox({ assistant }: SandboxProps) {
                   id="voice-disabled"
                   className="mt-2 text-sm text-muted-foreground"
                 >
-                  Voice execution is disabled. No microphone stream is attached
-                  to this test.
+                  {state.attempt?.execution !== "enabled"
+                    ? "Voice execution is disabled. No microphone stream is attached to this test."
+                    : !state.ownsController
+                      ? "This tab can observe or stop this test. Only its original controller can start or join it."
+                      : "Start checks microphone and playback before dispatch. Calls are limited to 10 minutes. Keep this tab visible; hiding or leaving stops local audio."}
                 </p>
               </div>
             </CardContent>
           </Card>
+          {state.attempt && (
+            <LiveSandboxTimeline
+              key={state.attempt.callId}
+              callId={state.attempt.callId}
+            />
+          )}
         </div>
       </div>
     </div>
