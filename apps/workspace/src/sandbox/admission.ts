@@ -64,6 +64,10 @@ export type SandboxAttemptDto = {
   expiredAt: string | null
   stopRequestedAt: string | null
   execution: "disabled"
+  resourceState: string
+  startupDeadline: string | null
+  executionDeadline: string | null
+  presenceExpiresAt: string | null
 }
 
 export type PrepareSandboxAttemptResult =
@@ -90,6 +94,10 @@ export type CancelSandboxAttemptResult =
   | { kind: "provider_cleanup_disabled"; attempt: SandboxAttemptDto }
 
 type AttemptProjection = {
+  resourceState: string
+  startupDeadline: Date | null
+  executionDeadline: Date | null
+  presenceExpiresAt: Date | null
   attemptId: string
   callId: string
   assistantId: string | null
@@ -119,6 +127,10 @@ class UserAdmissionLimitError extends Error {}
 class AccountAdmissionLimitError extends Error {}
 
 const attemptColumns = {
+  resourceState: sandboxAttempts.resourceState,
+  startupDeadline: sandboxAttempts.startupDeadline,
+  executionDeadline: calls.executionDeadline,
+  presenceExpiresAt: sandboxAttempts.presenceExpiresAt,
   attemptId: sandboxAttempts.id,
   callId: sandboxAttempts.callId,
   assistantId: calls.assistantId,
@@ -255,6 +267,10 @@ function projectAttempt(row: AttemptProjection): SandboxAttemptDto {
     expiredAt: row.expiredAt?.toISOString() ?? null,
     stopRequestedAt: row.attemptStopRequestedAt?.toISOString() ?? null,
     execution: "disabled",
+    resourceState: row.resourceState,
+    startupDeadline: row.startupDeadline?.toISOString() ?? null,
+    executionDeadline: row.executionDeadline?.toISOString() ?? null,
+    presenceExpiresAt: row.presenceExpiresAt?.toISOString() ?? null,
   }
 }
 

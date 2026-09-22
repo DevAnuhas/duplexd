@@ -1,5 +1,5 @@
 import { noStoreJson, requireWorkspaceSession } from "@/lib/workspace-mutation"
-import { getSandboxAttemptForAccount } from "@/sandbox/admission"
+import { sandboxLifecycle } from "@/sandbox/lifecycle"
 import { sandboxProblem } from "@/sandbox/http"
 
 export async function GET(
@@ -9,7 +9,7 @@ export async function GET(
   const session = await requireWorkspaceSession()
   if (!session.ok) return session.response
   const { id } = await params
-  const attempt = await getSandboxAttemptForAccount({
+  const attempt = await sandboxLifecycle.status({
     accountId: session.account.accountId,
     attemptId: id,
   })

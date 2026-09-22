@@ -182,7 +182,7 @@ describeDatabase("migrations from an empty database", () => {
       })
     })
 
-    it("keeps Sandbox identity and controller fields required without credential columns", async () => {
+    it("keeps Sandbox identity required and permits only encrypted join credentials", async () => {
       const columns = await withTestPool(async (pool) => {
         const { rows } = await pool.query<{
           column_name: string
@@ -204,6 +204,19 @@ describeDatabase("migrations from an empty database", () => {
           "client_attempt_id",
           "controller_proof_hash",
           "dispatched_at",
+          "dispatch_settled_at",
+          "ready_at",
+          "reconciled_at",
+          "protocol",
+          "resource_state",
+          "startup_deadline",
+          "presence_expires_at",
+          "runtime_session_id",
+          "runtime_boot_id",
+          "join_ciphertext",
+          "join_expires_at",
+          "reporting_until",
+          "identity_conflict_at",
           "expired_at",
           "id",
           "initiated_by_user_id",
@@ -231,9 +244,13 @@ describeDatabase("migrations from an empty database", () => {
       ]) {
         expect(nullability.get(required), required).toBe("NO")
       }
-      expect(columns.map((column) => column.column_name).join(" ")).not.toMatch(
-        /token|credential|room|secret/i
-      )
+      expect(
+        columns
+          .map((column) => column.column_name)
+          .filter((name) =>
+            /token|credential|room|secret|ciphertext|plaintext/i.test(name)
+          )
+      ).toStrictEqual(["join_ciphertext"])
     })
 
     it("gives call_events a composite primary key on (call_id, seq)", async () => {

@@ -133,9 +133,7 @@ routes and leaves the additive columns/tables in place; it does not drop them.
 Sandbox prepare is intentionally not a provider check. It may create a frozen
 call/attempt/slot, but start, join and presence return
 `sandbox_execution_disabled` without minting an agent token, calling Pipecat or
-returning a join credential. The authenticated sweep expires only
-never-dispatched reservations. Do not interpret fixture coverage of this layer
-as the still-blocked provider cleanup evidence.
+returning a join credential. The authenticated sweep expires never-dispatched reservations and advances durable Sandbox deadlines; its production instance has no provider transport. Explicitly injected offline tests exercise dispatch, registration/config ownership, encrypted joins and exact-resource cleanup without network calls. The additive lifecycle migration adds attempt state and `sandbox_sessions`; operational rollback retains these records and handlers rather than clearing unresolved slots. Do not interpret fixtures as the still-blocked provider cleanup evidence. [Server protocol and A04 handoff](architecture/sandbox-protocol.md).
 
 ### Running the app
 

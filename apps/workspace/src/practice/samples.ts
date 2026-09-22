@@ -16,6 +16,7 @@ import {
 } from "@/db/schema"
 import { decryptSecret, encryptSecret } from "@/lib/crypto"
 import type { ValidationIssue } from "@/lib/validate"
+import { lockPracticeExecution } from "@/sandbox/execution"
 
 import {
   canonicalJson,
@@ -585,30 +586,16 @@ export async function invokePracticeSample(input: {
   }
 
   const requestDigest = createHash("sha256").update(input.rawBody).digest("hex")
+  const executionClock = () => input.clock?.() ?? input.now ?? new Date()
   const selected = await getDb().transaction(async (tx) => {
-    const lockedRows = await tx
-      .select({
-        id: calls.id,
-        assistantId: calls.assistantId,
-        state: calls.state,
-        executionDeadline: calls.executionDeadline,
-        stopRequestedAt: calls.stopRequestedAt,
-        practiceSnapshot: calls.practiceSnapshot,
-      })
-      .from(calls)
-      .where(eq(calls.id, input.callId))
-      .limit(1)
-      .for("update")
-    const locked = lockedRows[0]
-    if (locked === undefined) return { kind: "not_found" } as const
-    if (
-      locked.state !== "active" ||
-      locked.stopRequestedAt !== null ||
-      locked.executionDeadline === null ||
-      locked.executionDeadline.getTime() <= now.getTime()
-    ) {
-      return { kind: "not_active" } as const
-    }
+    const execution = await lockPracticeExecution(
+      tx,
+      input.callId,
+      executionClock
+    )
+    if (execution === null) return { kind: "not_found" } as const
+    if (!execution.allowed) return { kind: "not_active" } as const
+    const locked = execution.call
     if (
       locked.assistantId !== body.assistantId ||
       !isFrozenSnapshot(locked.practiceSnapshot) ||
@@ -718,24 +705,10 @@ export async function invokePracticeSample(input: {
     )(delay)
   }
 
-  const releaseRows = await getDb()
-    .select({
-      state: calls.state,
-      executionDeadline: calls.executionDeadline,
-      stopRequestedAt: calls.stopRequestedAt,
-    })
-    .from(calls)
-    .where(eq(calls.id, input.callId))
-    .limit(1)
-  const release = releaseRows[0]
-  const releaseNow = input.clock?.() ?? input.now ?? new Date()
-  if (
-    release === undefined ||
-    release.state !== "active" ||
-    release.stopRequestedAt !== null ||
-    release.executionDeadline === null ||
-    release.executionDeadline.getTime() <= releaseNow.getTime()
-  ) {
+  const release = await getDb().transaction((tx) =>
+    lockPracticeExecution(tx, input.callId, executionClock)
+  )
+  if (!release?.allowed) {
     return {
       kind: "not_active",
       detail: "Practice call stopped before the sample was released.",

@@ -260,9 +260,8 @@ export const calls = pgTable(
 /**
  * One durable browser Sandbox admission attempt.
  *
- * This row owns idempotency and tab-controller proof. It deliberately has no
- * provider credential or join credential columns: the provider-independent
- * foundation cannot manufacture either while execution remains disabled.
+ * Owns idempotency, tab-controller proof and the single dispatch decision.
+ * Join credentials are encrypted, never part of a status projection.
  */
 export const sandboxAttempts = pgTable(
   "sandbox_attempts",
@@ -288,6 +287,21 @@ export const sandboxAttempts = pgTable(
       withTimezone: true,
     }).notNull(),
     dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+    dispatchSettledAt: timestamp("dispatch_settled_at", { withTimezone: true }),
+    readyAt: timestamp("ready_at", { withTimezone: true }),
+    reconciledAt: timestamp("reconciled_at", { withTimezone: true }),
+    protocol: text("protocol"),
+    resourceState: text("resource_state").notNull().default("not_dispatched"),
+    startupDeadline: timestamp("startup_deadline", { withTimezone: true }),
+    presenceExpiresAt: timestamp("presence_expires_at", { withTimezone: true }),
+    runtimeSessionId: text("runtime_session_id"),
+    runtimeBootId: text("runtime_boot_id"),
+    joinCiphertext: text("join_ciphertext"),
+    joinExpiresAt: timestamp("join_expires_at", { withTimezone: true }),
+    reportingUntil: timestamp("reporting_until", { withTimezone: true }),
+    identityConflictAt: timestamp("identity_conflict_at", {
+      withTimezone: true,
+    }),
     stopRequestedAt: timestamp("stop_requested_at", { withTimezone: true }),
     stopReason: text("stop_reason"),
     canceledAt: timestamp("canceled_at", { withTimezone: true }),
@@ -308,6 +322,30 @@ export const sandboxAttempts = pgTable(
       table.reservationExpiresAt
     ),
   ]
+)
+
+/** Exact observed identities only; a missing/unknown session is not a stop proof. */
+export const sandboxSessions = pgTable(
+  "sandbox_sessions",
+  {
+    attemptId: text("attempt_id")
+      .notNull()
+      .references(() => sandboxAttempts.id, { onDelete: "cascade" }),
+    sessionId: text("session_id").notNull(),
+    resourceState: text("resource_state").notNull().default("possible"),
+    stopAttempts: integer("stop_attempts").notNull().default(0),
+    nextReconcileAt: timestamp("next_reconcile_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    reconciliationBlocked: boolean("reconciliation_blocked")
+      .notNull()
+      .default(false),
+    reconcileToken: text("reconcile_token"),
+    confirmedStoppedAt: timestamp("confirmed_stopped_at", {
+      withTimezone: true,
+    }),
+  },
+  (table) => [primaryKey({ columns: [table.attemptId, table.sessionId] })]
 )
 
 /** One unresolved Sandbox attempt per user, with an account-wide cap. */

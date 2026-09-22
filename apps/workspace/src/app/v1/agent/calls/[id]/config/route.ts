@@ -1,11 +1,16 @@
 import { agentAuthProblem, requireAgentToken } from "@/control/agent-http"
 import { json, problem } from "@/control/http"
 import { claimAgentConfig } from "@/data/calls"
+import { handleSandboxAgentRequest } from "@/sandbox/agent-http"
+import { SANDBOX_PROTOCOL_HEADER } from "@/sandbox/protocol"
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ): Promise<Response> {
+  if (request.headers.has(SANDBOX_PROTOCOL_HEADER)) {
+    return handleSandboxAgentRequest(request, (await params).id, "config")
+  }
   const credential = requireAgentToken(request)
   if (!credential.ok) {
     return credential.response
