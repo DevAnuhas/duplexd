@@ -5,6 +5,83 @@ export const SANDBOX_PROTOCOL_HEADER = "x-duplexd-protocol"
 export const SANDBOX_SESSION_HEADER = "x-duplexd-session-id"
 export const SANDBOX_BOOT_HEADER = "x-duplexd-boot-id"
 
+/** Negotiation authenticates without claiming configuration or changing ownership. */
+export type AgentProtocol = typeof SANDBOX_PROTOCOL | "integration-v1"
+
+export const SANDBOX_EVIDENCE_LIMITS = {
+  eventBytes: 8192,
+  batchEvents: 64,
+  batchBytes: 262144,
+  pendingEvents: 1000,
+  pendingBytes: 2097152,
+  callEvents: 10000,
+  callBytes: 8388608,
+  pageEvents: 100,
+  pageBytes: 131072,
+  missingRanges: 32,
+} as const
+
+export const SANDBOX_END_REASONS = [
+  "client_disconnected",
+  "pipeline_error",
+  "idle_timeout",
+  "user_stopped",
+  "startup_deadline",
+  "execution_deadline",
+  "presence_expired",
+  "control_lost",
+  "evidence_limit",
+  "identity_conflict",
+  "start_unknown",
+  "startup_failed",
+] as const
+
+export type SandboxEvent = {
+  seq: number
+  at: string
+  type: string
+  payload: Record<string, unknown>
+}
+export type SandboxCompletion = {
+  endedReason: (typeof SANDBOX_END_REASONS)[number]
+  durationSecs: number
+  finalSeq: number
+  producerLoss: boolean
+  truncated: boolean
+}
+export type SandboxEvidenceState = "unknown" | "partial" | "complete"
+export type SandboxEvidenceAck = {
+  protocol: typeof SANDBOX_PROTOCOL
+  contiguousSeq: number
+  missingRanges: [number, number][]
+  evidenceState: SandboxEvidenceState
+  completionDigest: string | null
+  control: SandboxControl
+}
+
+/** Safe polling projection, not the producer's raw payload or model trace. */
+export type SandboxEventPage = {
+  events: Array<{
+    cursor: string
+    namespace: "agent" | "platform"
+    seq: number
+    at: string
+    type: string
+    payload?: Record<string, string | number | boolean>
+  }>
+  nextCursor: string | null
+  hasMore: boolean
+  evidence: {
+    state: SandboxEvidenceState
+    contiguousSeq: number
+    finalSeq: number | null
+    producerLoss: boolean
+    truncated: boolean
+    integrityConflict: boolean
+    reconciled: boolean
+  }
+}
+
 export const SANDBOX_LIMITS = {
   dispatchMs: 15_000,
   startupMs: 120_000,

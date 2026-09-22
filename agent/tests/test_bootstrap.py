@@ -37,6 +37,9 @@ class FakePlatform:
     async def __aexit__(self, *args: object) -> None:
         self.closed = True
 
+    async def negotiate(self) -> str:
+        return "integration-v1"
+
     async def fetch_config(self) -> AgentConfig:
         self.fetches += 1
         return self.config
@@ -55,9 +58,7 @@ class FakeProbe:
         self.error = error
         self.calls: list[tuple[OpenAIResponsesHttpLLMService, str]] = []
 
-    async def verify(
-        self, service: OpenAIResponsesHttpLLMService, model: str
-    ) -> None:
+    async def verify(self, service: OpenAIResponsesHttpLLMService, model: str) -> None:
         self.calls.append((service, model))
         if self.error is not None:
             raise self.error
@@ -84,9 +85,7 @@ async def test_fatal_runner_args_stop_before_platform_http_probe_or_transport(
         platform_factory_calls.append(runner_input)
         raise AssertionError("platform must not be constructed")
 
-    async def transport_factory(
-        args: RunnerArguments, params: dict[str, Any]
-    ) -> BaseTransport:
+    async def transport_factory(args: RunnerArguments, params: dict[str, Any]) -> BaseTransport:
         transport_calls.append((args, params))
         raise AssertionError("transport must not be constructed")
 
@@ -127,9 +126,7 @@ async def test_missing_provider_key_stops_before_platform_fetch_and_transport(
         factory_calls.append(runner_input)
         raise AssertionError("platform must not be constructed")
 
-    async def transport_factory(
-        args: RunnerArguments, params: dict[str, Any]
-    ) -> BaseTransport:
+    async def transport_factory(args: RunnerArguments, params: dict[str, Any]) -> BaseTransport:
         transport_calls.append((args, params))
         raise AssertionError("transport must not be constructed")
 
@@ -161,9 +158,7 @@ async def test_successful_boot_fetches_once_probes_before_transport_and_uses_sam
         return platform
 
     class OrderedProbe(FakeProbe):
-        async def verify(
-            self, service: OpenAIResponsesHttpLLMService, model: str
-        ) -> None:
+        async def verify(self, service: OpenAIResponsesHttpLLMService, model: str) -> None:
             order.append("probe")
             await super().verify(service, model)
 
@@ -221,9 +216,7 @@ async def test_probe_failure_aborts_before_transport_creation_and_webhook_delive
         del runner_input
         return platform
 
-    async def transport_factory(
-        args: RunnerArguments, params: dict[str, Any]
-    ) -> BaseTransport:
+    async def transport_factory(args: RunnerArguments, params: dict[str, Any]) -> BaseTransport:
         transport_calls.append((args, params))
         raise AssertionError("transport must not be constructed")
 
@@ -245,3 +238,147 @@ async def test_probe_failure_aborts_before_transport_creation_and_webhook_delive
     assert platform.fetches == 1
     assert len(probe.calls) == 1
     assert transport_calls == []
+
+
+async def test_sandbox_control_runs_before_probe_and_cancels_work_before_reporting(
+    monkeypatch: pytest.MonkeyPatch,
+    runner_body: dict[str, str],
+    config_payload: dict[str, Any],
+) -> None:
+    import asyncio
+    import json
+    import time
+
+    import httpx
+    from test_sandbox import ack, control
+
+    from duplexd_agent.platform import PlatformClient
+
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-offline-key")
+    order: list[str] = []
+    owner: dict[str, str] = {}
+    entered_probe = asyncio.Event()
+    began_control = asyncio.Event()
+    wire_control = control()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        suffix = request.url.path.rsplit("/", 1)[1]
+        order.append(suffix)
+        if suffix == "protocol":
+            return httpx.Response(200, json={"protocol": "sandbox-v1"})
+        if suffix == "register":
+            owner.update(json.loads(request.content))
+            assert owner["sessionId"] == "runner-session"
+            return httpx.Response(200, json={"protocol": "sandbox-v1", "registered": True})
+        assert request.headers["x-duplexd-session-id"] == owner["sessionId"]
+        assert request.headers["x-duplexd-boot-id"] == owner["bootId"]
+        if suffix == "config":
+            return httpx.Response(
+                200,
+                json={
+                    "protocol": "sandbox-v1",
+                    "owner": owner,
+                    "config": config_payload,
+                    "control": wire_control.model_dump(),
+                },
+            )
+        if suffix == "control":
+            began_control.set()
+            await entered_probe.wait()
+            return httpx.Response(
+                200,
+                json={
+                    "protocol": "sandbox-v1",
+                    "control": control(stopRequested=True, stopReason="user_stopped").model_dump(),
+                },
+            )
+        if suffix == "complete":
+            assert "probe_cancelled" in order and "backend_closed" in order
+            assert json.loads(request.content)["endedReason"] == "user_stopped"
+            return httpx.Response(200, json=ack(0, complete=True).model_dump())
+        raise AssertionError(f"Unexpected request: {suffix}")
+
+    class Client:
+        async def close(self) -> None:
+            order.append("backend_closed")
+
+    monkeypatch.setattr(
+        bot_module, "build_backend_service", lambda *args: SimpleNamespace(_client=Client())
+    )
+
+    class Probe:
+        async def verify(self, service: Any, model: str) -> None:
+            assert began_control.is_set()
+            order.append("probe")
+            entered_probe.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                order.append("probe_cancelled")
+
+    async def transport_factory(*args: Any) -> Any:
+        raise AssertionError("cancelled probe must not construct media transport")
+
+    args = _runner_args(runner_body)
+    args.session_id = "runner-session"
+    started = time.monotonic()
+    await asyncio.wait_for(
+        bot_module.bootstrap(
+            args,
+            platform_client_factory=lambda body: PlatformClient(
+                body, transport=httpx.MockTransport(handler)
+            ),
+            probe=Probe(),
+            transport_factory=transport_factory,
+        ),
+        timeout=2.0,
+    )
+    assert time.monotonic() - started < 2
+    assert order[:3] == ["protocol", "register", "config"]
+    assert order.count("config") == 1
+    assert (
+        order.index("control")
+        < order.index("probe")
+        < order.index("probe_cancelled")
+        < order.index("complete")
+    )
+
+
+@pytest.mark.parametrize("failure", ["register", "config"])
+async def test_sandbox_negotiation_failure_never_downgrades_to_legacy_or_starts_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    runner_body: dict[str, str],
+    failure: str,
+) -> None:
+    import httpx
+
+    from duplexd_agent.errors import PlatformRequestError
+    from duplexd_agent.platform import PlatformClient
+
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-offline-key")
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        suffix = request.url.path.rsplit("/", 1)[1]
+        requests.append(suffix)
+        if suffix == "protocol":
+            return httpx.Response(200, json={"protocol": "sandbox-v1"})
+        if suffix == failure:
+            return httpx.Response(409, json={})
+        return httpx.Response(200, json={"protocol": "sandbox-v1", "registered": True})
+
+    probe = FakeProbe()
+    args = _runner_args(runner_body)
+    args.session_id = "runner-session"
+    with pytest.raises(PlatformRequestError):
+        await bot_module.bootstrap(
+            args,
+            probe=probe,
+            platform_client_factory=lambda body: PlatformClient(
+                body, transport=httpx.MockTransport(handler)
+            ),
+        )
+    assert requests == (
+        ["protocol", "register"] if failure == "register" else ["protocol", "register", "config"]
+    )
+    assert probe.calls == []

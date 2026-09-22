@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
@@ -10,6 +11,72 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from duplexd_agent.errors import AgentConfigError, RunnerInputError
 
 PositiveSeconds = Annotated[float, Field(gt=0, strict=True)]
+
+SANDBOX_PROTOCOL = "sandbox-v1"
+SANDBOX_END_REASONS = frozenset(
+    {
+        "client_disconnected",
+        "pipeline_error",
+        "idle_timeout",
+        "user_stopped",
+        "startup_deadline",
+        "execution_deadline",
+        "presence_expired",
+        "control_lost",
+        "evidence_limit",
+        "identity_conflict",
+        "start_unknown",
+        "startup_failed",
+    }
+)
+
+
+class SandboxOwner(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    sessionId: str = Field(pattern=r"^[A-Za-z0-9_-]{1,128}$")
+    bootId: str = Field(pattern=r"^[A-Za-z0-9_-]{1,128}$")
+
+
+class SandboxControl(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    stopRequested: bool
+    stopReason: str | None
+    startupDeadline: str
+    executionDeadline: str
+    presenceExpiresAt: str
+    serverTime: str
+    pollIntervalMs: Literal[3000]
+    controlLossTimeoutMs: Literal[30000]
+    gracefulStopMs: Literal[10000]
+    reportingGraceMs: Literal[60000]
+
+    @field_validator("startupDeadline", "executionDeadline", "presenceExpiresAt", "serverTime")
+    @classmethod
+    def require_timestamp(cls, value: str) -> str:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError("timestamp requires timezone")
+        return value
+
+
+class SandboxAck(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    protocol: Literal["sandbox-v1"]
+    contiguousSeq: int = Field(ge=0, le=10000)
+    missingRanges: list[list[int]] = Field(max_length=32)
+    evidenceState: Literal["unknown", "partial", "complete"]
+    completionDigest: str | None = Field(pattern=r"^[a-f0-9]{64}$")
+    control: SandboxControl
+
+    @field_validator("missingRanges")
+    @classmethod
+    def require_ranges(cls, value: list[list[int]]) -> list[list[int]]:
+        previous = 0
+        for pair in value:
+            if len(pair) != 2 or not previous < pair[0] <= pair[1] <= 10000:
+                raise ValueError("invalid missing ranges")
+            previous = pair[1]
+        return value
 
 
 class RunnerInput(BaseModel):
@@ -148,6 +215,14 @@ class AgentConfig(BaseModel):
         except ValidationError as error:
             field = _first_error_field(error)
             raise AgentConfigError(f"assistant config field {field} is invalid") from None
+
+
+class SandboxConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    protocol: Literal["sandbox-v1"]
+    owner: SandboxOwner
+    config: AgentConfig
+    control: SandboxControl
 
 
 def _first_error_field(error: ValidationError) -> str:

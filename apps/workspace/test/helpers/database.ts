@@ -36,6 +36,7 @@ export const EXPECTED_TABLES = [
   "practice_invocations",
   "sandbox_admission_rate_limits",
   "sandbox_attempts",
+  "sandbox_evidence",
   "sandbox_sessions",
   "sandbox_slots",
   "sessions",

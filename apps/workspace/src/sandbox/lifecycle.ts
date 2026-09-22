@@ -14,7 +14,7 @@ import {
   sandboxSessions,
   sandboxSlots,
 } from "@/db/schema"
-import { hashCredential, mintAgentToken } from "@/lib/credentials"
+import { mintAgentToken } from "@/lib/credentials"
 import { decryptSecret, encryptSecret, secretsMatch } from "@/lib/crypto"
 import type { FrozenPracticeSnapshot } from "@/practice/configuration"
 import { createPracticeSecret, practiceToolUrl } from "@/practice/samples"
@@ -40,10 +40,12 @@ import {
 
 import {
   advanceSandboxExecution as advance,
+  lockSandboxAgent as agentLocked,
+  ownsSandboxExecution as owns,
+  sandboxControl as control,
   isSandboxCallTerminal as isTerminal,
   lockSandboxExecution as locked,
   requestSandboxStop as stopIntent,
-  type SandboxTransaction as Tx,
   type LockedSandboxExecution as Locked,
 } from "./execution"
 type BrowserOwner = {
@@ -62,24 +64,6 @@ type Failure = {
     | "already_claimed"
     | "identity_conflict"
     | "expired"
-}
-
-async function agentLocked(tx: Tx, input: Agent): Promise<Locked | null> {
-  const [identity] = await tx
-    .select({ id: sandboxAttempts.id })
-    .from(sandboxAttempts)
-    .where(eq(sandboxAttempts.callId, input.callId))
-  if (!identity) return null
-  const row = await locked(tx, identity.id)
-  if (
-    !row ||
-    row.call.source !== "sandbox" ||
-    row.attempt.protocol !== SANDBOX_PROTOCOL ||
-    !row.call.agentTokenHash ||
-    !secretsMatch(row.call.agentTokenHash, hashCredential(input.token))
-  )
-    return null
-  return row
 }
 
 function browserFailure(
@@ -101,30 +85,6 @@ function browserFailure(
   )
     return { kind: "invalid_controller" }
   return null
-}
-
-function owns(row: Locked, owner: SandboxOwner): boolean {
-  return (
-    validSandboxIdentity(owner.sessionId) &&
-    validSandboxIdentity(owner.bootId) &&
-    row.attempt.runtimeSessionId === owner.sessionId &&
-    row.attempt.runtimeBootId === owner.bootId
-  )
-}
-
-function control(row: Locked, now: Date): SandboxControl {
-  return {
-    stopRequested: row.attempt.stopRequestedAt !== null || isTerminal(row.call),
-    stopReason: row.attempt.stopReason,
-    startupDeadline: row.attempt.startupDeadline!.toISOString(),
-    executionDeadline: row.call.executionDeadline!.toISOString(),
-    presenceExpiresAt: row.attempt.presenceExpiresAt!.toISOString(),
-    serverTime: now.toISOString(),
-    pollIntervalMs: 3000,
-    controlLossTimeoutMs: 30000,
-    gracefulStopMs: 10000,
-    reportingGraceMs: 60000,
-  }
 }
 
 async function bounded<T>(

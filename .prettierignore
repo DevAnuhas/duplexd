@@ -1,6 +1,7 @@
 dist/
 node_modules/
 **/.venv/
+**/.mypy_cache/
 **/next-env.d.ts
 .next/
 .turbo/

@@ -102,6 +102,8 @@ def _install_runtime_fakes(
             self.handle_sigint = handle_sigint
             self.worker: FakeWorker | None = None
             self.cancelled = 0
+            self.bus = SimpleNamespace(stop=self.cleanup)
+            self.task_manager = SimpleNamespace(current_tasks=lambda: [])
             runners.append(self)
 
         async def add_workers(self, worker: FakeWorker) -> None:
@@ -109,6 +111,14 @@ def _install_runtime_fakes(
 
         async def cancel(self) -> None:
             self.cancelled += 1
+
+        async def _cancel_spawned_workers(self) -> None:
+            # This fake owns no background SDK tasks; the real-runner startup
+            # regression lives in test_startup_teardown.py.
+            pass
+
+        async def cleanup(self) -> None:
+            pass
 
         async def run(self) -> None:
             assert self.worker is not None
@@ -262,3 +272,101 @@ async def test_runtime_event_handlers_emit_delegation_and_transcripts(
         ("transcript_user", {"text": "hello"}),
         ("transcript_assistant", {"text": "goodbye"}),
     ]
+
+
+@pytest.mark.parametrize("voice_first", [False, True])
+async def test_sandbox_readiness_requires_both_actual_callbacks_and_greeting_is_browser_first_once(
+    monkeypatch: pytest.MonkeyPatch,
+    config_payload: dict[str, Any],
+    voice_first: bool,
+) -> None:
+    from test_sandbox import control
+
+    transport = FakeTransport()
+    _, _, workers, _ = _install_runtime_fakes(
+        monkeypatch,
+        transport=transport,
+        scenario="unobserved_stop",
+    )
+    models = _models()
+    reporter = FakeReporter()
+    watchdog = runtime.SandboxWatchdog(
+        cast(Any, SimpleNamespace(control_received_at=0.0)),
+        control(),
+        clock=lambda: 0.0,
+    )
+
+    async def run(_runner: Any) -> None:
+        # Browser connects before either actual media callback. It gets one greeting.
+        await transport.handlers["on_client_connected"](transport, object())
+        await transport.handlers["on_client_connected"](transport, object())
+        assert len(workers[0].queued) == 1
+        assert reporter.events == [] and not watchdog.ready
+        callbacks = [
+            (transport.handlers["on_connected"], transport),
+            (
+                cast(EventSource, models.voice_service).handlers["on_session_started"],
+                models.voice_service,
+            ),
+        ]
+        if voice_first:
+            callbacks.reverse()
+        await callbacks[0][0](callbacks[0][1], object())
+        assert reporter.events == [] and not watchdog.ready
+        await callbacks[1][0](callbacks[1][1], object())
+        await callbacks[0][0](callbacks[0][1], object())
+        await callbacks[1][0](callbacks[1][1], object())
+        assert reporter.events == [("agent_ready", {})] and watchdog.ready
+        assert len(workers[0].queued) == 1
+
+    monkeypatch.setattr(cast(Any, runtime).WorkerRunner, "run", run)
+    await runtime.run_call(
+        transport=cast(BaseTransport, transport),
+        runner_args=_runner_args(),
+        config=AgentConfig.from_response(config_payload),
+        models=models,
+        reporter=cast(Any, reporter),
+        watchdog=watchdog,
+    )
+    assert watchdog.reason is None  # A runner returning is not an observed call ending.
+    assert reporter.completions == []
+
+
+async def test_sandbox_late_callbacks_cannot_revive_expired_execution(
+    monkeypatch: pytest.MonkeyPatch,
+    config_payload: dict[str, Any],
+) -> None:
+    from test_sandbox import control
+
+    transport = FakeTransport()
+    _, _, workers, _ = _install_runtime_fakes(
+        monkeypatch, transport=transport, scenario="unobserved_stop"
+    )
+    models = _models()
+    reporter = FakeReporter()
+    clock = [0.0]
+    watchdog = runtime.SandboxWatchdog(
+        cast(Any, SimpleNamespace(control_received_at=0.0)),
+        control(),
+        clock=lambda: clock[0],
+    )
+
+    async def run(_runner: Any) -> None:
+        clock[0] = 30.0
+        await transport.handlers["on_connected"](transport, object())
+        await cast(EventSource, models.voice_service).handlers["on_session_started"](
+            models.voice_service, object()
+        )
+        await transport.handlers["on_client_connected"](transport, object())
+
+    monkeypatch.setattr(cast(Any, runtime).WorkerRunner, "run", run)
+    await runtime.run_call(
+        transport=cast(BaseTransport, transport),
+        runner_args=_runner_args(),
+        config=AgentConfig.from_response(config_payload),
+        models=models,
+        reporter=cast(Any, reporter),
+        watchdog=watchdog,
+    )
+    assert watchdog.reason == "control_lost"
+    assert reporter.events == [] and workers[0].queued == [] and not watchdog.ready

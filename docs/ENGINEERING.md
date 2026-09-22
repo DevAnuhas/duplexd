@@ -54,6 +54,8 @@ The config response uses camelCase consistently. Required keys are `assistantId`
 
 Reported event names are `bot_speech_started`, `bot_speech_stopped`, `tool_started`, `tool_finished`, `delegation_created`, `transcript_user`, `transcript_assistant`, and `interruption`. Tool events carry the tool name and invocation id; the terminal event additionally carries outcome, duration, and optional status/error category. Completion reasons are `client_disconnected`, `pipeline_error`, and `idle_timeout`.
 
+Those are the unchanged Integration shapes. The negotiated Sandbox protocol adds owner registration, one-time Practice configuration, independent control/watchdog tasks, actual readiness barriers, sequenced ACKs and a completion watermark. Its bounded reporter retains unacknowledged events and explicitly records loss/truncation; it does not claim all speech was captured. Apply additive migration `0007_famous_iron_man` before rolling out the new handlers/runtime; retain the ledger and handlers during rollback/drain. Production Sandbox dispatch/join/presence remain hard-disabled, without an enable flag or live adapter. [Wire contract, budgets and safe polling](architecture/sandbox-protocol.md).
+
 #### Provider and deployment verification
 
 Unit and integration tests use injected HTTP seams and do not claim to be a provider call. A real call requires `OPENAI_API_KEY`; absence is a blocked live-path check, not a passing fixture. Configure the `duplexd-agent-secrets` Pipecat Cloud secret set from a local file containing `OPENAI_API_KEY` and `DUPLEXD_PLATFORM_CREDENTIAL`, then deploy manually:

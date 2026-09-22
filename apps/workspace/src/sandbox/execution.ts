@@ -2,13 +2,78 @@ import { eq } from "drizzle-orm"
 
 import { getDb } from "@/db/client"
 import { calls, sandboxAttempts } from "@/db/schema"
+import { hashCredential } from "@/lib/credentials"
+import { secretsMatch } from "@/lib/crypto"
 
-import { SANDBOX_LIMITS as LIMITS } from "./protocol"
+import {
+  SANDBOX_LIMITS as LIMITS,
+  SANDBOX_PROTOCOL,
+  validSandboxIdentity,
+  type SandboxOwner,
+  type SandboxControl,
+} from "./protocol"
+
+export type SandboxAgent = {
+  callId: string
+  token: string
+  owner: SandboxOwner
+}
 
 type Db = ReturnType<typeof getDb>
 export type SandboxTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0]
 type Attempt = typeof sandboxAttempts.$inferSelect
 type Call = typeof calls.$inferSelect
+export async function lockSandboxAgent(
+  tx: SandboxTransaction,
+  input: Pick<SandboxAgent, "callId" | "token">
+): Promise<LockedSandboxExecution | null> {
+  const [identity] = await tx
+    .select({ id: sandboxAttempts.id })
+    .from(sandboxAttempts)
+    .where(eq(sandboxAttempts.callId, input.callId))
+  if (!identity) return null
+  const row = await lockSandboxExecution(tx, identity.id)
+  if (
+    !row ||
+    row.call.source !== "sandbox" ||
+    row.attempt.protocol !== SANDBOX_PROTOCOL ||
+    !row.call.agentTokenHash ||
+    !secretsMatch(row.call.agentTokenHash, hashCredential(input.token))
+  )
+    return null
+  return row
+}
+
+export function ownsSandboxExecution(
+  row: LockedSandboxExecution,
+  owner: SandboxOwner
+): boolean {
+  return (
+    validSandboxIdentity(owner.sessionId) &&
+    validSandboxIdentity(owner.bootId) &&
+    row.attempt.runtimeSessionId === owner.sessionId &&
+    row.attempt.runtimeBootId === owner.bootId
+  )
+}
+
+export function sandboxControl(
+  row: LockedSandboxExecution,
+  now: Date
+): SandboxControl {
+  return {
+    stopRequested:
+      row.attempt.stopRequestedAt !== null || isSandboxCallTerminal(row.call),
+    stopReason: row.attempt.stopReason,
+    startupDeadline: row.attempt.startupDeadline!.toISOString(),
+    executionDeadline: row.call.executionDeadline!.toISOString(),
+    presenceExpiresAt: row.attempt.presenceExpiresAt!.toISOString(),
+    serverTime: now.toISOString(),
+    pollIntervalMs: 3000,
+    controlLossTimeoutMs: 30000,
+    gracefulStopMs: 10000,
+    reportingGraceMs: 60000,
+  }
+}
 export type LockedSandboxExecution = { attempt: Attempt; call: Call }
 export async function lockSandboxExecution(
   tx: SandboxTransaction,

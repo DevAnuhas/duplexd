@@ -27,3 +27,7 @@ class PlatformRequestError(AgentStartupError):
 
 class BackendProbeError(AgentStartupError):
     """The configured backend model failed the required tool-call probe."""
+
+
+class RuntimeShutdownError(AgentError):
+    """Owned runtime teardown could not be confirmed; never seal completion."""
