@@ -215,37 +215,101 @@ export function createSandboxLifecycle(offline?: {
         kind: "dispatch" as const,
         callId: row.call.id,
         agentToken: token.raw,
+        executionDeadline: new Date(at.getTime() + LIMITS.executionMs),
       }
     })
     if (decision.kind !== "dispatch") return decision
     let result: Awaited<ReturnType<SandboxTransport["start"]>>
+    let retentionFailed = false
+    const dispatchController = new AbortController()
+    const dispatchTimer = setTimeout(
+      () => dispatchController.abort(),
+      LIMITS.dispatchMs
+    )
     try {
       result = normalizeStart(
-        await bounded((signal) =>
-          offline.transport.start(
-            {
-              callId: decision.callId,
-              apiBase: offline.apiBase,
-              agentToken: decision.agentToken,
+        // Abort remote work at its deadline, but never detach an observed
+        // identity's transaction. Settlement owns the original admission slot.
+        await offline.transport.start(
+          {
+            callId: decision.callId,
+            apiBase: offline.apiBase,
+            agentToken: decision.agentToken,
+          },
+          dispatchController.signal,
+          {
+            executionDeadline: decision.executionDeadline,
+            retainSession: async (sessionId) => {
+              if (!validSandboxIdentity(sessionId))
+                throw new Error("Invalid Sandbox session identity.")
+              try {
+                await getDb().transaction(async (tx) => {
+                  const row = (await locked(tx, input.attemptId))!
+                  const at = now()
+                  const inserted = await tx
+                    .insert(sandboxSessions)
+                    .values({
+                      attemptId: input.attemptId,
+                      sessionId,
+                      nextReconcileAt: at,
+                    })
+                    .onConflictDoNothing()
+                    .returning({ sessionId: sandboxSessions.sessionId })
+                  if (inserted.length) {
+                    // A newly observed identity is unresolved even if another
+                    // identity already stopped or stopIntent is a no-op.
+                    await tx
+                      .update(sandboxAttempts)
+                      .set({ resourceState: "possible" })
+                      .where(eq(sandboxAttempts.id, input.attemptId))
+                    row.attempt.resourceState = "possible"
+                  }
+                  if (
+                    row.attempt.runtimeSessionId &&
+                    row.attempt.runtimeSessionId !== sessionId
+                  ) {
+                    await tx
+                      .update(sandboxAttempts)
+                      .set({ identityConflictAt: at })
+                      .where(eq(sandboxAttempts.id, input.attemptId))
+                    await stopIntent(tx, row, "identity_conflict", at)
+                  }
+                })
+              } catch (error) {
+                // Failure to retain is not evidence that dispatch settled.
+                // Keep the original slot, even if all other refs are stopped.
+                retentionFailed = true
+                throw error
+              }
             },
-            signal
-          )
+          }
         )
       )
     } catch {
       result = { kind: "unknown" }
+    } finally {
+      clearTimeout(dispatchTimer)
+      dispatchController.abort()
     }
+    if (retentionFailed) result = { kind: "unknown" }
     await getDb().transaction(async (tx) => {
       const row = (await locked(tx, input.attemptId))!
       const at = now()
       await advance(tx, row, at)
-      await tx
-        .update(sandboxAttempts)
-        .set({ dispatchSettledAt: at })
-        .where(eq(sandboxAttempts.id, input.attemptId))
+      if (!retentionFailed)
+        await tx
+          .update(sandboxAttempts)
+          .set({ dispatchSettledAt: at })
+          .where(eq(sandboxAttempts.id, input.attemptId))
+      const retained = await tx
+        .select({ sessionId: sandboxSessions.sessionId })
+        .from(sandboxSessions)
+        .where(eq(sandboxSessions.attemptId, input.attemptId))
+        .limit(1)
       if (
         result.kind === "definite_no_start" &&
-        !row.attempt.runtimeSessionId
+        !row.attempt.runtimeSessionId &&
+        retained.length === 0
       ) {
         await tx
           .update(sandboxAttempts)

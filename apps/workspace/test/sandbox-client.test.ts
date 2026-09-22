@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest"
 
 import { SandboxController } from "@/sandbox/client/controller"
 import type { SandboxAttemptDto } from "@/sandbox/admission"
+import { sandboxResourcesReleased } from "@/sandbox/browser-contract"
 
 const input = {
   assistantId: "assistant-a",
@@ -33,6 +34,8 @@ function attempt(
     startupDeadline: null,
     executionDeadline: null,
     presenceExpiresAt: null,
+    readyAt: null,
+    serverTime: "2026-09-22T09:00:00Z",
     ...overrides,
   }
 }
@@ -44,6 +47,29 @@ function fetcher() {
 }
 
 describe("Sandbox preparation controller", () => {
+  it("requires resource proof even when the call is terminal", () => {
+    for (const resourceState of [
+      "possible",
+      "known_running",
+      "stop_requested",
+    ] as const) {
+      expect(
+        sandboxResourcesReleased(
+          attempt({ state: "failed", callState: "ended", resourceState })
+        )
+      ).toBe(false)
+    }
+    expect(sandboxResourcesReleased(attempt())).toBe(false)
+    expect(
+      sandboxResourcesReleased(attempt({ resourceState: "confirmed_stopped" }))
+    ).toBe(true)
+    for (const state of ["canceled", "expired"] as const) {
+      expect(sandboxResourcesReleased(attempt({ state }))).toBe(true)
+      expect(
+        sandboxResourcesReleased(attempt({ state, resourceState: "possible" }))
+      ).toBe(false)
+    }
+  })
   it("explains unsupported insecure browsers before any request", async () => {
     vi.stubGlobal("crypto", {})
     try {

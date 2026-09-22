@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto"
 
-import { eq } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 import { afterAll, describe, expect, it, vi } from "vitest"
 
 import { GET as configRoute } from "@/app/v1/agent/calls/[id]/config/route"
@@ -9,6 +9,7 @@ import { GET as controlRoute } from "@/app/v1/agent/calls/[id]/control/route"
 import { createAssistant } from "@/data/assistants"
 import { getWorkspaceCallForAccount } from "@/data/calls"
 import { closeDb, getDb } from "@/db/client"
+import * as databaseClient from "@/db/client"
 import {
   calls,
   sandboxAttempts,
@@ -23,6 +24,8 @@ import {
   prepareSandboxAttempt,
 } from "@/sandbox/admission"
 import { createSandboxLifecycle, sandboxLifecycle } from "@/sandbox/lifecycle"
+import { createPipecatSandboxTransport } from "@/sandbox/pipecat-transport"
+import { sandboxResourcesReleased } from "@/sandbox/browser-contract"
 import {
   SANDBOX_PROTOCOL,
   type SandboxJoin,
@@ -180,6 +183,410 @@ async function fixture() {
 describeDatabase(
   "offline Sandbox lifecycle (no provider capability claim)",
   () => {
+    it.each(["commit", "rollback"])(
+      "keeps delayed start identity B in cleanup and capacity after terminal registered A and dispatch timeout (%s)",
+      async (durability) => {
+        const f = await fixture()
+        const sessionA = "11111111-1111-4111-8111-111111111111"
+        const sessionB = "55555555-5555-4555-8555-555555555555"
+        const providerBinding = {
+          organizationId: "22222222-2222-4222-8222-222222222222",
+          serviceId: "33333333-3333-4333-8333-333333333333",
+          deploymentId: "44444444-4444-4444-8444-444444444444",
+          agentName: "synthetic-agent",
+        }
+        const response = deferred<Response>()
+        const postEntered = deferred<void>()
+        const retentionEntered = deferred<void>()
+        const retentionGate = deferred<void>()
+        const retentionCommitted = deferred<void>()
+        let gateNextTransaction = false
+        let terminalB = false
+        let agentToken = ""
+        let at = new Date(f.initial)
+        let requestSignal: AbortSignal | null = null
+        const db = getDb()
+        const transact = db.transaction.bind(db)
+        // Delay only this exact transaction BEFORE BEGIN/the attempt row lock.
+        // Every query, commit, registration and reconciliation uses real PG.
+        const transaction: typeof db.transaction = async (callback, config) => {
+          if (!gateNextTransaction) return transact(callback, config)
+          gateNextTransaction = false
+          retentionEntered.resolve()
+          await retentionGate.promise
+          try {
+            return await transact(async (tx) => {
+              const result = await callback(tx)
+              if (durability === "rollback") {
+                // A real PG error rolls back B and every write in its retention
+                // transaction, after A has independently been confirmed stopped.
+                await tx.execute(sql`select 1 / 0`)
+              }
+              return result
+            }, config)
+          } finally {
+            retentionCommitted.resolve()
+          }
+        }
+        const dbSpy = vi.spyOn(databaseClient, "getDb").mockReturnValue(
+          new Proxy(db, {
+            get(target, property, receiver) {
+              return property === "transaction"
+                ? transaction
+                : Reflect.get(target, property, receiver)
+            },
+          })
+        )
+        const fetch = vi
+          .fn<typeof globalThis.fetch>()
+          .mockImplementation(async (url, request) => {
+            if (request?.method === "POST") {
+              agentToken = JSON.parse(String(request.body)).body.agentToken
+              requestSignal = request.signal ?? null
+              postEntered.resolve()
+              const result = await response.promise
+              gateNextTransaction = true
+              return result
+            }
+            const sessionId = String(url).split("/").at(-1)
+            if (request?.method === "DELETE")
+              return Response.json({
+                session_id: sessionId,
+                status: "terminated",
+              })
+            const terminal = sessionId === sessionA || terminalB
+            return Response.json({
+              sessionId,
+              organizationId: providerBinding.organizationId,
+              serviceId: providerBinding.serviceId,
+              deploymentId: providerBinding.deploymentId,
+              createdAt: new Date(f.initial).toISOString(),
+              endedAt: terminal ? at.toISOString() : null,
+              completionStatus: terminal ? "completed" : null,
+            })
+          })
+        const transport = createPipecatSandboxTransport({
+          publicApiKey: "synthetic-public",
+          privateApiKey: "synthetic-private",
+          binding: providerBinding,
+          fetchImpl: fetch,
+          now: () => at,
+        })
+        const lifecycle = createSandboxLifecycle({
+          transport,
+          binding: providerBinding,
+          apiBase: "https://platform.example.test",
+          now: () => at,
+        })
+        let dispatchSettled = false
+        const dispatch = lifecycle.dispatch(f.browser).then((result) => {
+          dispatchSettled = true
+          return result
+        })
+        try {
+          await postEntered.promise
+          const callId = (await f.rows()).call.id
+          expect(
+            await lifecycle.register({
+              callId,
+              token: agentToken,
+              owner: { sessionId: sessionA, bootId: "boot-a" },
+            })
+          ).toEqual({ kind: "ok" })
+          await lifecycle.stop(f.browser)
+          const beforeB = await f.rows()
+          expect(beforeB.sessions).toMatchObject([
+            { sessionId: sessionA, resourceState: "confirmed_stopped" },
+          ])
+          expect(beforeB.attempt.dispatchSettledAt).toBeNull()
+          expect(beforeB.slots).toHaveLength(1)
+
+          response.resolve(
+            Response.json({
+              sessionId: sessionB,
+              dailyRoom: "https://synthetic.daily.co/test",
+              dailyToken: "synthetic-token",
+            })
+          )
+          await retentionEntered.promise
+          // The real 15-second dispatch timer fires while B has not acquired a
+          // transaction/row lock. No database writes or outcomes are mocked.
+          await vi.waitFor(() => expect(requestSignal?.aborted).toBe(true), {
+            timeout: 20_000,
+            interval: 20,
+          })
+          await new Promise((resolve) => setTimeout(resolve, 100))
+          at = new Date(f.initial + 15_000)
+          await lifecycle.reconcile(f.browser.attemptId)
+          const timedOut = await f.rows()
+          expect
+            .soft(dispatchSettled, "timeout cannot detach identity persistence")
+            .toBe(false)
+          expect.soft(timedOut.attempt.dispatchSettledAt).toBeNull()
+          expect
+            .soft(
+              timedOut.slots,
+              "A alone cannot release capacity while B retention is pending"
+            )
+            .toHaveLength(1)
+
+          retentionGate.resolve()
+          await retentionCommitted.promise
+          await dispatch
+          const committed = await f.rows()
+          if (durability === "rollback") {
+            expect(committed.sessions.map((row) => row.sessionId)).toEqual([
+              sessionA,
+            ])
+            expect(committed.attempt.dispatchSettledAt).toBeNull()
+            expect(committed.attempt.resourceState).not.toBe(
+              "confirmed_stopped"
+            )
+            expect(committed.attempt.joinCiphertext).toBeNull()
+            expect(committed.slots).toMatchObject([
+              { accountId: f.browser.accountId, userId: f.browser.userId },
+            ])
+            expect(await lifecycle.join(f.browser)).not.toHaveProperty("join")
+            at = new Date(f.initial + 40_000)
+            expect(await lifecycle.sweep()).toBeGreaterThan(0)
+            expect((await f.rows()).attempt.dispatchSettledAt).toBeNull()
+            expect((await f.rows()).slots).toHaveLength(1)
+            expect((await f.rows()).call.state).not.toBe("ended")
+            expect(
+              fetch.mock.calls.filter(
+                ([, request]) => request?.method === "POST"
+              )
+            ).toHaveLength(1)
+            return
+          }
+          expect
+            .soft(committed.sessions.map((row) => row.sessionId).sort())
+            .toEqual([sessionA, sessionB].sort())
+          expect
+            .soft(committed.attempt.resourceState)
+            .not.toBe("confirmed_stopped")
+          expect
+            .soft(
+              committed.slots,
+              "unresolved B must remain in account slot accounting"
+            )
+            .toHaveLength(1)
+          expect
+            .soft(
+              committed.sessions.find((row) => row.sessionId === sessionB)
+                ?.confirmedStoppedAt
+            )
+            .toBeNull()
+
+          at = new Date(f.initial + 20_000)
+          const callsBeforeSweep = fetch.mock.calls.length
+          await lifecycle.sweep()
+          expect
+            .soft(
+              fetch.mock.calls
+                .slice(callsBeforeSweep)
+                .some(
+                  ([url, request]) =>
+                    String(url).endsWith(sessionB) && request?.method === "GET"
+                ),
+              "sweep must still discover unresolved B"
+            )
+            .toBe(true)
+          expect.soft((await f.rows()).slots).toHaveLength(1)
+          terminalB = true
+          at = new Date(f.initial + 40_000)
+          await lifecycle.sweep()
+          const stopped = await f.rows()
+          expect(
+            stopped.sessions.every(
+              (row) => row.resourceState === "confirmed_stopped"
+            )
+          ).toBe(true)
+          expect(stopped.attempt.resourceState).toBe("confirmed_stopped")
+          expect(stopped.slots).toHaveLength(0)
+          expect(
+            fetch.mock.calls.filter(([, request]) => request?.method === "POST")
+          ).toHaveLength(1)
+        } finally {
+          retentionGate.resolve()
+          response.resolve(Response.json({ sessionId: sessionB }))
+          try {
+            await dispatch
+          } finally {
+            dbSpy.mockRestore()
+          }
+        }
+      }
+    )
+
+    it.each(["malformed_media", "unverified_media", "verifier_failure"])(
+      "retains the real adapter's observed identity on %s and requires independent terminal GET to release",
+      async (failure) => {
+        const f = await fixture()
+        const sessionId = "11111111-1111-4111-8111-111111111111"
+        const providerBinding = {
+          organizationId: "22222222-2222-4222-8222-222222222222",
+          serviceId: "33333333-3333-4333-8333-333333333333",
+          deploymentId: "44444444-4444-4444-8444-444444444444",
+          agentName: "synthetic-agent",
+        }
+        let at = new Date(f.initial)
+        let readStatus = 200
+        let terminal = false
+        const fetch = vi
+          .fn<typeof globalThis.fetch>()
+          .mockImplementation(async (_url, request) => {
+            if (request?.method === "POST")
+              return Response.json({
+                sessionId,
+                dailyRoom:
+                  failure === "malformed_media"
+                    ? null
+                    : "https://synthetic.daily.co/test",
+                dailyToken: "CANARY_BROWSER_TOKEN",
+              })
+            // These DB queries use a separate transaction, proving retention
+            // committed before verification or exact-resource cleanup began.
+            expect(
+              (await f.rows()).sessions.map((row) => row.sessionId)
+            ).toEqual([sessionId])
+            if (request?.method === "DELETE")
+              return Response.json({
+                session_id: sessionId,
+                status: "terminated",
+              })
+            expect(request?.method).toBe("GET")
+            if (readStatus === 404) return Response.json({}, { status: 404 })
+            return Response.json({
+              sessionId,
+              organizationId: providerBinding.organizationId,
+              serviceId: providerBinding.serviceId,
+              deploymentId: providerBinding.deploymentId,
+              createdAt: new Date(f.initial).toISOString(),
+              endedAt: terminal ? at.toISOString() : null,
+              completionStatus: terminal ? "completed" : null,
+            })
+          })
+        let retainedAtVerification: string[] = []
+        const verify = vi.fn(async () => {
+          retainedAtVerification = (await f.rows()).sessions.map(
+            (row) => row.sessionId
+          )
+          throw new Error("CANARY_VERIFIER_FAILURE")
+        })
+        const transport = createPipecatSandboxTransport({
+          publicApiKey: "synthetic-public",
+          privateApiKey: "synthetic-private",
+          binding: providerBinding,
+          fetchImpl: fetch,
+          now: () => at,
+          ...(failure === "verifier_failure"
+            ? { verifyBrowserMedia: verify }
+            : {}),
+        })
+        const lifecycle = createSandboxLifecycle({
+          transport,
+          binding: providerBinding,
+          apiBase: "https://platform.example.test",
+          now: () => at,
+        })
+        await expect(lifecycle.dispatch(f.browser)).resolves.toEqual({
+          kind: "processed",
+        })
+        const unknown = await f.rows()
+        expect(unknown.attempt.dispatchSettledAt).not.toBeNull()
+        expect(unknown.attempt.stopReason).toBe("start_unknown")
+        expect(unknown.attempt.joinCiphertext).toBeNull()
+        expect(unknown.sessions).toHaveLength(1)
+        expect(unknown.sessions[0]!.sessionId).toBe(sessionId)
+        expect(unknown.sessions[0]!.stopAttempts).toBe(1)
+        expect(unknown.attempt.resourceState).not.toBe("confirmed_stopped")
+        expect(unknown.slots).toHaveLength(1)
+        expect(fetch.mock.calls.map(([, request]) => request!.method)).toEqual([
+          "POST",
+          "GET",
+          "GET",
+          "DELETE",
+        ])
+        if (failure === "verifier_failure") {
+          expect(verify).toHaveBeenCalledTimes(1)
+          expect(retainedAtVerification).toEqual([sessionId])
+        }
+        expect(await lifecycle.join(f.browser)).not.toHaveProperty("join")
+
+        readStatus = 404
+        at = new Date(f.initial + 5_000)
+        await lifecycle.reconcile(f.browser.attemptId)
+        expect((await f.rows()).slots).toHaveLength(1)
+        expect((await f.rows()).sessions[0]!.confirmedStoppedAt).toBeNull()
+        expect(
+          fetch.mock.calls.filter(([, request]) => request!.method === "DELETE")
+        ).toHaveLength(1)
+
+        readStatus = 200
+        terminal = true
+        at = new Date(f.initial + 20_000)
+        await lifecycle.reconcile(f.browser.attemptId)
+        const stopped = await f.rows()
+        expect(stopped.slots).toHaveLength(0)
+        expect(stopped.attempt.resourceState).toBe("confirmed_stopped")
+        expect(stopped.sessions[0]!.confirmedStoppedAt).toEqual(at)
+        expect(stopped.call.state).toBe("failed")
+        expect(stopped.call.state).not.toBe("ended")
+        expect(
+          fetch.mock.calls.filter(([, request]) => request!.method === "POST")
+        ).toHaveLength(1)
+        expect(
+          fetch.mock.calls.filter(([, request]) => request!.method === "DELETE")
+        ).toHaveLength(1)
+      }
+    )
+
+    it("does not let a contradictory no-start result erase a durably retained session", async () => {
+      const f = await fixture()
+      let retainedBeforeRejection: string[] = []
+      f.transport.start.mockImplementation(async (_input, _signal, context) => {
+        await context.retainSession(f.owner.sessionId)
+        retainedBeforeRejection = (await f.rows()).sessions.map(
+          (row) => row.sessionId
+        )
+        return { kind: "definite_no_start" }
+      })
+      await f.lifecycle.dispatch(f.browser)
+      expect(retainedBeforeRejection).toEqual([f.owner.sessionId])
+      expect((await f.rows()).slots).toHaveLength(1)
+      expect((await f.rows()).attempt.resourceState).not.toBe(
+        "confirmed_stopped"
+      )
+      expect((await f.rows()).attempt.stopReason).toBe("start_unknown")
+      expect(f.transport.stop).toHaveBeenCalledTimes(1)
+    })
+
+    it("projects safe readiness and server time without treating call completion as resource release", async () => {
+      const f = await fixture()
+      const before = await getSandboxAttemptForAccount({
+        ...f.browser,
+        now: new Date(f.initial),
+      })
+      expect(before).toMatchObject({
+        readyAt: null,
+        serverTime: new Date(f.initial).toISOString(),
+        execution: "disabled",
+      })
+      await f.activate()
+      const at = new Date(f.initial + 5_000)
+      const after = await getSandboxAttemptForAccount({ ...f.browser, now: at })
+      expect(after).toMatchObject({
+        readyAt: new Date(f.initial).toISOString(),
+        serverTime: at.toISOString(),
+        execution: "disabled",
+      })
+      expect(JSON.stringify(after)).not.toMatch(
+        /controller|credential|token|daily|room|secret|sessionId|bootId|organizationId|serviceId|deploymentId/i
+      )
+      expect(sandboxResourcesReleased(after!)).toBe(false)
+    })
+
     it("retains the exact resource and stops when join encryption is unavailable", async () => {
       const f = await fixture()
       vi.stubEnv("ASSISTANT_SECRET_KEY", "")

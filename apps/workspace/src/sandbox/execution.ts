@@ -133,11 +133,8 @@ export async function advanceSandboxExecution(
     !a.dispatchSettledAt &&
     now.getTime() >= a.dispatchedAt.getTime() + LIMITS.dispatchMs
   ) {
-    await tx
-      .update(sandboxAttempts)
-      .set({ dispatchSettledAt: now })
-      .where(eq(sandboxAttempts.id, a.id))
-    a.dispatchSettledAt = now
+    // Elapsed time requests shutdown, not settlement: start may still own a
+    // delayed identity transaction (or have lost durable settlement entirely).
     await requestSandboxStop(
       tx,
       row,
