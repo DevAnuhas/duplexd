@@ -807,7 +807,7 @@ export function createSandboxLifecycle(offline?: {
         (evidence.kind === "session" && !matched)
       const terminal =
         matched && evidence.kind === "session" && evidence.state === "stopped"
-      const stopNow = await getDb().transaction(async (tx) => {
+      const retryDelay = await getDb().transaction(async (tx) => {
         await locked(tx, attemptId)
         const [session] = await tx
           .select()
@@ -818,7 +818,7 @@ export function createSandboxLifecycle(offline?: {
               eq(sandboxSessions.sessionId, reference.sessionId)
             )
           )
-        if (!session || session.reconcileToken !== leaseToken) return false
+        if (!session || session.reconcileToken !== leaseToken) return null
         const sendStop = matched && !terminal && session.stopAttempts < 3
         await tx
           .update(sandboxSessions)
@@ -841,10 +841,10 @@ export function createSandboxLifecycle(offline?: {
               eq(sandboxSessions.sessionId, reference.sessionId)
             )
           )
-        return sendStop
+        return sendStop ? (session.stopAttempts === 0 ? 5_000 : 15_000) : null
       })
       // Count committed before mutation: a crashed/lost DELETE consumes its try.
-      if (stopNow) {
+      if (retryDelay !== null) {
         try {
           await bounded((signal) =>
             offline.transport.stop(reference.sessionId, signal)
@@ -855,9 +855,7 @@ export function createSandboxLifecycle(offline?: {
         await getDb()
           .update(sandboxSessions)
           .set({
-            nextReconcileAt: new Date(
-              now().getTime() + (reference.stopAttempts === 0 ? 5_000 : 15_000)
-            ),
+            nextReconcileAt: new Date(now().getTime() + retryDelay),
           })
           .where(
             and(

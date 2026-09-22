@@ -478,6 +478,48 @@ describeDatabase(
       expect((await f.rows()).slots).toHaveLength(1)
     })
 
+    it("derives retry spacing from the locked counter when another reconciler advances a later target", async () => {
+      const f = await fixture()
+      await f.lifecycle.dispatch(f.browser)
+      await getDb()
+        .insert(sandboxSessions)
+        .values({
+          attemptId: f.browser.attemptId,
+          sessionId: "second-exact-session",
+          nextReconcileAt: new Date(f.initial),
+        })
+      await getDb()
+        .update(sandboxAttempts)
+        .set({
+          stopRequestedAt: new Date(f.initial),
+          stopReason: "identity_conflict",
+          state: "stopping",
+        })
+        .where(eq(sandboxAttempts.id, f.browser.attemptId))
+      const entered = deferred<void>()
+      const release = deferred<void>()
+      let paused: string | null = null
+      f.transport.read.mockImplementation(async (sessionId) => {
+        if (paused === null) {
+          paused = sessionId
+          entered.resolve()
+          await release.promise
+        }
+        return { kind: "session", sessionId, binding, state: "running" }
+      })
+      const first = f.lifecycle.reconcile(f.browser.attemptId)
+      await entered.promise
+      await f.lifecycle.reconcile(f.browser.attemptId)
+      f.at(6_000)
+      release.resolve()
+      await first
+      const later = (await f.rows()).sessions.find(
+        (session) => session.sessionId !== paused
+      )!
+      expect(later.stopAttempts).toBe(2)
+      expect(later.nextReconcileAt.getTime()).toBe(f.initial + 21_000)
+    })
+
     it("enforces stop grace and reporting grace without inventing a clean ending", async () => {
       const f = await fixture()
       await f.activate()
