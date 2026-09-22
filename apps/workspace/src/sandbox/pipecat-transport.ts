@@ -176,7 +176,7 @@ export function createPipecatSandboxTransport(
     const timer = setTimeout(onAbort, SANDBOX_LIMITS.dispatchMs)
     try {
       if (signal.aborted) throw new SandboxProviderError("network_unknown")
-      return await Promise.race([
+      const { response, value } = await Promise.race([
         canceled,
         (async () => {
           const response = await fetchImpl(`${PIPECAT_START_ORIGIN}${path}`, {
@@ -197,9 +197,12 @@ export function createPipecatSandboxTransport(
             // An HTTP rejection remains observable even if its error body is not JSON.
             if (response.status === 200) throw error
           }
-          return consume(response, value, abort.signal)
+          return { response, value }
         })(),
       ])
+      // Only remote work races the deadline. Once observed, identity persistence
+      // is owned by this request until it settles, even after HTTP cancellation.
+      return await consume(response, value, abort.signal)
     } catch (error) {
       if (error instanceof SandboxProviderError) throw error
       throw new SandboxProviderError("network_unknown")
@@ -341,18 +344,30 @@ export function createPipecatSandboxTransport(
                 reason: "browser_media_contract_unverified",
               }
             let credential: { expiresAt: string } | null
+            let cancelVerification: () => void = () => {}
             try {
-              credential = await verifyBrowserMedia({
-                sessionId,
-                dailyRoom: value.dailyRoom,
-                dailyToken: value.dailyToken,
-                maximumExpiresAt: new Date(expires * 1000).toISOString(),
+              const canceled = new Promise<null>((resolve) => {
+                cancelVerification = () => resolve(null)
               })
+              requestSignal.addEventListener("abort", cancelVerification, {
+                once: true,
+              })
+              credential = await Promise.race([
+                canceled,
+                verifyBrowserMedia({
+                  sessionId,
+                  dailyRoom: value.dailyRoom,
+                  dailyToken: value.dailyToken,
+                  maximumExpiresAt: new Date(expires * 1000).toISOString(),
+                }),
+              ])
             } catch {
               return {
                 kind: "unknown",
                 reason: "browser_media_contract_unverified",
               }
+            } finally {
+              requestSignal.removeEventListener("abort", cancelVerification)
             }
             const expiry = credential ? timestamp(credential.expiresAt) : NaN
             if (

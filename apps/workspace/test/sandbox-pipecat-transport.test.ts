@@ -77,6 +77,63 @@ afterEach(() => {
 })
 
 describe("Pipecat Sandbox thin transport, fake fetch only", () => {
+  it.each(["abort", "timeout"])(
+    "awaits delayed identity durability before settling after %s",
+    async (cancellation) => {
+      vi.useFakeTimers()
+      let release!: () => void
+      let entered!: () => void
+      let durable = false
+      const retentionEntered = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      const retentionGate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const verify = vi.fn(syntheticVerifier)
+      const f = fixture(verify)
+      f.retainSession.mockImplementation(async () => {
+        entered()
+        await retentionGate
+        durable = true
+      })
+      f.fetch.mockResolvedValue(Response.json(media))
+      const abort = new AbortController()
+      let settled = false
+      let durableAtSettlement = false
+      const pending = f.start(abort.signal).then((result) => {
+        settled = true
+        durableAtSettlement = durable
+        return result
+      })
+      try {
+        await retentionEntered
+        if (cancellation === "abort") abort.abort()
+        await vi.advanceTimersByTimeAsync(
+          cancellation === "timeout" ? SANDBOX_LIMITS.dispatchMs : 0
+        )
+        expect
+          .soft(
+            settled,
+            "start must not detach an in-flight retention callback"
+          )
+          .toBe(false)
+        expect(durable).toBe(false)
+        release()
+        expect(await pending).toMatchObject({ kind: "unknown" })
+        expect(
+          durableAtSettlement,
+          "returned identity must be durable before unknown settles"
+        ).toBe(true)
+        expect(verify).not.toHaveBeenCalled()
+        expect(f.fetch).toHaveBeenCalledTimes(1)
+      } finally {
+        release()
+        await pending
+      }
+    }
+  )
+
   it("imports and constructs without environment or network access", async () => {
     const network = vi
       .fn<typeof fetch>()
@@ -363,7 +420,7 @@ describe("Pipecat Sandbox thin transport, fake fetch only", () => {
     release({ expiresAt: deadline.toISOString() })
     expect(await pending).toEqual({
       kind: "unknown",
-      reason: "network_unknown",
+      reason: "browser_media_contract_unverified",
     })
     expect(f.retainSession).toHaveBeenCalledExactlyOnceWith(sessionId)
   })

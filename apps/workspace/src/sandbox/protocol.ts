@@ -140,12 +140,17 @@ export type SandboxBinding = {
  * empty listing or elapsed time is NOT terminal proof.
  */
 export type SandboxTransport = {
+  /**
+   * Bound remote work by signal, but await every observed identity's retention
+   * before settling (including on abort/failure). No detached retention work:
+   * lifecycle cannot release the original slot until start settles durably.
+   */
   start(
     input: { callId: string; apiBase: string; agentToken: string },
     signal: AbortSignal,
     context: {
       executionDeadline: Date
-      /** Commit identity before validating media; failures must deny join. */
+      /** Commit identity before validating media; failures deny join/release. */
       retainSession: (sessionId: string) => Promise<void>
     }
   ): Promise<
