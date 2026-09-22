@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import { CaretDown, Copy, SpinnerGap } from "@phosphor-icons/react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { useState, useTransition } from "react"
+import { useEffect, useRef, useState, useTransition } from "react"
 import {
   Controller,
   useForm,
@@ -56,6 +56,8 @@ import {
 } from "@/lib/assistant-schema"
 import { summarizeTools } from "@/lib/tools-summary"
 import type { ValidationIssue } from "@/lib/validate"
+import { useAssistantDraft, useOptionalAssistantDraft } from "./[id]/draft-host"
+import { fieldsDirty, previewFields } from "@/sandbox/client/draft-store"
 import { AssistantNavigation } from "./assistant-navigation"
 
 export type AssistantFormValues = {
@@ -168,15 +170,29 @@ function AssistantTextField({
  * successful write resets to the submitted values with only the credential
  * entry and explicit clear instruction removed. Collapsed tools stay mounted.
  */
-export function AssistantForm({
-  values,
-  action,
-  submitLabel,
-}: {
+type AssistantFormProps = {
   values: AssistantFormValues
   action: (formData: FormData) => Promise<ActionResult>
   submitLabel: string
-}) {
+}
+export function AssistantForm(props: AssistantFormProps) {
+  const host = useOptionalAssistantDraft()
+  return host === null ? (
+    <AssistantFormEditor {...props} />
+  ) : (
+    <HostedAssistantForm {...props} />
+  )
+}
+function HostedAssistantForm(props: AssistantFormProps) {
+  const draft = useAssistantDraft()
+  return <AssistantFormEditor {...props} draft={draft} />
+}
+function AssistantFormEditor({
+  values,
+  action,
+  submitLabel,
+  draft,
+}: AssistantFormProps & { draft?: ReturnType<typeof useAssistantDraft> }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
   const [hasSecret, setHasSecret] = useState(values.hasServerSecret === true)
@@ -196,6 +212,7 @@ export function AssistantForm({
       serverSecret: "",
       clearServerSecret: false,
       tools: JSON.stringify(values.tools ?? [], null, 2),
+      ...draft?.state.fields,
     },
     shouldFocusError: false,
   })
@@ -205,6 +222,57 @@ export function AssistantForm({
     summarizeTools(form.getValues("tools"))
   )
   const { isDirty, isSubmitting } = form.formState
+  const resetFromHost = useRef(false)
+  const epoch = draft?.state.formEpoch
+  const store = draft?.store
+  useEffect(() => {
+    if (store === undefined) return
+    const state = store.getSnapshot()
+    resetFromHost.current = true
+    form.reset({
+      ...form.getValues(),
+      ...state.fields,
+      ...(state.editorOnlyDirty
+        ? {}
+        : {
+            name: values.name ?? "",
+            serverUrl: values.serverUrl ?? "",
+            serverSecret: "",
+            clearServerSecret: false,
+          }),
+    })
+    resetFromHost.current = false
+    setToolsSummary(summarizeTools(state.fields.tools))
+  }, [epoch, store, form, values.name, values.serverUrl])
+  useEffect(() => {
+    if (store === undefined) return
+    const subscription = form.watch(() => {
+      if (resetFromHost.current) return
+      const input = form.getValues()
+      store.edit(input)
+      store.setEditorOnlyDirty(
+        input.name !== (values.name ?? "") ||
+          input.serverUrl !== (values.serverUrl ?? "") ||
+          input.serverSecret !== "" ||
+          input.clearServerSecret
+      )
+    })
+    return () => {
+      subscription.unsubscribe()
+    }
+  }, [store, form, values.name, values.serverUrl])
+  // Replacing the watcher after a server refresh is not leaving Configure.
+  // Only the form's actual lifetime owns clearing its editor-local dirty flag.
+  useEffect(() => () => store?.setEditorOnlyDirty(false), [store])
+  const changes =
+    isDirty ||
+    (draft !== undefined &&
+      (fieldsDirty(draft.state) || draft.state.editorOnlyDirty))
+  const locked = draft?.locked === true
+  const conflict =
+    draft !== undefined &&
+    (draft.state.assistantConflict !== null ||
+      draft.state.sampleConflict !== null)
 
   function focusError(name: keyof AssistantFormInput) {
     if (name === "tools") setToolsOpen(true)
@@ -242,9 +310,12 @@ export function AssistantForm({
   }
 
   async function submit(input: AssistantFormInput) {
+    if (locked || conflict || store?.getSnapshot().saving) return
+    store?.setSaving(true)
     const data = new FormData()
-    if (revision !== undefined) {
-      data.set("expectedRevision", String(revision))
+    const expectedRevision = draft?.state.baseRevision ?? revision
+    if (expectedRevision !== undefined) {
+      data.set("expectedRevision", String(expectedRevision))
     }
     for (const [name, value] of Object.entries(input)) {
       if (name === "clearServerSecret") {
@@ -262,13 +333,24 @@ export function AssistantForm({
         try {
           const result = await action(data)
           if (!result.ok) {
+            if (result.currentRevision !== undefined) {
+              store?.conflict("assistant", result.currentRevision)
+              router.refresh()
+            }
             reject(result.issues)
             return
           }
           if (input.serverSecret.trim() !== "") setHasSecret(true)
           else if (input.clearServerSecret) setHasSecret(false)
-          if (result.revision !== undefined) setRevision(result.revision)
+          if (result.revision !== undefined) {
+            setRevision(result.revision)
+            store?.savedAssistant(previewFields(input), result.revision)
+          }
+          // The explicit save already established the new baseline. Do not
+          // compare this reset with stale server props in the form watcher.
+          resetFromHost.current = true
           form.reset({ ...input, serverSecret: "", clearServerSecret: false })
+          resetFromHost.current = false
           toast.success("Saved")
           if (values.id === undefined && result.assistantId !== undefined) {
             router.replace(`/assistants/${result.assistantId}`)
@@ -280,6 +362,7 @@ export function AssistantForm({
           form.setError("root.server", { message })
           toast.error(message)
         } finally {
+          store?.setSaving(false)
           resolve()
         }
       })
@@ -335,9 +418,13 @@ export function AssistantForm({
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <span role="status" className="text-sm text-muted-foreground">
-            {isSubmitting ? "Saving…" : isDirty ? "Unsaved changes" : ""}
+            {isSubmitting ? "Saving…" : changes ? "Unsaved changes" : ""}
           </span>
-          <Button type="submit" disabled={isSubmitting} className="min-h-11">
+          <Button
+            type="submit"
+            disabled={isSubmitting || locked || conflict}
+            className="min-h-11"
+          >
             {isSubmitting && (
               <SpinnerGap
                 weight="regular"
@@ -355,7 +442,7 @@ export function AssistantForm({
         <AssistantNavigation
           assistantId={values.id}
           active="configure"
-          hasUnsavedChanges={isDirty || isSubmitting}
+          hasUnsavedChanges={draft === undefined && (isDirty || isSubmitting)}
         />
       )}
 
@@ -370,7 +457,7 @@ export function AssistantForm({
         ))}
       </nav>
 
-      <FieldSet disabled={isSubmitting} className="min-w-0">
+      <FieldSet disabled={isSubmitting || locked} className="min-w-0">
         <FieldLegend className="sr-only">Assistant configuration</FieldLegend>
         <Card id="identity" className="scroll-mt-40 rounded-lg shadow-none">
           <CardHeader>

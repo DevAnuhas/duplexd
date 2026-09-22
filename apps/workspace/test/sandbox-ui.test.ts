@@ -11,6 +11,19 @@ import {
 import { rileyPracticeTemplate } from "@/practice/riley"
 import { click } from "./helpers/assistant-form/render.ts"
 
+const validation = vi.hoisted(() => ({
+  issues: [] as Array<{ field: string; message: string }>,
+}))
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh() {} }) }))
+vi.mock("@/app/(app)/assistants/draft-actions", () => ({
+  validateAssistantDraft: vi.fn(async () => ({
+    issues: validation.issues,
+    tools: [],
+  })),
+}))
+import { AssistantDraftProvider } from "@/app/(app)/assistants/[id]/draft-host"
+import { previewFields } from "@/sandbox/client/draft-store"
+
 let root: Root | undefined
 let container: HTMLDivElement | undefined
 const initial: SandboxProps = {
@@ -21,10 +34,6 @@ const initial: SandboxProps = {
     voice: "marin",
     backendModel: "gpt-5.6-luna",
   },
-  samples: rileyPracticeTemplate().samples,
-  sampleRevision: 0,
-  sampleSource: "riley",
-  issues: [],
 }
 function stubFetch() {
   const calls: Array<{ path: string; options?: RequestInit }> = []
@@ -59,12 +68,39 @@ function stubFetch() {
   )
   return calls
 }
-async function render(props = initial) {
+async function render(
+  props = initial,
+  issues: Array<{ field: string; message: string }> = []
+) {
+  validation.issues = issues
   container = document.createElement("div")
   document.body.append(container)
   await act(async () => {
     root = createRoot(container!)
-    root.render(createElement(StrictMode, null, createElement(Sandbox, props)))
+    root.render(
+      createElement(
+        StrictMode,
+        null,
+        createElement(AssistantDraftProvider, {
+          seed: {
+            assistantId: props.assistant.id,
+            revision: props.assistant.revision,
+            fields: previewFields({
+              voice: "marin",
+              backendModel: "gpt-5.6-luna",
+              tools: "[]",
+            }),
+            sampleRevision: 0,
+            definitions: [],
+            suggestedDefinitions: rileyPracticeTemplate().samples,
+          },
+          children: createElement(Sandbox, props),
+        })
+      )
+    )
+  })
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 450))
   })
 }
 function button(text: string) {
@@ -109,7 +145,7 @@ describe("Sandbox workspace UI", () => {
       source: "saved",
       baseRevision: 3,
       sampleRevision: 0,
-      samples: initial.samples,
+      samples: rileyPracticeTemplate().samples,
       scenario: {
         transport: "success",
         overrides: { get_property_information: "unavailable" },
@@ -132,15 +168,9 @@ describe("Sandbox workspace UI", () => {
   })
   it("blocks preparation for compiler issues with a repair link", async () => {
     const calls = stubFetch()
-    await render({
-      ...initial,
-      issues: [
-        {
-          field: "samples",
-          message: "Tool changed; review its sample mapping.",
-        },
-      ],
-    })
+    await render(initial, [
+      { field: "samples", message: "Tool changed; review its sample mapping." },
+    ])
     expect(container!.textContent).toContain(
       "Tool changed; review its sample mapping."
     )
