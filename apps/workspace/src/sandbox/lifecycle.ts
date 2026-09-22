@@ -38,11 +38,14 @@ import {
   type SandboxTransport,
 } from "./protocol"
 
-type Db = ReturnType<typeof getDb>
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0]
-type Attempt = typeof sandboxAttempts.$inferSelect
-type Call = typeof calls.$inferSelect
-type Locked = { attempt: Attempt; call: Call }
+import {
+  advanceSandboxExecution as advance,
+  isSandboxCallTerminal as isTerminal,
+  lockSandboxExecution as locked,
+  requestSandboxStop as stopIntent,
+  type SandboxTransaction as Tx,
+  type LockedSandboxExecution as Locked,
+} from "./execution"
 type BrowserOwner = {
   accountId: string
   userId: string
@@ -59,16 +62,6 @@ type Failure = {
     | "already_claimed"
     | "identity_conflict"
     | "expired"
-}
-
-async function locked(tx: Tx, attemptId: string): Promise<Locked | null> {
-  const [row] = await tx
-    .select({ attempt: sandboxAttempts, call: calls })
-    .from(sandboxAttempts)
-    .innerJoin(calls, eq(calls.id, sandboxAttempts.callId))
-    .where(eq(sandboxAttempts.id, attemptId))
-    .for("update")
-  return row ?? null
 }
 
 async function agentLocked(tx: Tx, input: Agent): Promise<Locked | null> {
@@ -117,106 +110,6 @@ function owns(row: Locked, owner: SandboxOwner): boolean {
     row.attempt.runtimeSessionId === owner.sessionId &&
     row.attempt.runtimeBootId === owner.bootId
   )
-}
-
-function isTerminal(call: Call): boolean {
-  return ["ended", "incomplete", "failed"].includes(call.state)
-}
-
-async function stopIntent(
-  tx: Tx,
-  row: Locked,
-  reason: string,
-  now: Date
-): Promise<void> {
-  if (row.attempt.stopRequestedAt) return
-  await tx
-    .update(sandboxAttempts)
-    .set({
-      stopRequestedAt: now,
-      stopReason: reason,
-      state: "stopping",
-      joinCiphertext: null,
-      resourceState: "stop_requested",
-    })
-    .where(eq(sandboxAttempts.id, row.attempt.id))
-  await tx
-    .update(calls)
-    .set({ stopRequestedAt: now })
-    .where(eq(calls.id, row.call.id))
-  row.attempt.stopRequestedAt = now
-  row.attempt.stopReason = reason
-  row.attempt.state = "stopping"
-  row.attempt.resourceState = "stop_requested"
-  row.attempt.joinCiphertext = null
-  row.call.stopRequestedAt = now
-}
-
-/** Durable deadlines, evaluated on requests/sweep, never extended by control. */
-async function advance(tx: Tx, row: Locked, now: Date): Promise<void> {
-  const a = row.attempt
-  if (!a.dispatchedAt) return
-  if (
-    !a.dispatchSettledAt &&
-    now.getTime() >= a.dispatchedAt.getTime() + LIMITS.dispatchMs
-  ) {
-    await tx
-      .update(sandboxAttempts)
-      .set({ dispatchSettledAt: now })
-      .where(eq(sandboxAttempts.id, a.id))
-    a.dispatchSettledAt = now
-    await stopIntent(
-      tx,
-      row,
-      "start_unknown",
-      new Date(a.dispatchedAt.getTime() + LIMITS.dispatchMs)
-    )
-  }
-  if (!a.stopRequestedAt && !isTerminal(row.call)) {
-    const deadlines: Array<{ reason: string; at: Date }> = []
-    if (row.call.executionDeadline)
-      deadlines.push({
-        reason: "execution_deadline",
-        at: row.call.executionDeadline,
-      })
-    if (a.presenceExpiresAt)
-      deadlines.push({ reason: "presence_expired", at: a.presenceExpiresAt })
-    if (row.call.configClaimedAt && row.call.lastHeartbeatAt)
-      deadlines.push({
-        reason: "control_lost",
-        at: new Date(
-          row.call.lastHeartbeatAt.getTime() + LIMITS.controlLossTimeoutMs
-        ),
-      })
-    if (!a.readyAt && a.startupDeadline)
-      deadlines.push({ reason: "startup_deadline", at: a.startupDeadline })
-    const due = deadlines.sort(
-      (left, right) => left.at.getTime() - right.at.getTime()
-    )[0]
-    if (due && due.at <= now) await stopIntent(tx, row, due.reason, due.at)
-  }
-  if (
-    a.stopRequestedAt &&
-    !isTerminal(row.call) &&
-    now.getTime() >= a.stopRequestedAt.getTime() + LIMITS.gracefulStopMs
-  ) {
-    const state = row.call.configClaimedAt ? "incomplete" : "failed"
-    const reportingUntil = new Date(
-      a.stopRequestedAt.getTime() +
-        LIMITS.gracefulStopMs +
-        LIMITS.reportingGraceMs
-    )
-    await tx
-      .update(calls)
-      .set({ state, endedReason: a.stopReason, endedAt: now })
-      .where(eq(calls.id, row.call.id))
-    await tx
-      .update(sandboxAttempts)
-      .set({ reportingUntil })
-      .where(eq(sandboxAttempts.id, a.id))
-    row.call.state = state
-    a.reportingUntil = reportingUntil
-  }
 }
 
 function control(row: Locked, now: Date): SandboxControl {
@@ -502,7 +395,6 @@ export function createSandboxLifecycle(offline?: {
         (row.attempt.reportingUntil && row.attempt.reportingUntil <= at)
       )
         return { kind: "expired" }
-      if (row.attempt.identityConflictAt) return { kind: "identity_conflict" }
       // Late authenticated identity is useful for exact cleanup but never a new owner.
       await tx
         .insert(sandboxSessions)
@@ -512,6 +404,7 @@ export function createSandboxLifecycle(offline?: {
           nextReconcileAt: at,
         })
         .onConflictDoNothing()
+      if (row.attempt.identityConflictAt) return { kind: "identity_conflict" }
       if (
         (row.attempt.runtimeSessionId && !owns(row, input.owner)) ||
         (row.call.pipecatSessionId &&
@@ -734,7 +627,9 @@ export function createSandboxLifecycle(offline?: {
         !row.attempt.dispatchedAt
       )
         return
-      await stopIntent(tx, row, "user_stopped", now())
+      const at = now()
+      await advance(tx, row, at)
+      await stopIntent(tx, row, "user_stopped", at)
     })
     await reconcile(input.attemptId)
     const attempt = await getSandboxAttemptForAccount({

@@ -689,6 +689,84 @@ describeDatabase(
       })
     })
 
+    it("retains all authenticated A/B/C session references after conflict until each is terminal", async () => {
+      const f = await fixture()
+      await f.activate()
+      const b = { sessionId: "conflicting-session-b", bootId: "boot-b" }
+      const c = { sessionId: "conflicting-session-c", bootId: "boot-c" }
+      for (const owner of [b, c]) {
+        expect(await f.lifecycle.register({ ...f.agent(), owner })).toEqual({
+          kind: "identity_conflict",
+        })
+      }
+      expect(
+        (await f.rows()).sessions.map((session) => session.sessionId).sort()
+      ).toEqual([f.owner.sessionId, b.sessionId, c.sessionId].sort())
+      f.transport.read.mockImplementation(async (sessionId) => ({
+        kind: "session",
+        sessionId,
+        binding,
+        state: sessionId === c.sessionId ? "running" : "stopped",
+      }))
+      await f.lifecycle.reconcile(f.browser.attemptId)
+      const unresolved = await f.rows()
+      expect(unresolved.slots).toHaveLength(1)
+      expect(unresolved.attempt.resourceState).not.toBe("confirmed_stopped")
+      expect(f.transport.stop).toHaveBeenCalledWith(
+        c.sessionId,
+        expect.any(AbortSignal)
+      )
+      expect(
+        unresolved.sessions.filter(
+          (session) => session.resourceState === "confirmed_stopped"
+        )
+      ).toHaveLength(2)
+      f.at(5_000)
+      f.transport.read.mockImplementation(async (sessionId) => ({
+        kind: "session",
+        sessionId,
+        binding,
+        state: "stopped",
+      }))
+      await f.lifecycle.reconcile(f.browser.attemptId)
+      expect((await f.rows()).slots).toHaveLength(0)
+      expect(
+        (await f.rows()).sessions.every(
+          (session) => session.resourceState === "confirmed_stopped"
+        )
+      ).toBe(true)
+    })
+
+    it.each([false, true])(
+      "preserves overdue control and reporting deadlines when late Stop is first (terminal readback=%s)",
+      async (terminal) => {
+        const f = await fixture()
+        await f.activate()
+        f.transport.read.mockResolvedValue({
+          kind: "session",
+          sessionId: f.owner.sessionId,
+          binding,
+          state: terminal ? "stopped" : "running",
+        })
+        f.at(120_000)
+        await f.lifecycle.stop(f.browser)
+        const rows = await f.rows()
+        expect(rows.attempt).toMatchObject({
+          stopReason: "control_lost",
+          stopRequestedAt: new Date(f.initial + 30_000),
+          reportingUntil: new Date(f.initial + 100_000),
+        })
+        expect(rows.call).toMatchObject({
+          state: "incomplete",
+          stopRequestedAt: new Date(f.initial + 30_000),
+        })
+        expect(rows.slots).toHaveLength(terminal ? 0 : 1)
+        expect(await f.lifecycle.control(f.agent())).toEqual({
+          kind: "expired",
+        })
+      }
+    )
+
     it("does not replace a registered boot with another boot on the same session", async () => {
       const f = await fixture()
       await f.lifecycle.dispatch(f.browser)
