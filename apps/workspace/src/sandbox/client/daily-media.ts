@@ -32,9 +32,23 @@ export class DailySandboxMedia implements SandboxMedia {
   private call: DailyCall | null = null
   private outputs = new Map<
     string,
-    { track: MediaStreamTrack; sink: HTMLAudioElement }
+    {
+      track: MediaStreamTrack
+      sink: HTMLAudioElement
+      /** Last observed `currentTime`. A live MediaStream advances it
+       * continuously while decoding — agent silence still produces samples —
+       * so a frozen value means no audio is being produced at all. */
+      played: number
+      /** Consecutive observations with no advance. */
+      frozen: number
+      /** Has this sink ever advanced? Until it has, this is startup, not a
+       * stall, and the readiness UI already owns that window. */
+      started: boolean
+    }
   >()
   private released = new WeakSet<HTMLAudioElement>()
+  private watchdog: ReturnType<typeof setInterval> | null = null
+  private silent = false
   private interrupted = new Set<string>()
   private joined = false
   private joining = false
@@ -138,8 +152,57 @@ export class DailySandboxMedia implements SandboxMedia {
     }
     for (const [id, track] of tracks) {
       if (this.outputs.has(id)) continue
-      this.outputs.set(id, { track, sink: this.attach(track) })
+      this.outputs.set(id, {
+        track,
+        sink: this.attach(track),
+        played: 0,
+        frozen: 0,
+        started: false,
+      })
     }
+    if (this.outputs.size === 0) this.stopWatching()
+    else if (this.watchdog === null)
+      this.watchdog = setInterval(this.observeOutput, 1_000)
+  }
+  /** How many consecutive frozen seconds before saying anything. One stalled
+   * tick during renegotiation is normal; three in a row is not. */
+  private static readonly STALL_TICKS = 3
+  /**
+   * Notices the failure mode that cost two calls: audio arriving and nothing
+   * coming out, with every other signal reporting success.
+   *
+   * Deliberately advisory. It reports and it withdraws; it never ends a call.
+   * The owner has already lost attempts to things that stopped a call without
+   * explaining why, and a false positive here would be one more.
+   */
+  private observeOutput = () => {
+    if (this.stopped) return
+    let advancing = false
+    let stalled = false
+    for (const output of this.outputs.values()) {
+      const played = output.sink.currentTime
+      if (played > output.played) {
+        output.played = played
+        output.frozen = 0
+        output.started = true
+        advancing = true
+      } else if (output.started) {
+        output.frozen += 1
+        if (output.frozen >= DailySandboxMedia.STALL_TICKS) stalled = true
+      }
+    }
+    if (!this.silent && stalled && !advancing) {
+      this.silent = true
+      this.report({ type: "silent" })
+    } else if (this.silent && advancing) {
+      this.silent = false
+      this.report({ type: "audible" })
+    }
+  }
+  private stopWatching() {
+    if (this.watchdog !== null) clearInterval(this.watchdog)
+    this.watchdog = null
+    this.silent = false
   }
   /** Remote audio needs a media element, not a Web Audio node.
    *
@@ -210,6 +273,7 @@ export class DailySandboxMedia implements SandboxMedia {
       track.stop()
     })
     this.stream = null
+    this.stopWatching()
     this.outputs.forEach(({ sink }) => this.release(sink))
     this.outputs.clear()
     const context = this.context

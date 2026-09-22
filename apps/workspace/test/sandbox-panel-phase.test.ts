@@ -36,6 +36,7 @@ function state(over: Partial<SandboxClientState> = {}): SandboxClientState {
     muted: false,
     ownsController: true,
     deadlines: { reservation: 0, startup: 0, execution: 0 },
+    outputSilent: false,
     ...over,
   }
 }

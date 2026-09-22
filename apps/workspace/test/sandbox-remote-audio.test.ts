@@ -349,3 +349,116 @@ describe("remote audio reaches a media element the browser will decode", () => {
     expect(sinks()).toHaveLength(0)
   })
 })
+
+/**
+ * The failure mode that cost two calls was silence with every other signal
+ * reporting success. Attaching a media element fixes the cause; this watchdog
+ * notices if it ever happens again for a different reason.
+ *
+ * `currentTime` is the signal because a live MediaStream advances it
+ * continuously while decoding — agent silence still produces samples — so a
+ * frozen value means nothing is being produced at all. It is deliberately
+ * advisory: it reports, it withdraws, and it never ends a call. A false
+ * positive that hung up on someone mid-sentence would be worse than the
+ * confusion it replaces.
+ */
+describe("silent output is reported, and never ends the call", () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** A joined adapter with one remote sink whose playback the test drives. */
+  async function live() {
+    const remote = new Track()
+    const h = await connected(() => ({
+      remote: participant("remote", remote),
+    }))
+    const sink = sinks()[0]!
+    let played = 0
+    Object.defineProperty(sink, "currentTime", {
+      configurable: true,
+      get: () => played,
+    })
+    return {
+      h,
+      /** Decode `seconds` of audio, then let `ticks` watchdog seconds pass. */
+      async run(seconds: number, ticks: number) {
+        for (let i = 0; i < ticks; i++) {
+          played += seconds
+          await vi.advanceTimersByTimeAsync(1_000)
+        }
+      },
+      types: () => h.report.mock.calls.map(([event]) => event.type),
+    }
+  }
+
+  it("stays quiet while a sink has never advanced, because that is startup", async () => {
+    const call = await live()
+    // Ten seconds of a sink that has never produced a sample. The readiness UI
+    // owns this window; a stall warning here would fire on every cold start.
+    await call.run(0, 10)
+    expect(call.types()).not.toContain("silent")
+  })
+
+  it("stays quiet for a stall shorter than three seconds", async () => {
+    const call = await live()
+    await call.run(1, 2) // advancing: armed
+    await call.run(0, 2) // two frozen seconds - renegotiation looks like this
+    expect(call.types()).not.toContain("silent")
+  })
+
+  it("warns once output has been frozen for three consecutive seconds", async () => {
+    const call = await live()
+    await call.run(1, 2)
+    await call.run(0, 3)
+    expect(call.types()).toContain("silent")
+    // Advisory only: the call is still running and the adapter still owns it.
+    expect(call.types()).not.toContain("failed")
+    expect(call.h.call.destroy).not.toHaveBeenCalled()
+    expect(call.h.track.stop).not.toHaveBeenCalled()
+    expect(sinks()).toHaveLength(1)
+  })
+
+  it("says it only once while the stall continues", async () => {
+    const call = await live()
+    await call.run(1, 2)
+    await call.run(0, 6)
+    expect(call.types().filter((type) => type === "silent")).toHaveLength(1)
+  })
+
+  it("withdraws the warning when output resumes", async () => {
+    const call = await live()
+    await call.run(1, 2)
+    await call.run(0, 3)
+    expect(call.types()).toContain("silent")
+    await call.run(1, 1)
+    expect(call.types()).toContain("audible")
+    expect(call.types().at(-1)).toBe("audible")
+  })
+
+  /**
+   * Asserts the timer is gone, not that the reports stop.
+   *
+   * The obvious version of this test — stop the call, let six seconds pass,
+   * expect no new reports — cannot fail. `observeOutput` already returns early
+   * on `this.stopped`, so it is silent whether or not the interval was
+   * cleared; verified by mutation, where deleting `stopWatching()` from
+   * `stop()` left that version green. What deleting it actually causes is a
+   * timer running for the life of the page, and that is what this checks.
+   */
+  it("clears its watchdog timer when the call ends, rather than leaking it", async () => {
+    const call = await live()
+    await call.run(1, 2)
+    expect(
+      vi.getTimerCount(),
+      "expected a running watchdog before the call ends"
+    ).toBeGreaterThan(0)
+
+    call.h.media.stop()
+
+    expect(vi.getTimerCount()).toBe(0)
+  })
+})

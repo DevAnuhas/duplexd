@@ -14,9 +14,15 @@ const fixture = vi.hoisted(() => ({
     mute: vi.fn(),
     stop: vi.fn(),
   },
+  /** The adapter's own report callback, so a test can raise a media event the
+   * way the real adapter does and watch it reach the panel. */
+  report: null as null | ((event: { type: string }) => void),
 }))
 vi.mock("@/sandbox/client/daily-media", () => ({
   DailySandboxMedia: class {
+    constructor(report: (event: { type: string }) => void) {
+      fixture.report = report
+    }
     prepare = fixture.media.prepare
     join = fixture.media.join
     mute = fixture.media.mute
@@ -294,6 +300,44 @@ it("counts down the readiness wait instead of leaving hung and working identical
     "Refresh status",
     "Mute microphone"
   )
+})
+
+it("warns about silent output without ending the call, and withdraws it", async () => {
+  await render()
+  await click(button("Prepare test"))
+  await click(button("Start voice call"))
+  expect(container!.textContent).toContain("Ready")
+  expect(container!.textContent).not.toContain("Check your output device")
+
+  await act(async () => fixture.report!({ type: "silent" }))
+
+  expect(container!.textContent).toContain("Check your output device")
+  // Advisory, not fatal. The call is still live and still endable.
+  expect(container!.textContent).toContain("Ready")
+  expect(fixture.media.stop).not.toHaveBeenCalled()
+  expect(button("End call")).toBeDefined()
+  expect(button("Mute microphone")).toBeDefined()
+
+  // It has to be able to un-say itself; a sticky warning after recovery is
+  // another way for a working call to look broken.
+  await act(async () => fixture.report!({ type: "audible" }))
+
+  expect(container!.textContent).not.toContain("Check your output device")
+})
+
+it("does not let a silent-output report disturb a reconnecting call", async () => {
+  // The controller's event handler treats anything that is not "failed" or
+  // "interrupted" as "connected". Routed through that branch, an output
+  // advisory would silently clear a reconnection in progress.
+  await render()
+  await click(button("Prepare test"))
+  await click(button("Start voice call"))
+  await act(async () => fixture.report!({ type: "interrupted" }))
+  expect(container!.textContent).toContain("Reconnecting to the same call")
+
+  await act(async () => fixture.report!({ type: "silent" }))
+
+  expect(container!.textContent).toContain("Reconnecting to the same call")
 })
 
 it("says the tab was hidden, rather than letting it look like an agent failure", async () => {

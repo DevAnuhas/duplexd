@@ -650,6 +650,17 @@ export function Sandbox({ assistant }: SandboxProps) {
                     for a while — which is exactly when someone is staring at
                     it wondering what went wrong. Gating on "off" hid this
                     message during the only moments it was needed. */}
+                {/* Advisory, never fatal, and it withdraws itself when output
+                    resumes. The call keeps running either way — ending it on
+                    this signal would be one more control that stops a call
+                    without explaining why. */}
+                {state.outputSilent &&
+                  (panelPhase === "live" || panelPhase === "reconnecting") && (
+                    <p className="rounded-md border p-3">
+                      You may not be able to hear the assistant. Check your
+                      output device and volume.
+                    </p>
+                  )}
                 {endedReason !== null && panelPhase !== "live" && (
                   <p className="rounded-md border p-3 break-words">
                     {endedReason}

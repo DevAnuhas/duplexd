@@ -34,6 +34,10 @@ export type SandboxClientState = {
    * deadline that actually fires. A countdown that disagreed with the thing it
    * counts down to would be worse than no countdown. */
   deadlines: { reservation: number; startup: number; execution: number }
+  /** The agent's audio is arriving and nothing is coming out of the speakers.
+   * Advisory only — it never ends a call, and it clears itself when output
+   * resumes. */
+  outputSilent: boolean
 }
 
 const messages: Record<string, string> = {
@@ -166,6 +170,7 @@ export class SandboxController {
     muted: false,
     ownsController: false,
     deadlines: { reservation: 0, startup: 0, execution: 0 },
+    outputSilent: false,
   }
   private listeners = new Set<() => void>()
   private busy = false
@@ -472,7 +477,12 @@ export class SandboxController {
     startedAt: number
   ) {
     this.ownership = { attemptId: attempt.attemptId, proof, started: false }
-    this.update({ ownsController: true, mediaPhase: "off", muted: false })
+    this.update({
+      ownsController: true,
+      mediaPhase: "off",
+      muted: false,
+      outputSilent: false,
+    })
     this.observe(attempt, startedAt)
   }
   private observe(attempt: SandboxBrowserAttempt, startedAt: number) {
@@ -635,6 +645,14 @@ export class SandboxController {
           void this.end(
             "Audio became unavailable. Local audio stopped; checking cleanup."
           )
+          return
+        }
+        // Before the reconnect branches, and explicitly rather than by
+        // falling through: the `else if` below treats any other event as
+        // "connected" and would clear a reconnecting state on a report that
+        // says nothing about the connection.
+        if (event.type === "silent" || event.type === "audible") {
+          this.update({ outputSilent: event.type === "silent" })
           return
         }
         if (event.type === "interrupted") {
@@ -874,6 +892,9 @@ export class SandboxController {
     }
     this.media = null
     this.joined = false
+    // The advisory describes a live call's output. It must not outlive the
+    // call and reappear over the next one.
+    if (this.state.outputSilent) this.update({ outputSilent: false })
     if (this.deadlineTimer) clearInterval(this.deadlineTimer)
     if (this.presenceTimer) clearInterval(this.presenceTimer)
     this.deadlineTimer = this.presenceTimer = null
