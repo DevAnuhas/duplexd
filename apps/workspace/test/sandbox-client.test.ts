@@ -206,6 +206,63 @@ describe("Sandbox preparation controller", () => {
     })
   })
 
+  it("checks current reservations again after a terminal record and preserves terminal history when idle", async () => {
+    const fetch = fetcher()
+      .mockResolvedValueOnce(json({ attempt: attempt({ state: "canceled" }) }))
+      .mockResolvedValueOnce(json({ attempt: null }))
+      .mockResolvedValueOnce(
+        json({
+          attempt: attempt({
+            attemptId: "other-tab",
+            assistantId: "assistant-b",
+          }),
+        })
+      )
+    const controller = new SandboxController(fetch)
+    await controller.refresh()
+    await controller.refresh()
+    expect(controller.getSnapshot().attempt?.state).toBe("canceled")
+    await controller.refresh()
+    expect(fetch.mock.calls.map((call) => call[0])).toEqual(
+      Array(3).fill("/api/workspace/sandbox/attempts/current")
+    )
+    expect(controller.getSnapshot().attempt?.attemptId).toBe("other-tab")
+    await controller.prepare(input)
+    expect(fetch).toHaveBeenCalledTimes(3)
+  })
+
+  it("marks lost status unknown and exposes only a typed revision conflict", async () => {
+    const fetch = fetcher()
+      .mockResolvedValueOnce(json({ attempt: null }))
+      .mockRejectedValueOnce(new Error("status lost"))
+      .mockResolvedValueOnce(json({ attempt: null }))
+      .mockResolvedValueOnce(json({ token: "csrf" }))
+      .mockResolvedValueOnce(
+        json(
+          {
+            code: "samples_changed",
+            currentRevision: 4,
+            detail: "private response",
+          },
+          409
+        )
+      )
+    const controller = new SandboxController(fetch)
+    await controller.refresh()
+    expect(controller.getSnapshot().statusKnown).toBe(true)
+    await controller.refresh()
+    expect(controller.getSnapshot().statusKnown).toBe(false)
+    await controller.refresh()
+    await controller.prepare(input)
+    expect(controller.getSnapshot().conflict).toEqual({
+      kind: "samples",
+      revision: 4,
+    })
+    expect(JSON.stringify(controller.getSnapshot())).not.toContain(
+      "private response"
+    )
+  })
+
   it("gives session/conflict errors without exposing arbitrary server details", async () => {
     const fetch = fetcher()
       .mockResolvedValueOnce(json({ token: "csrf" }))
