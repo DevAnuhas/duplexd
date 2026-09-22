@@ -102,6 +102,8 @@ def _install_runtime_fakes(
             self.handle_sigint = handle_sigint
             self.worker: FakeWorker | None = None
             self.cancelled = 0
+            self.bus = SimpleNamespace(stop=self.cleanup)
+            self.task_manager = SimpleNamespace(current_tasks=lambda: [])
             runners.append(self)
 
         async def add_workers(self, worker: FakeWorker) -> None:
@@ -109,6 +111,14 @@ def _install_runtime_fakes(
 
         async def cancel(self) -> None:
             self.cancelled += 1
+
+        async def _cancel_spawned_workers(self) -> None:
+            # This fake owns no background SDK tasks; the real-runner startup
+            # regression lives in test_startup_teardown.py.
+            pass
+
+        async def cleanup(self) -> None:
+            pass
 
         async def run(self) -> None:
             assert self.worker is not None

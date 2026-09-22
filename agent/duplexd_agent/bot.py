@@ -16,7 +16,7 @@ from pipecat.transports.daily.transport import DailyParams
 
 from duplexd_agent.config import RunnerInput, SandboxOwner
 from duplexd_agent.egress import Connector, EgressPolicy
-from duplexd_agent.errors import AgentStartupError
+from duplexd_agent.errors import AgentStartupError, RuntimeShutdownError
 from duplexd_agent.platform import PlatformClient
 from duplexd_agent.provider import (
     Probe,
@@ -25,7 +25,7 @@ from duplexd_agent.provider import (
     build_model_stack,
 )
 from duplexd_agent.reporting import EventReporter
-from duplexd_agent.runtime import SandboxWatchdog, run_call
+from duplexd_agent.runtime import SHUTDOWN_TIMEOUT_SECS, SandboxWatchdog, run_call
 from duplexd_agent.tools import SharedToolHandler, build_tools
 from duplexd_agent.webhooks import WebhookDispatcher
 
@@ -78,6 +78,7 @@ async def bootstrap(
             request_stop=watchdog.request_stop if watchdog else None,
         )
         started = time.monotonic()
+        backend_closed = True  # No backend client has been constructed yet.
 
         def execution_allowed() -> bool:
             if watchdog is None:
@@ -86,8 +87,10 @@ async def bootstrap(
             return not watchdog.stopped.is_set()
 
         async def costly_work() -> None:
+            nonlocal backend_closed
             if not execution_allowed():
                 return
+            backend_closed = False
             backend_service = build_backend_service(config, api_key)
             try:
                 await (probe or ResponsesToolProbe()).verify(backend_service, config.backend_model)
@@ -121,6 +124,7 @@ async def bootstrap(
                 if watchdog is not None:
                     # Includes a probe cancelled before Pipecat owns the service.
                     await backend_service._client.close()
+                    backend_closed = True
 
         if watchdog is None:
             await costly_work()
@@ -129,6 +133,25 @@ async def bootstrap(
         await reporter.start()
         work = asyncio.create_task(costly_work())
         stopped = asyncio.create_task(watchdog.stopped.wait())
+        shutdown_unconfirmed = False
+
+        async def cancel_work() -> None:
+            nonlocal shutdown_unconfirmed
+            work.cancel()
+            # wait_for can exceed its deadline while waiting for cancellation.
+            # Wait without issuing a second cancellation into SDK teardown.
+            done, _ = await asyncio.wait({work}, timeout=SHUTDOWN_TIMEOUT_SECS)
+            if not done:
+                shutdown_unconfirmed = True
+                # Cleanup may finish after our deadline. Consume its exception
+                # without interpreting that eventual supervisor exit as a seal.
+                work.add_done_callback(lambda task: None if task.cancelled() else task.exception())
+                raise RuntimeShutdownError("runtime teardown exceeded its deadline")
+            if not work.cancelled():
+                error = work.exception()
+                if error is not None:
+                    raise error
+
         try:
             done, _ = await asyncio.wait({work, stopped}, return_when=asyncio.FIRST_COMPLETED)
             if work in done:
@@ -140,21 +163,25 @@ async def bootstrap(
                     )
                     raise
             else:
-                work.cancel()
-                # SDK cancellation tears down the voice pipeline and child backend
-                # workers. Never drain telemetry while that work is still running.
-                await asyncio.wait_for(asyncio.gather(work, return_exceptions=True), 10.0)
+                await cancel_work()
         finally:
             stopped.cancel()
             await asyncio.gather(stopped, return_exceptions=True)
-            await watchdog.close()
-            if not work.done():
-                work.cancel()
-                await asyncio.wait_for(asyncio.gather(work, return_exceptions=True), 10.0)
-            duration_secs = time.monotonic() - started
-            await reporter.stop()
-            if watchdog.reason is not None and work.done():
-                await reporter.complete(watchdog.reason, duration_secs)
+            try:
+                if not work.done() and not shutdown_unconfirmed:
+                    await cancel_work()
+            finally:
+                await watchdog.close()
+                duration_secs = time.monotonic() - started
+                await reporter.stop()
+                if (
+                    watchdog.reason is not None
+                    and work.done()
+                    and not shutdown_unconfirmed
+                    and watchdog.runner_stopped
+                    and backend_closed
+                ):
+                    await reporter.complete(watchdog.reason, duration_secs)
 
 
 async def bot(runner_args: RunnerArguments) -> None:

@@ -21,9 +21,33 @@ from pipecat.transports.base_transport import BaseTransport
 from pipecat.workers.runner import WorkerRunner
 
 from duplexd_agent.config import SANDBOX_END_REASONS, AgentConfig, SandboxControl
+from duplexd_agent.errors import RuntimeShutdownError
 from duplexd_agent.platform import PlatformClient
 from duplexd_agent.provider import ModelStack
 from duplexd_agent.reporting import EventReporter, ReportingObserver
+
+SHUTDOWN_TIMEOUT_SECS = 10.0
+
+
+async def _shutdown_owned_runner(runner: WorkerRunner) -> None:
+    """Pipecat 1.11.0: cancel() only signals; run() can unwind during setup.
+
+    Reuse its one root/child cancellation-and-join primitive even when startup
+    never reached run's cleanup guard. Keep the real-runner startup regression
+    when upgrading the pin; remove this private hook once SDK teardown covers
+    partial setup through a public awaited shutdown API.
+    """
+    try:
+        async with asyncio.timeout(SHUTDOWN_TIMEOUT_SECS):
+            await runner._cancel_spawned_workers()
+            await runner.cleanup()  # type: ignore[no-untyped-call]  # SDK 1.11
+            await runner.bus.stop()  # type: ignore[no-untyped-call]  # SDK 1.11
+            if any(not task.done() for task in runner.task_manager.current_tasks()):
+                raise RuntimeShutdownError("runtime workers remain after teardown")
+    except BaseException:
+        # Includes a second cancellation interrupting teardown. A finished
+        # supervisor is not evidence that its workers/media have stopped.
+        raise RuntimeShutdownError("runtime teardown could not be confirmed") from None
 
 
 @dataclass
@@ -46,6 +70,7 @@ class SandboxWatchdog:
         self.stopped = asyncio.Event()
         self.reason: str | None = None
         self.ready = False
+        self.runner_stopped = True  # No runner is owned until run_call begins.
         self._deadlines: dict[str, float] = {}
         self._presence_expiry: float | None = None
         self._tasks: list[asyncio.Task[None]] = []
@@ -170,7 +195,8 @@ async def run_call(
         processor_unusable_policy=ProcessorUnusablePolicy.END,
     )
     runner = WorkerRunner(handle_sigint=runner_args.handle_sigint)
-    await runner.add_workers(worker)
+    if watchdog is not None:
+        watchdog.runner_stopped = False
 
     @transport.event_handler("on_client_connected")  # type: ignore[misc]
     async def on_client_connected(_transport: BaseTransport, _client: Any) -> None:
@@ -227,6 +253,7 @@ async def run_call(
     await reporter.start()
     failure: BaseException | None = None
     try:
+        await runner.add_workers(worker)
         await runner.run()
     except asyncio.CancelledError:
         raise
@@ -235,7 +262,8 @@ async def run_call(
         failure = error
     finally:
         if watchdog is not None:
-            await runner.cancel()
+            await _shutdown_owned_runner(runner)
+            watchdog.runner_stopped = True
             if observed_end.reason is not None:
                 watchdog.request_stop(observed_end.reason)
         else:
