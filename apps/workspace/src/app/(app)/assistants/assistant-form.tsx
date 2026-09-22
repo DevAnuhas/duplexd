@@ -56,6 +56,7 @@ import {
 } from "@/lib/assistant-schema"
 import { summarizeTools } from "@/lib/tools-summary"
 import type { ValidationIssue } from "@/lib/validate"
+import { AssistantNavigation } from "./assistant-navigation"
 
 export type AssistantFormValues = {
   id?: string
@@ -349,6 +350,14 @@ export function AssistantForm({
           </Button>
         </div>
       </header>
+
+      {values.id !== undefined && (
+        <AssistantNavigation
+          assistantId={values.id}
+          active="configure"
+          hasUnsavedChanges={isDirty || isSubmitting}
+        />
+      )}
 
       <nav
         aria-label="Assistant sections"

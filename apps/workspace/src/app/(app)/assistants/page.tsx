@@ -73,8 +73,8 @@ function AssistantList({
               Your first assistant starts here
             </EmptyTitle>
             <EmptyDescription className="max-w-lg text-base leading-relaxed">
-              Give your assistant a voice, instructions, and a connection to
-              your backend. Then mint an API key to start calls from your app.
+              Start with your own instructions or a fictional Riley sample. Use
+              Sandbox to prepare a Practice test and check local audio.
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent className="flex flex-wrap gap-3 pb-4">
@@ -90,8 +90,8 @@ function AssistantList({
               </Link>
             </Button>
             <Button asChild variant="outline" className="min-h-11">
-              <Link href="/keys">
-                API keys{" "}
+              <Link href="/assistants/new?template=riley">
+                Riley sample{" "}
                 <ArrowUpRight
                   weight="regular"
                   className="size-4"
@@ -148,6 +148,14 @@ function AssistantList({
                             data-icon="inline-end"
                             aria-hidden="true"
                           />
+                        </Link>
+                      </Button>
+                      <Button asChild variant="ghost" className="min-h-11">
+                        <Link
+                          href={`/assistants/${assistant.id}/sandbox`}
+                          aria-label={`Test ${assistant.name}`}
+                        >
+                          Test assistant
                         </Link>
                       </Button>
                       <ArchiveButton
