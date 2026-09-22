@@ -220,12 +220,14 @@ export class SandboxController {
   async refresh() {
     if (this.busy) return
     this.busy = true
+    const epoch = this.generation
     try {
       const path =
         this.state.attempt === null || sandboxReleased(this.state.attempt)
           ? "attempts/current"
           : `attempts/${encodeURIComponent(this.state.attempt.attemptId)}`
       const response = await this.request(path)
+      if (epoch !== this.generation) return
       if (!response.ok) {
         this.update({
           phase: "error",
@@ -259,9 +261,11 @@ export class SandboxController {
       })
       if (attempt !== null) {
         this.pending = null
+        this.busy = false
         this.observe(attempt)
       }
     } catch {
+      if (epoch !== this.generation) return
       this.update({
         phase: "error",
         statusKnown: false,
@@ -273,8 +277,10 @@ export class SandboxController {
           "Call status is unavailable. Local audio stopped; checking cleanup."
         )
     } finally {
-      this.busy = false
-      this.update({})
+      if (epoch === this.generation) {
+        this.busy = false
+        this.update({})
+      }
     }
   }
   async prepare(input: Omit<SandboxPrepareInput, "clientAttemptId">) {
@@ -721,7 +727,11 @@ export class SandboxController {
     if (this.cancelMedia) this.busy = false
     this.cancelMedia?.()
     this.cancelMedia = null
-    this.media?.stop()
+    try {
+      this.media?.stop()
+    } catch {
+      /* Server stop must still be sent. */
+    }
     this.media = null
     this.joined = false
     if (this.deadlineTimer) clearInterval(this.deadlineTimer)
@@ -733,6 +743,7 @@ export class SandboxController {
     message = "Local audio stopped. Waiting for confirmed resource cleanup."
   ): Promise<void> {
     this.releaseMedia()
+    this.busy = false
     if (this.stopping) return this.stopping
     const attempt = this.state.attempt
     if (!attempt || sandboxReleased(attempt)) return Promise.resolve()

@@ -44,19 +44,20 @@ export class DailySandboxMedia implements SandboxMedia {
 
   async prepare() {
     if (this.stopped || this.context) throw new Error("Audio is unavailable")
-    const context = this.deps.context()
-    this.context = context
-    // Both calls begin in the click stack, before awaiting SDK/network work.
-    const output = context.resume()
-    const input = this.deps.capture().then((stream) => {
-      if (this.stopped) {
-        stream.getTracks().forEach((track) => track.stop())
-        throw new Error("Audio check canceled")
-      }
-      this.stream = stream
-      return stream
-    })
     try {
+      const context = this.deps.context()
+      this.context = context
+      // Both calls begin in the click stack, before awaiting SDK/network work.
+      const output = context.resume()
+      void output.catch(() => {})
+      const input = this.deps.capture().then((stream) => {
+        if (this.stopped) {
+          stream.getTracks().forEach((track) => track.stop())
+          throw new Error("Audio check canceled")
+        }
+        this.stream = stream
+        return stream
+      })
       const [stream] = await Promise.all([input, output])
       const track = stream.getAudioTracks()[0]
       if (
@@ -112,6 +113,13 @@ export class DailySandboxMedia implements SandboxMedia {
     this.report({ type: this.interrupted.size ? "interrupted" : "connected" })
   }
   private syncOutputs = () => {
+    try {
+      this.connectOutputs()
+    } catch {
+      this.failed()
+    }
+  }
+  private connectOutputs() {
     if (!this.call || !this.context || this.stopped) return
     const tracks = new Map<string, MediaStreamTrack>()
     for (const participant of Object.values(this.call.participants())) {
@@ -179,13 +187,17 @@ export class DailySandboxMedia implements SandboxMedia {
     const call = this.call
     this.call = null
     if (call) {
-      call.off("participant-updated", this.syncOutputs)
-      call.off("participant-joined", this.syncOutputs)
-      call.off("participant-left", this.syncOutputs)
-      call.off("network-connection", this.network)
-      call.off("error", this.failed)
-      call.off("left-meeting", this.failed)
-      void call.destroy().catch(() => {})
+      try {
+        call.off("participant-updated", this.syncOutputs)
+        call.off("participant-joined", this.syncOutputs)
+        call.off("participant-left", this.syncOutputs)
+        call.off("network-connection", this.network)
+        call.off("error", this.failed)
+        call.off("left-meeting", this.failed)
+        void call.destroy().catch(() => {})
+      } catch {
+        /* Local tracks/output are already released. */
+      }
     }
   }
 }

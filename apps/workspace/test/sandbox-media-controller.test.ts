@@ -271,6 +271,103 @@ describe("gesture-owned Sandbox media controller", () => {
     expect(h.media.stop).toHaveBeenCalledOnce()
     expect(h.requests.some((r) => r.url.endsWith("/start"))).toBe(false)
   })
+  it("never dispatches after microphone or output readiness is denied", async () => {
+    vi.useFakeTimers()
+    const h = harness()
+    await h.controller.prepare(input)
+    h.media.prepare.mockRejectedValueOnce(new Error("permission denied"))
+    await h.controller.start(h.factory)
+    expect(h.requests.some((r) => r.url.endsWith("/start"))).toBe(false)
+    expect(h.media.stop).toHaveBeenCalledOnce()
+  })
+  it("keeps historical readyAt from reactivating a terminal call", async () => {
+    vi.useFakeTimers()
+    const h = harness()
+    await h.controller.prepare(input)
+    await h.controller.start(h.factory)
+    h.setCurrent(
+      attempt({
+        state: "failed",
+        callState: "incomplete",
+        readyAt: iso(100),
+        resourceState: "possible",
+        executionDeadline: iso(600000),
+        presenceExpiresAt: iso(60000),
+      })
+    )
+    await h.controller.refresh()
+    expect(h.controller.getSnapshot().mediaPhase).toBe("finishing")
+    expect(h.media.stop).toHaveBeenCalledOnce()
+  })
+  it("ignores an in-flight status response after End and deduplicates concurrent stop", async () => {
+    vi.useFakeTimers()
+    const h = harness()
+    await h.controller.prepare(input)
+    await h.controller.start(h.factory)
+    let status!: (r: Response) => void
+    h.fetcher.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          status = resolve
+        })
+    )
+    const refresh = h.controller.refresh()
+    let confirm!: (r: Response) => void
+    h.fetcher.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          confirm = resolve
+        })
+    )
+    const first = h.controller.end()
+    const second = h.controller.end()
+    expect(first).toBe(second)
+    confirm(
+      Response.json({
+        attempt: attempt({
+          state: "failed",
+          callState: "incomplete",
+          resourceState: "confirmed_stopped",
+        }),
+      })
+    )
+    await first
+    status(
+      Response.json({
+        attempt: attempt({
+          state: "active",
+          readyAt: iso(100),
+          resourceState: "known_running",
+        }),
+      })
+    )
+    await refresh
+    expect(h.controller.getSnapshot().attempt?.resourceState).toBe(
+      "confirmed_stopped"
+    )
+    expect(h.controller.getSnapshot().mediaPhase).toBe("off")
+    expect(h.media.stop).toHaveBeenCalledOnce()
+  })
+  it("bounds an active lease even when historical readiness exists", async () => {
+    vi.useFakeTimers()
+    const h = harness()
+    await h.controller.prepare(input)
+    await h.controller.start(h.factory)
+    h.setCurrent(
+      attempt({
+        state: "active",
+        readyAt: iso(100),
+        resourceState: "known_running",
+        executionDeadline: iso(1000),
+        presenceExpiresAt: iso(60000),
+      })
+    )
+    await h.controller.refresh()
+    expect(h.controller.getSnapshot().mediaPhase).toBe("ready")
+    await h.advance(1000)
+    expect(h.controller.getSnapshot().mediaPhase).toBe("finishing")
+    expect(h.media.stop).toHaveBeenCalledOnce()
+  })
   it("does not release a terminal call with unconfirmed resources", () => {
     expect(
       sandboxReleased(
