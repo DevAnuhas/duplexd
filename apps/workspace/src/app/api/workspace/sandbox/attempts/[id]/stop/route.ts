@@ -1,9 +1,7 @@
 import { noStoreJson, requireWorkspaceMutation } from "@/lib/workspace-mutation"
-import {
-  cancelSandboxAttempt,
-  SANDBOX_EXECUTION_DISABLED_CODE,
-} from "@/sandbox/admission"
+import { SANDBOX_EXECUTION_DISABLED_CODE } from "@/sandbox/admission"
 import { requireEmptyJsonBody, sandboxProblem } from "@/sandbox/http"
+import { sandboxLifecycle } from "@/sandbox/lifecycle"
 
 export async function POST(
   request: Request,
@@ -14,7 +12,7 @@ export async function POST(
   const body = await requireEmptyJsonBody(request)
   if (!body.ok) return body.response
   const { id } = await params
-  const result = await cancelSandboxAttempt({
+  const result = await sandboxLifecycle.stop({
     accountId: session.account.accountId,
     userId: session.account.userId,
     attemptId: id,
