@@ -146,11 +146,20 @@ export class SandboxController {
   private cancelMedia: (() => void) | null = null
   private generation = 0
   private joined = false
-  private stopping: Promise<void> | null = null
+  private stopping: {
+    attemptId: string
+    generation: number
+    promise: Promise<void>
+  } | null = null
   private deadlineTimer: ReturnType<typeof setInterval> | null = null
   private presenceTimer: ReturnType<typeof setInterval> | null = null
   private presenceBusy = false
   private expires = { reservation: 0, startup: 0, execution: 0, presence: 0 }
+  private timingAttempt: string | null = null
+  private fixedBounds: Partial<
+    Record<"reservation" | "startup" | "execution", number>
+  > = {}
+  private presenceExpiry = 0
   private reconnectDeadline = 0
   private reconnectCount = 0
   private interrupted = false
@@ -174,6 +183,7 @@ export class SandboxController {
     this.listeners.forEach((listener) => listener())
   }
   private async request(path: string, body?: unknown, proof?: string) {
+    const startedAt = this.now()
     if (body !== undefined && this.csrf === null) {
       const response = await this.fetcher("/api/workspace/sandbox/csrf", {
         cache: "no-store",
@@ -182,7 +192,7 @@ export class SandboxController {
       })
       const data = record(await response.json())
       if (!response.ok || typeof data?.token !== "string") {
-        return { ok: false, status: response.status, data }
+        return { ok: false, status: response.status, data, startedAt }
       }
       this.csrf = data.token
     }
@@ -205,6 +215,7 @@ export class SandboxController {
           }),
     })
     return {
+      startedAt,
       ok: response.ok,
       status: response.status,
       data: record(await response.json()),
@@ -262,7 +273,7 @@ export class SandboxController {
       if (attempt !== null) {
         this.pending = null
         this.busy = false
-        this.observe(attempt)
+        this.observe(attempt, response.startedAt)
       }
     } catch {
       if (epoch !== this.generation) return
@@ -327,7 +338,7 @@ export class SandboxController {
       )
       const attempt = attemptFrom(response.data?.attempt)
       if (response.ok && attempt !== null) {
-        this.takeOwnership(attempt, this.pending!.proof)
+        this.takeOwnership(attempt, this.pending!.proof, response.startedAt)
         this.pending = null
         this.update({
           phase: "idle",
@@ -396,7 +407,7 @@ export class SandboxController {
       if (response.ok && attempt !== null) {
         this.pending = null
         this.update({ phase: "idle", attempt, canRetryPreparation: false })
-        this.observe(attempt)
+        this.observe(attempt, response.startedAt)
       } else {
         this.update({
           phase: "error",
@@ -416,27 +427,50 @@ export class SandboxController {
     }
   }
 
-  private takeOwnership(attempt: SandboxBrowserAttempt, proof: string) {
+  private takeOwnership(
+    attempt: SandboxBrowserAttempt,
+    proof: string,
+    startedAt: number
+  ) {
     this.ownership = { attemptId: attempt.attemptId, proof, started: false }
     this.update({ ownsController: true, mediaPhase: "off", muted: false })
-    this.observe(attempt)
+    this.observe(attempt, startedAt)
   }
-  private observe(attempt: SandboxBrowserAttempt) {
+  private observe(attempt: SandboxBrowserAttempt, startedAt: number) {
     const server = Date.parse(attempt.serverTime)
-    const now = this.now()
-    this.serverClock = { server, local: now }
-    const remaining = (value: string | null, cap: number) => {
+    this.serverClock = { server, local: startedAt }
+    if (this.timingAttempt !== attempt.attemptId) {
+      this.timingAttempt = attempt.attemptId
+      this.fixedBounds = {}
+      this.presenceExpiry = 0
+      this.expires = { reservation: 0, startup: 0, execution: 0, presence: 0 }
+    }
+    const fixed = (
+      key: "reservation" | "startup" | "execution",
+      value: string | null,
+      cap: number
+    ) => {
       const delta = value === null ? NaN : Date.parse(value) - server
-      return (
-        now + (Number.isFinite(delta) ? Math.min(cap, Math.max(0, delta)) : 0)
-      )
+      if (!Number.isFinite(delta)) return 0
+      // Sending the request precedes the server's observation. Network latency
+      // must consume the lease, never become additional capture time.
+      const candidate = startedAt + Math.min(cap, Math.max(0, delta))
+      const bound = Math.min(this.fixedBounds[key] ?? candidate, candidate)
+      this.fixedBounds[key] = bound
+      return bound
     }
-    this.expires = {
-      reservation: remaining(attempt.reservationExpiresAt, 30_000),
-      startup: remaining(attempt.startupDeadline, 120_000),
-      execution: remaining(attempt.executionDeadline, 600_000),
-      presence: remaining(attempt.presenceExpiresAt, 60_000),
-    }
+    this.expires.reservation = fixed(
+      "reservation",
+      attempt.reservationExpiresAt,
+      30_000
+    )
+    this.expires.startup = fixed("startup", attempt.startupDeadline, 120_000)
+    this.expires.execution = fixed(
+      "execution",
+      attempt.executionDeadline,
+      600_000
+    )
+    this.observePresence(attempt.presenceExpiresAt, server, startedAt)
     if (sandboxReleased(attempt)) {
       this.releaseMedia()
       this.ownership = null
@@ -459,6 +493,27 @@ export class SandboxController {
     ) {
       this.update({ mediaPhase: "finishing" })
     } else this.checkReadiness()
+  }
+  private observePresence(
+    value: string | null,
+    server: number,
+    startedAt: number
+  ) {
+    const absolute = value === null ? NaN : Date.parse(value)
+    const delta = absolute - server
+    if (!Number.isFinite(delta)) {
+      this.expires.presence = 0
+      return
+    }
+    const candidate = startedAt + Math.min(60_000, Math.max(0, delta))
+    if (absolute > this.presenceExpiry) {
+      // Only a strictly newer persisted lease is a renewal. An out-of-order
+      // observation cannot undo it, and an unchanged expiry cannot extend it.
+      this.presenceExpiry = absolute
+      this.expires.presence = candidate
+    } else if (absolute === this.presenceExpiry) {
+      this.expires.presence = Math.min(this.expires.presence, candidate)
+    }
   }
   private validExecution() {
     const attempt = this.state.attempt
@@ -581,7 +636,7 @@ export class SandboxController {
       if (!response.ok || !attempt || attempt.attemptId !== owner.attemptId)
         throw new Error("start")
       this.update({ attempt, statusKnown: true })
-      this.observe(attempt)
+      this.observe(attempt, response.startedAt)
       if (epoch !== this.generation) return
       if (!this.validExecution()) throw new Error("lease")
       this.update({
@@ -698,7 +753,7 @@ export class SandboxController {
       const remaining = Date.parse(expiry) - Date.parse(server)
       if (!Number.isFinite(remaining) || remaining <= 0)
         throw new Error("lease")
-      this.expires.presence = this.now() + Math.min(60_000, remaining)
+      this.observePresence(expiry, Date.parse(server), response.startedAt)
     } catch {
       if (epoch === this.generation)
         void this.end(
@@ -742,11 +797,25 @@ export class SandboxController {
   end(
     message = "Local audio stopped. Waiting for confirmed resource cleanup."
   ): Promise<void> {
+    const attempt = this.state.attempt
+    if (
+      this.stopping?.attemptId === attempt?.attemptId &&
+      this.stopping?.generation === this.generation
+    )
+      return this.stopping.promise
     this.releaseMedia()
     this.busy = false
-    if (this.stopping) return this.stopping
-    const attempt = this.state.attempt
     if (!attempt || sandboxReleased(attempt)) return Promise.resolve()
+    const generation = this.generation
+    const operation = {
+      attemptId: attempt.attemptId,
+      generation,
+      promise: Promise.resolve(),
+    }
+    const isCurrent = () =>
+      this.generation === generation &&
+      this.state.attempt?.attemptId === attempt.attemptId
+    this.stopping = operation
     this.update({ mediaPhase: "finishing", message })
     const stop = async () => {
       try {
@@ -754,20 +823,22 @@ export class SandboxController {
           `attempts/${encodeURIComponent(attempt.attemptId)}/stop`,
           {}
         )
+        if (!isCurrent()) return
         const current = attemptFrom(response.data?.attempt)
         if (response.ok && current?.attemptId === attempt.attemptId) {
           this.update({ attempt: current, statusKnown: true })
-          this.observe(current)
+          this.observe(current, response.startedAt)
         } else this.update({ statusKnown: false })
       } catch {
-        this.update({ statusKnown: false })
+        if (isCurrent()) this.update({ statusKnown: false })
       } finally {
-        this.stopping = null
+        if (this.stopping === operation) this.stopping = null
       }
     }
-    this.stopping = stop()
-    return this.stopping
+    operation.promise = stop()
+    return operation.promise
   }
+
   /** Hiding/leaving never resumes capture automatically on return. */
   leave() {
     if (this.media)

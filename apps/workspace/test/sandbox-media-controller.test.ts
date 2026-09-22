@@ -368,6 +368,306 @@ describe("gesture-owned Sandbox media controller", () => {
     expect(h.controller.getSnapshot().mediaPhase).toBe("finishing")
     expect(h.media.stop).toHaveBeenCalledOnce()
   })
+  it.each(["success", "http failure", "network failure"])(
+    "ignores old Stop A %s after B starts",
+    async (outcome) => {
+      vi.useFakeTimers()
+      const h = harness()
+      await h.controller.prepare(input)
+      await h.controller.start(h.factory)
+      let settle!: (r: Response) => void
+      let reject!: (e: Error) => void
+      h.fetcher.mockImplementationOnce(
+        () =>
+          new Promise((yes, no) => {
+            settle = yes
+            reject = no
+          })
+      )
+      const oldStop = h.controller.end()
+      h.setCurrent(
+        attempt({ state: "failed", resourceState: "confirmed_stopped" })
+      )
+      await h.controller.refresh()
+      const b = attempt({ attemptId: "B", callId: "call-B" })
+      h.fetcher.mockResolvedValueOnce(Response.json({ attempt: b }))
+      await h.controller.prepare(input)
+      h.fetcher.mockResolvedValueOnce(
+        Response.json({
+          attempt: {
+            ...b,
+            state: "active",
+            readyAt: iso(100),
+            resourceState: "known_running",
+            startupDeadline: iso(120000),
+            executionDeadline: iso(600000),
+            presenceExpiresAt: iso(60000),
+          },
+        })
+      )
+      await h.controller.start(h.factory)
+      expect(h.controller.getSnapshot().mediaPhase).toBe("ready")
+      if (outcome === "network failure") reject(new Error("lost old stop"))
+      else
+        settle(
+          Response.json(
+            {
+              attempt: attempt({
+                state: "failed",
+                resourceState: "confirmed_stopped",
+              }),
+            },
+            { status: outcome === "success" ? 200 : 503 }
+          )
+        )
+      await oldStop
+      expect(h.controller.getSnapshot()).toMatchObject({
+        attempt: { attemptId: "B" },
+        mediaPhase: "ready",
+        statusKnown: true,
+      })
+      expect(h.media.stop).toHaveBeenCalledTimes(1)
+      h.fetcher.mockResolvedValueOnce(
+        Response.json({
+          attempt: {
+            ...b,
+            state: "failed",
+            resourceState: "confirmed_stopped",
+          },
+        })
+      )
+      await h.controller.end()
+      expect(h.media.stop).toHaveBeenCalledTimes(2)
+    }
+  )
+  it("Stop B is independent of pending Stop A and old completion cannot clear B's deduplication", async () => {
+    vi.useFakeTimers()
+    const h = harness()
+    await h.controller.prepare(input)
+    await h.controller.start(h.factory)
+    let stopA!: (r: Response) => void
+    h.fetcher.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          stopA = resolve
+        })
+    )
+    const a = h.controller.end()
+    h.setCurrent(
+      attempt({ state: "failed", resourceState: "confirmed_stopped" })
+    )
+    await h.controller.refresh()
+    const b = attempt({ attemptId: "B", callId: "call-B" })
+    h.fetcher.mockResolvedValueOnce(Response.json({ attempt: b }))
+    await h.controller.prepare(input)
+    h.fetcher.mockResolvedValueOnce(
+      Response.json({
+        attempt: {
+          ...b,
+          state: "active",
+          readyAt: iso(100),
+          resourceState: "known_running",
+          startupDeadline: iso(120000),
+          executionDeadline: iso(600000),
+          presenceExpiresAt: iso(60000),
+        },
+      })
+    )
+    await h.controller.start(h.factory)
+    let stopB!: (r: Response) => void
+    h.fetcher.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          stopB = resolve
+        })
+    )
+    const bStop = h.controller.end()
+    expect(bStop).not.toBe(a)
+    expect(String(h.fetcher.mock.calls.at(-1)?.[0])).toContain("/B/stop")
+    stopA(
+      Response.json({
+        attempt: attempt({
+          state: "failed",
+          resourceState: "confirmed_stopped",
+        }),
+      })
+    )
+    await a
+    expect(h.controller.end()).toBe(bStop)
+    stopB(
+      Response.json({
+        attempt: { ...b, state: "failed", resourceState: "confirmed_stopped" },
+      })
+    )
+    await bStop
+    expect(h.controller.getSnapshot()).toMatchObject({
+      attempt: { attemptId: "B" },
+      mediaPhase: "off",
+    })
+  })
+  it.each([
+    "executionDeadline",
+    "startupDeadline",
+    "presenceExpiresAt",
+  ] as const)(
+    "does not extend unchanged %s by status response latency",
+    async (field) => {
+      vi.useFakeTimers()
+      const h = harness()
+      await h.controller.prepare(input)
+      const lease = attempt({
+        state: "active",
+        resourceState: "known_running",
+        readyAt: field === "startupDeadline" ? null : iso(100),
+        executionDeadline: iso(600000),
+        startupDeadline: iso(120000),
+        presenceExpiresAt: iso(60000),
+        [field]: iso(10000),
+      })
+      h.fetcher.mockResolvedValueOnce(Response.json({ attempt: lease }))
+      await h.controller.start(h.factory)
+      h.setCurrent(lease)
+      await h.controller.refresh()
+      await h.advance(8000)
+      let reply!: (r: Response) => void
+      h.fetcher.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            reply = resolve
+          })
+      )
+      const refresh = h.controller.refresh()
+      await h.advance(1000)
+      reply(Response.json({ attempt: { ...lease, serverTime: iso(8000) } }))
+      await refresh
+      await h.advance(1000)
+      expect(h.media.stop).toHaveBeenCalledOnce()
+      expect(h.controller.getSnapshot().mediaPhase).toBe("finishing")
+    }
+  )
+  it("anchors a newly learned execution deadline to request start, not receipt", async () => {
+    vi.useFakeTimers()
+    const h = harness()
+    await h.controller.prepare(input)
+    let reply!: (r: Response) => void
+    h.fetcher.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          reply = resolve
+        })
+    )
+    const start = h.controller.start(h.factory)
+    await vi.advanceTimersByTimeAsync(0)
+    await h.advance(9000)
+    reply(
+      Response.json({
+        attempt: attempt({
+          state: "active",
+          readyAt: iso(100),
+          resourceState: "known_running",
+          serverTime: iso(),
+          executionDeadline: iso(10000),
+          startupDeadline: iso(120000),
+          presenceExpiresAt: iso(60000),
+        }),
+      })
+    )
+    await start
+    await h.advance(1000)
+    expect(h.media.stop).toHaveBeenCalledOnce()
+  })
+  it("a later fixed deadline cannot extend the original execution limit", async () => {
+    vi.useFakeTimers()
+    const h = harness()
+    await h.controller.prepare(input)
+    await h.controller.start(h.factory)
+    h.setCurrent(
+      attempt({
+        state: "active",
+        readyAt: iso(100),
+        resourceState: "known_running",
+        executionDeadline: iso(10000),
+        presenceExpiresAt: iso(60000),
+      })
+    )
+    await h.controller.refresh()
+    await h.advance(8000)
+    h.setCurrent(
+      attempt({
+        state: "active",
+        readyAt: iso(100),
+        resourceState: "known_running",
+        executionDeadline: iso(20000),
+        presenceExpiresAt: iso(60000),
+      })
+    )
+    await h.controller.refresh()
+    await h.advance(2000)
+    expect(h.media.stop).toHaveBeenCalledOnce()
+  })
+  it.each([20000, 25000])(
+    "presence expiry %i is anchored to the renewal request, including unchanged leases",
+    async (expiry) => {
+      vi.useFakeTimers()
+      const h = harness()
+      await h.controller.prepare(input)
+      const lease = attempt({
+        state: "active",
+        readyAt: iso(100),
+        resourceState: "known_running",
+        executionDeadline: iso(600000),
+        presenceExpiresAt: iso(20000),
+      })
+      h.fetcher.mockResolvedValueOnce(Response.json({ attempt: lease }))
+      await h.controller.start(h.factory)
+      let reply!: (r: Response) => void
+      h.fetcher.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            reply = resolve
+          })
+      )
+      await h.advance(15000)
+      await h.advance(1000)
+      reply(
+        Response.json({
+          serverTime: iso(15000),
+          presenceExpiresAt: iso(expiry),
+        })
+      )
+      await vi.advanceTimersByTimeAsync(0)
+      await h.advance(expiry - 16000 - 1000)
+      expect(h.media.stop).not.toHaveBeenCalled()
+      await h.advance(1000)
+      expect(h.media.stop).toHaveBeenCalledOnce()
+    }
+  )
+  it("late stale presence observation cannot replace a genuinely renewed expiry", async () => {
+    vi.useFakeTimers()
+    const h = harness()
+    await h.controller.prepare(input)
+    const lease = attempt({
+      state: "active",
+      readyAt: iso(100),
+      resourceState: "known_running",
+      executionDeadline: iso(600000),
+      presenceExpiresAt: iso(20000),
+    })
+    h.fetcher.mockResolvedValueOnce(Response.json({ attempt: lease }))
+    await h.controller.start(h.factory)
+    h.fetcher.mockResolvedValueOnce(
+      Response.json({ serverTime: iso(15000), presenceExpiresAt: iso(25000) })
+    )
+    await h.advance(15000)
+    h.fetcher.mockResolvedValueOnce(
+      Response.json({ attempt: { ...lease, serverTime: iso(15000) } })
+    )
+    await h.controller.refresh()
+    await h.advance(5000)
+    expect(h.media.stop).not.toHaveBeenCalled()
+    await h.advance(5000)
+    expect(h.media.stop).toHaveBeenCalledOnce()
+  })
   it("does not release a terminal call with unconfirmed resources", () => {
     expect(
       sandboxReleased(

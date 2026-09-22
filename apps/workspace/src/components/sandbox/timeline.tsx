@@ -225,7 +225,9 @@ export function LiveSandboxTimeline({ callId }: { callId: string }) {
       const current = controller.getSnapshot()
       if (
         active &&
+        !current.limited &&
         !(
+          !current.hasMore &&
           current.evidence?.state === "complete" &&
           current.evidence.finalSeq !== null
         )

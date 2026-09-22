@@ -2,7 +2,10 @@ import "./helpers/assistant-form/dom-environment.ts"
 import { act, createElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { SandboxTimeline } from "@/components/sandbox/timeline"
+import {
+  SandboxTimeline,
+  LiveSandboxTimeline,
+} from "@/components/sandbox/timeline"
 import type { TimelineState } from "@/sandbox/client/timeline"
 
 let root: Root | undefined
@@ -66,6 +69,7 @@ afterEach(() => {
   container?.remove()
   root = undefined
   container = undefined
+  vi.unstubAllGlobals()
   vi.useRealTimers()
 })
 
@@ -195,4 +199,46 @@ describe("safe and stable timeline DOM", () => {
       "Updating"
     )
   })
+})
+
+it("polls remaining pages of complete evidence until all 400 events load", async () => {
+  vi.useFakeTimers()
+  let pages = 0
+  const fetcher = vi.fn<typeof fetch>(async () => {
+    const page = ++pages
+    return Response.json({
+      events: Array.from({ length: 100 }, (_, i) =>
+        event((page - 1) * 100 + i + 1)
+      ),
+      nextCursor: `cursor-${page}`,
+      hasMore: page < 4,
+      evidence: {
+        ...state().evidence,
+        state: "complete",
+        contiguousSeq: 400,
+        finalSeq: 400,
+      },
+    })
+  })
+  vi.stubGlobal("fetch", fetcher)
+  container = document.createElement("div")
+  document.body.append(container)
+  root = createRoot(container)
+  await act(async () => {
+    root!.render(
+      createElement(LiveSandboxTimeline, { callId: "synthetic-completed-call" })
+    )
+  })
+  expect(fetcher).toHaveBeenCalledTimes(3)
+  expect(container.querySelectorAll("li")).toHaveLength(300)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000)
+  })
+  expect(fetcher).toHaveBeenCalledTimes(4)
+  expect(container.querySelectorAll("li")).toHaveLength(400)
+  expect(String(fetcher.mock.calls[3]?.[0])).toContain("after=cursor-3")
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(9000)
+  })
+  expect(fetcher).toHaveBeenCalledTimes(4)
 })
