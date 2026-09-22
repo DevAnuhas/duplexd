@@ -12,11 +12,11 @@ An attempt row lock serializes dispatch, registration, claim, stop and result re
 
 Every new-protocol request sends `Authorization: Bearer <call token>` and `x-duplexd-protocol: sandbox-v1`. Session and boot IDs are opaque strings of 1–128 ASCII letters, digits, `_` or `-`.
 
-| Request | Additional input | Success response |
-| --- | --- | --- |
-| `POST /v1/agent/calls/:id/register` | JSON `{sessionId, bootId}`, maximum 4 KiB | `{protocol: "sandbox-v1", registered: true}` |
-| `GET /v1/agent/calls/:id/config` | `x-duplexd-session-id`, `x-duplexd-boot-id` | `{protocol, owner: {sessionId, bootId}, config, control}` |
-| `GET /v1/agent/calls/:id/control` | Same owner headers | `{protocol, control}` |
+| Request                             | Additional input                            | Success response                                          |
+| ----------------------------------- | ------------------------------------------- | --------------------------------------------------------- |
+| `POST /v1/agent/calls/:id/register` | JSON `{sessionId, bootId}`, maximum 4 KiB   | `{protocol: "sandbox-v1", registered: true}`              |
+| `GET /v1/agent/calls/:id/config`    | `x-duplexd-session-id`, `x-duplexd-boot-id` | `{protocol, owner: {sessionId, bootId}, config, control}` |
+| `GET /v1/agent/calls/:id/control`   | Same owner headers                          | `{protocol, control}`                                     |
 
 Protocol and registered owner cannot be replaced. Same-owner registration is idempotent while execution is valid. Conflicting identity stops execution and preserves observed session references for exact cleanup, including further authenticated identities received after the first conflict while reporting remains permitted. Every retained reference must independently become terminal before capacity is released. An authenticated late registration may reveal the lost start's exact target, but cannot claim configuration or reconstruct a missing join token. Registration after confirmed cleanup or the reporting deadline is refused.
 
@@ -25,6 +25,18 @@ Protocol and registered owner cannot be replaced. Same-owner registration is ide
 `control` contains `stopRequested`, `stopReason`, `startupDeadline`, `executionDeadline`, `presenceExpiresAt`, `serverTime`, `pollIntervalMs`, `controlLossTimeoutMs`, `gracefulStopMs` and `reportingGraceMs`. Dates are ISO strings. Poll interval is 3 seconds; control loss stops execution after 30 seconds; graceful stop allows 10 seconds; reporting-only grace is 60 seconds. Polling does not extend startup, execution or browser presence. A late request applies the original earliest due deadline rather than starting a fresh grace period.
 
 Legacy Integration requests retain their exact config, ACK and completion shapes. Legacy config/events/completion reject Sandbox credentials before mutation. New-protocol evidence ACK/completion and Python changes belong to A04; they are not silently accepted by old handlers. No path in this slice writes a clean `ended` state. Unclaimed termination is `failed`; claimed termination without authenticated completion is `incomplete`.
+
+## Browser and deadlines
+
+## A04 wire contract (implementation in progress)
+
+The following contract is frozen for the paired runtime/server implementation; it is not live capability evidence. `GET /v1/agent/calls/:id/protocol` authenticates the call token without claiming configuration and returns `{protocol: "sandbox-v1"}` or `{protocol: "integration-v1"}`. The runner body remains exactly `{callId, apiBase, agentToken}`. Sandbox uses the runner's exact session ID and a per-process boot ID for registration before its single configuration claim. A runtime talking to an older server may use the legacy Integration path only when negotiation is absent (404), never after a Sandbox negotiation or registration failure.
+
+Versioned `POST events` requires the owner headers and `{events: [{seq, at, type, payload}]}`. `agent_ready` is the additional readiness marker, emitted once after the three actual barriers; its payload is empty. Existing event names retain their meaning. No raw tool arguments, results, secrets or reasoning traces are exposed by polling. ACKs are `{protocol, contiguousSeq, missingRanges, evidenceState, completionDigest, control}`. Missing ranges are inclusive sequence pairs, capped at 32; retransmission of identical canonical content is accepted, conflicting sequence content is persisted as an integrity failure. Events are limited to 8 KiB, batches to 64 events / 256 KiB, pending runtime delivery to 1,000 events / 2 MiB, and the call to 10,000 events / 8 MiB. Control polling is independent of evidence delivery.
+
+Versioned completion requires exactly `{endedReason, durationSecs, finalSeq, producerLoss, truncated}`. The server computes a canonical completion digest and returns it in the ACK; identical retries acknowledge the existing completion, conflicts never replace it. `finalSeq` seals the agent namespace. Platform observations have a separate namespace and do not affect the final watermark. Reporting grace admits missing historical events through that watermark, including late readiness, without renewing execution or making a stopped attempt active. Evidence is `unknown` before a seal, `partial` for gaps/loss/truncation/conflicts, and `complete` only when every emitted sequence through the seal is accounted for without those flags. This is delivery completeness, not proof of all spoken audio or model correctness.
+
+The future timeline consumes authenticated, account-scoped `GET /api/workspace/sandbox/calls/:id/events?after=<cursor>`. Its typed `SandboxEventPage` contains `events`, `nextCursor`, `hasMore` and an `evidence` summary. Each safe event carries an opaque ingestion cursor, `namespace`, producer `seq`, `at`, `type` and allowlisted `payload`. The cursor orders ingestion rather than producer sequence, so a late sequence 7 remains visible after sequence 8. A cursor is never authorization. Pages are bounded to 100 events / 128 KiB. Transcripts are user content and can contain sensitive spoken text; neither polling nor logs promise PII-free text. The UI may display explicit loss or reconciliation but must not treat absence of telemetry as a clean ending.
 
 ## Browser and deadlines
 
