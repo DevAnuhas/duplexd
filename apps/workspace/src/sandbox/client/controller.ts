@@ -7,6 +7,8 @@ export type SandboxClientState = {
   phase: "loading" | "idle" | "preparing" | "canceling" | "unknown" | "error"
   attempt: SandboxAttemptDto | null
   message: string | null
+  statusKnown: boolean
+  conflict: { kind: "assistant" | "samples"; revision: number } | null
   canRetryPreparation: boolean
 }
 
@@ -72,6 +74,8 @@ export class SandboxController {
     phase: "loading",
     attempt: null,
     message: null,
+    statusKnown: false,
+    conflict: null,
     canRetryPreparation: false,
   }
   private listeners = new Set<() => void>()
@@ -143,12 +147,17 @@ export class SandboxController {
     this.busy = true
     try {
       const path =
-        this.state.attempt === null
+        this.state.attempt === null ||
+        ["canceled", "expired"].includes(this.state.attempt.state)
           ? "attempts/current"
           : `attempts/${encodeURIComponent(this.state.attempt.attemptId)}`
       const response = await this.request(path)
       if (!response.ok) {
-        this.update({ phase: "error", message: this.message(response.data) })
+        this.update({
+          phase: "error",
+          statusKnown: false,
+          message: this.message(response.data),
+        })
         return
       }
       const attempt = attemptFrom(response.data?.attempt)
@@ -156,7 +165,14 @@ export class SandboxController {
         throw new Error("Invalid attempt response")
       const unresolved = this.pending !== null && attempt === null
       this.update({
-        attempt,
+        attempt:
+          attempt ??
+          (this.pending === null &&
+          this.state.attempt !== null &&
+          ["canceled", "expired"].includes(this.state.attempt.state)
+            ? this.state.attempt
+            : null),
+        statusKnown: true,
         phase: unresolved ? "unknown" : "idle",
         message: unresolved
           ? "Preparation was not confirmed. Retry the same request to reconcile it; no voice call was started."
@@ -167,6 +183,7 @@ export class SandboxController {
     } catch {
       this.update({
         phase: "error",
+        statusKnown: false,
         message:
           "Test status is unavailable. Your existing test has not been canceled. Refresh status when the connection returns.",
       })
@@ -208,6 +225,7 @@ export class SandboxController {
       attempt: null,
       phase: "preparing",
       message: null,
+      conflict: null,
       canRetryPreparation: false,
     })
     try {
@@ -219,7 +237,12 @@ export class SandboxController {
       const attempt = attemptFrom(response.data?.attempt)
       if (response.ok && attempt !== null) {
         this.pending = null
-        this.update({ phase: "idle", attempt, message: null })
+        this.update({
+          phase: "idle",
+          attempt,
+          message: null,
+          statusKnown: true,
+        })
       } else if (response.status >= 500 || response.ok) {
         this.update({
           phase: "unknown",
@@ -233,6 +256,18 @@ export class SandboxController {
           phase: "error",
           attempt: attempt ?? this.state.attempt,
           message: this.message(response.data),
+          conflict:
+            (response.data?.code === "assistant_changed" ||
+              response.data?.code === "samples_changed") &&
+            typeof response.data.currentRevision === "number"
+              ? {
+                  kind:
+                    response.data.code === "assistant_changed"
+                      ? "assistant"
+                      : "samples",
+                  revision: response.data.currentRevision,
+                }
+              : null,
         })
       }
     } catch {

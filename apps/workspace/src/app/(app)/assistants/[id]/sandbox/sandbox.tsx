@@ -7,7 +7,7 @@ import {
   ArrowUpRight,
 } from "@phosphor-icons/react"
 import Link from "next/link"
-import { useEffect, useState, useSyncExternalStore } from "react"
+import { useEffect, useState } from "react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -18,11 +18,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import type {
-  PracticeSampleDefinition,
-  PracticeScenario,
-} from "@/practice/configuration"
-import { SandboxController } from "@/sandbox/client/controller"
+import type { PracticeScenario } from "@/practice/configuration"
+import { readPreview, readSampleDrafts } from "@/sandbox/client/draft-store"
+import { useAssistantDraft } from "../draft-host"
+import { SampleEditor } from "./sample-editor"
 import {
   LocalAudioCheck,
   type LocalAudioState,
@@ -37,10 +36,6 @@ export type SandboxProps = {
     voice: string | null
     backendModel: string | null
   }
-  samples: PracticeSampleDefinition[]
-  sampleRevision: number
-  sampleSource: "riley" | "saved"
-  issues: Array<{ field: string; message: string }>
 }
 
 type Scenario = "success" | "unavailable" | "slow" | "failure"
@@ -73,18 +68,42 @@ const scenarios: Array<{
   },
 ]
 
-export function Sandbox({
-  assistant,
-  samples,
-  sampleRevision,
-  sampleSource,
-  issues,
-}: SandboxProps) {
-  const [controller] = useState(() => new SandboxController())
-  const state = useSyncExternalStore(
-    controller.subscribe,
-    controller.getSnapshot,
-    controller.getSnapshot
+export function Sandbox({ assistant }: SandboxProps) {
+  const {
+    store,
+    state: draft,
+    controller,
+    attempt: state,
+    locked,
+  } = useAssistantDraft()
+  const parsedSamples = readSampleDrafts(draft.samples)
+  const samples = parsedSamples.definitions.flatMap((value) => {
+    const item = value as { toolName: string; overrides: unknown }
+    return [
+      {
+        toolName: item.toolName,
+        overrides: Array.isArray(item.overrides)
+          ? item.overrides.filter(
+              (override): override is { name: string; result: unknown } =>
+                override !== null &&
+                typeof override === "object" &&
+                typeof override.name === "string"
+            )
+          : [],
+      },
+    ]
+  })
+  const selected = draft.source === "preview" ? draft.fields : draft.saved
+  const issues = draft.validation?.issues ?? [
+    {
+      field: "validation",
+      message: "Checking configuration and sample coverage…",
+    },
+  ]
+  const conflict =
+    draft.assistantConflict !== null || draft.sampleConflict !== null
+  const [namedOverrides, setNamedOverrides] = useState<Record<string, string>>(
+    {}
   )
   const [scenario, setScenario] = useState<Scenario>("success")
   const [audioState, setAudioState] = useState<LocalAudioState>({
@@ -97,7 +116,6 @@ export function Sandbox({
   const unresolved =
     state.attempt !== null &&
     !["canceled", "expired"].includes(state.attempt.state)
-  const locked = busy || unresolved || state.canRetryPreparation
   const listening =
     audioState.kind === "listening" || audioState.kind === "requesting"
   const unavailableCount = samples.filter((sample) =>
@@ -105,11 +123,6 @@ export function Sandbox({
   ).length
 
   useEffect(() => {
-    void controller.refresh()
-    const interval = setInterval(() => {
-      if (controller.getSnapshot().attempt?.state === "prepared")
-        void controller.refresh()
-    }, 5_000)
     const release = () => {
       audio.stop()
       setAudioState({
@@ -124,12 +137,11 @@ export function Sandbox({
     window.addEventListener("pagehide", release)
     document.addEventListener("visibilitychange", visibility)
     return () => {
-      clearInterval(interval)
       window.removeEventListener("pagehide", release)
       document.removeEventListener("visibilitychange", visibility)
       audio.stop()
     }
-  }, [controller, audio])
+  }, [audio])
 
   async function prepare() {
     audio.stop()
@@ -149,17 +161,36 @@ export function Sandbox({
               )
               .map((sample) => [sample.toolName, "unavailable"])
           )
-        : {}
+        : Object.fromEntries(
+            Object.entries(namedOverrides).filter(([toolName, name]) =>
+              samples.some(
+                (sample) =>
+                  sample.toolName === toolName &&
+                  sample.overrides.some((override) => override.name === name)
+              )
+            )
+          )
     const selectedScenario: PracticeScenario = {
       transport: scenario === "unavailable" ? "success" : scenario,
       overrides,
     }
+    const preview = readPreview(draft.fields)
+    if (
+      !state.canRetryPreparation &&
+      (locked ||
+        conflict ||
+        issues.length > 0 ||
+        parsedSamples.issues.length > 0 ||
+        (draft.source === "preview" && preview.issues.length > 0))
+    )
+      return
     await controller.prepare({
       assistantId: assistant.id,
-      baseRevision: assistant.revision,
-      source: "saved",
-      sampleRevision,
-      ...(sampleSource === "riley" ? { samples } : {}),
+      baseRevision: draft.baseRevision,
+      source: draft.source,
+      ...(draft.source === "preview" ? { preview: preview.preview } : {}),
+      sampleRevision: draft.sampleRevision,
+      samples: parsedSamples.definitions,
       scenario: selectedScenario,
     })
   }
@@ -212,22 +243,50 @@ export function Sandbox({
                 <h2>Test configuration</h2>
               </CardTitle>
               <CardDescription>
-                Saved revision {assistant.revision}. Edits must be saved before
-                testing.
+                Based on saved revision {draft.baseRevision}. Preview never
+                saves the assistant or its samples.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
+              <fieldset disabled={locked} className="flex flex-wrap gap-4">
+                <legend className="mb-3 text-sm font-semibold">
+                  Configuration source
+                </legend>
+                {(["saved", "preview"] as const).map((source) => (
+                  <label
+                    key={source}
+                    className="flex min-h-11 items-center gap-2 text-sm"
+                  >
+                    <input
+                      type="radio"
+                      name="configuration-source"
+                      value={source}
+                      checked={draft.source === source}
+                      onChange={() => store.setSource(source)}
+                      className="size-4 accent-primary"
+                    />
+                    {source === "saved"
+                      ? "Saved configuration"
+                      : "Unsaved conversation preview"}
+                  </label>
+                ))}
+              </fieldset>
+              <p className="text-sm text-muted-foreground">
+                {draft.source === "preview"
+                  ? "Uses your in-tab conversation, voice, model and tools draft. Name, connection URL and credentials are excluded."
+                  : "Uses the saved assistant configuration. Sample responses below are included as shown, even when unsaved."}
+              </p>
               <dl className="grid grid-cols-2 gap-4 text-sm">
                 <div>
                   <dt className="text-muted-foreground">Voice</dt>
                   <dd className="mt-1 font-medium break-words">
-                    {assistant.voice || "Not configured"}
+                    {selected.voice || "Not configured"}
                   </dd>
                 </div>
                 <div>
                   <dt className="text-muted-foreground">Backend model</dt>
                   <dd className="mt-1 font-medium break-words">
-                    {assistant.backendModel || "Not configured"}
+                    {selected.backendModel || "Not configured"}
                   </dd>
                 </div>
                 <div>
@@ -236,7 +295,10 @@ export function Sandbox({
                 </div>
                 <div>
                   <dt className="text-muted-foreground">Configuration</dt>
-                  <dd className="mt-1 font-medium">Saved · Practice</dd>
+                  <dd className="mt-1 font-medium">
+                    {draft.source === "preview" ? "Unsaved preview" : "Saved"} ·
+                    Practice
+                  </dd>
                 </div>
               </dl>
               {issues.length > 0 ? (
@@ -273,7 +335,7 @@ export function Sandbox({
                 </div>
               ) : (
                 <p className="text-sm">
-                  Saved configuration and sample coverage pass preparation
+                  Selected configuration and sample coverage pass preparation
                   checks. This does not mean a voice agent is ready.
                 </p>
               )}
@@ -317,41 +379,51 @@ export function Sandbox({
                   default sample.
                 </p>
               )}
-              <details className="rounded-md border p-4">
-                <summary className="min-h-7 cursor-pointer text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring">
-                  Review {samples.length} sample{" "}
-                  {samples.length === 1 ? "mapping" : "mappings"}
-                </summary>
-                <p className="mt-3 text-sm text-muted-foreground">
-                  {sampleSource === "riley"
-                    ? "This test uses Riley’s fictional sample pack. It is captured in the test snapshot, without changing saved samples."
-                    : `Uses saved samples at revision ${sampleRevision}.`}
-                </p>
-                {samples.length === 0 && (
-                  <p className="mt-3 text-sm">
-                    No sample results are configured.
-                  </p>
-                )}
-                {samples.map((sample) => (
-                  <div
-                    key={sample.toolName}
-                    className="mt-4 min-w-0 border-t pt-4"
-                  >
-                    <h3 className="text-sm font-medium break-all">
-                      {sample.toolName}
-                    </h3>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Synthetic default · {sample.overrides.length} named
-                      overrides
-                    </p>
-                    <pre className="mt-3 max-h-48 overflow-auto rounded-md bg-muted p-3 text-xs break-all whitespace-pre-wrap">
-                      {JSON.stringify(sample.defaultResult, null, 2)}
-                    </pre>
-                  </div>
-                ))}
-              </details>
+              {scenario !== "unavailable" && (
+                <fieldset disabled={locked} className="space-y-3">
+                  <legend className="mb-3 text-sm font-semibold">
+                    Named sample overrides
+                  </legend>
+                  {samples
+                    .filter((sample) => sample.overrides.length > 0)
+                    .map((sample) => (
+                      <label
+                        key={sample.toolName}
+                        className="block space-y-2 text-sm"
+                      >
+                        {sample.toolName}
+                        <select
+                          className="min-h-11 w-full rounded-md border bg-background px-3"
+                          value={
+                            sample.overrides.some(
+                              (override) =>
+                                override.name ===
+                                namedOverrides[sample.toolName]
+                            )
+                              ? namedOverrides[sample.toolName]
+                              : ""
+                          }
+                          onChange={(event) =>
+                            setNamedOverrides((current) => ({
+                              ...current,
+                              [sample.toolName]: event.target.value,
+                            }))
+                          }
+                        >
+                          <option value="">Default result</option>
+                          {sample.overrides.map((override) => (
+                            <option key={override.name} value={override.name}>
+                              {override.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ))}
+                </fieldset>
+              )}
             </CardContent>
           </Card>
+          <SampleEditor />
         </div>
         <div className="flex min-w-0 flex-col gap-6">
           <Card className="rounded-lg shadow-none">
@@ -439,7 +511,7 @@ export function Sandbox({
               >
                 {state.phase === "loading" && <p>Checking existing tests…</p>}
                 {state.phase === "preparing" && (
-                  <p>Preparing saved configuration…</p>
+                  <p>Preparing the selected snapshot…</p>
                 )}
                 {state.phase === "canceling" && <p>Canceling preparation…</p>}
                 {state.message !== null && (
@@ -477,7 +549,8 @@ export function Sandbox({
                   disabled={
                     busy ||
                     unresolved ||
-                    issues.length > 0 ||
+                    (!state.canRetryPreparation &&
+                      (issues.length > 0 || conflict || draft.saving)) ||
                     (state.phase === "error" &&
                       state.attempt === null &&
                       !state.canRetryPreparation)
