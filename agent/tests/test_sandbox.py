@@ -9,9 +9,9 @@ from typing import Any
 import httpx
 import pytest
 
+from duplexd_agent.bot import STARTUP_ENVELOPE_SECS
 from duplexd_agent.config import RunnerInput, SandboxAck, SandboxControl, SandboxOwner
 from duplexd_agent.errors import PlatformRequestError, RunnerInputError
-from duplexd_agent.bot import STARTUP_ENVELOPE_SECS
 from duplexd_agent.platform import (
     CONTROL_POLL_TIMEOUT_SECS,
     STARTUP_REQUEST_TIMEOUT_SECS,

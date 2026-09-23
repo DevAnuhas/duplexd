@@ -10,8 +10,8 @@ import pytest
 from duplexd_agent.config import RunnerInput
 from duplexd_agent.errors import AgentConfigError, PlatformRequestError
 from duplexd_agent.platform import (
-    STARTUP_REQUEST_TIMEOUT_SECS,
     REPORTING_TIMEOUT_SECS,
+    STARTUP_REQUEST_TIMEOUT_SECS,
     PlatformClient,
     encode_json,
 )
