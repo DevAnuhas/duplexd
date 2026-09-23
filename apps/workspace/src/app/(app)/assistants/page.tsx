@@ -75,8 +75,8 @@ function AssistantList({
               Your first assistant starts here
             </EmptyTitle>
             <EmptyDescription className="max-w-lg text-base leading-relaxed">
-              Start with your own instructions or a fictional Riley sample. Use
-              Sandbox to prepare a Practice test and check local audio.
+              Start with your own instructions or a fictional sample. Then use
+              Practice to try a conversation with sample tool responses.
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent className="flex flex-wrap gap-3 pb-4">
@@ -161,9 +161,9 @@ function AssistantList({
                       <Button asChild variant="ghost" className="min-h-11">
                         <Link
                           href={`/assistants/${assistant.id}/sandbox`}
-                          aria-label={`Test ${assistant.name}`}
+                          aria-label={`Practice with ${assistant.name}`}
                         >
-                          Test assistant
+                          Practice
                         </Link>
                       </Button>
                       <ArchiveButton

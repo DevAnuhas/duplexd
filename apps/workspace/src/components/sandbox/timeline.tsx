@@ -12,6 +12,7 @@ function describe(event: TimelineState["events"][number]) {
   const payload = event.payload ?? {}
   if (event.type === "transcript_user" || event.type === "transcript_assistant")
     return {
+      kind: event.type === "transcript_user" ? "user" : "assistant",
       label: event.type === "transcript_user" ? "You" : "Assistant",
       text:
         typeof payload.text === "string"
@@ -22,12 +23,12 @@ function describe(event: TimelineState["events"][number]) {
     const tool = typeof payload.tool === "string" ? payload.tool : "Tool"
     const outcome =
       event.type === "tool_started"
-        ? "started"
+        ? "Checking sample data"
         : payload.outcome === "success"
-          ? "delivery succeeded"
+          ? "Sample delivered"
           : payload.outcome === "failure"
-            ? "delivery failed"
-            : "outcome not reported"
+            ? "Sample delivery failed"
+            : "Sample outcome not reported"
     const duration =
       typeof payload.durationMs === "number" && payload.durationMs >= 0
         ? ` · ${payload.durationMs} ms`
@@ -45,6 +46,7 @@ function describe(event: TimelineState["events"][number]) {
         ? ` · selected sample HTTP ${payload.practiceSelectedStatus}`
         : ""
     return {
+      kind: "tool",
       label: "Practice · sample data",
       text: `${tool}: ${outcome}${duration}${scenario}${selection}. Sample selection is not business success.`,
     }
@@ -58,6 +60,7 @@ function describe(event: TimelineState["events"][number]) {
     stop_requested: "Stop requested",
   }
   return {
+    kind: "system",
     label: event.namespace === "platform" ? "Platform" : "Agent",
     text: labels[event.type] ?? "Activity recorded",
   }
@@ -85,19 +88,18 @@ export function SandboxTimeline({
   }, [state.events])
   const evidence = state.evidence
   return (
-    <section
-      aria-label="Call timeline"
-      className="min-w-0 space-y-4 rounded-lg border p-5"
-    >
+    <section aria-label="Conversation" className="flex min-w-0 flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-semibold">Call timeline</h2>
+        <h2 className="font-semibold">Conversation</h2>
         <Badge variant="secondary">
-          Evidence {evidence?.state ?? "unknown"}
+          {evidence?.state === "complete"
+            ? "Reported record"
+            : "Partial record"}
         </Badge>
       </div>
-      <p className="text-sm text-muted-foreground">
-        Persisted events only. Evidence completeness describes received events,
-        not everything that was said or a confirmed call ending.
+      <p className="text-xs text-muted-foreground">
+        Reported turns and sample tool activity. A partial record may omit
+        conversation.
       </p>
       <p role="status" aria-live="polite" className="text-sm">
         {state.events.length} events loaded{state.loading ? " · Updating…" : ""}
@@ -142,7 +144,7 @@ export function SandboxTimeline({
         ref={viewport}
         tabIndex={0}
         aria-label="Timeline events"
-        className="max-h-96 overflow-y-auto rounded-md border focus-visible:outline-2 focus-visible:outline-ring"
+        className="max-h-[60vh] overflow-y-auto focus-visible:outline-2 focus-visible:outline-ring"
         onScroll={() => {
           const node = viewport.current
           if (!node) return
@@ -157,24 +159,43 @@ export function SandboxTimeline({
             generate a transcript.
           </p>
         ) : (
-          <ol className="divide-y">
+          <ol className="space-y-4">
             {state.events.map((event) => {
               const content = describe(event)
               return (
                 <li
                   key={`${event.namespace}:${event.seq}`}
-                  className="space-y-1 p-4 text-sm [overflow-wrap:anywhere] break-words"
+                  className={`text-sm [overflow-wrap:anywhere] break-words ${content.kind === "user" ? "ml-8" : content.kind === "assistant" ? "mr-8" : ""}`}
                 >
-                  <div className="flex flex-wrap justify-between gap-2">
-                    <span className="font-medium">{content.label}</span>
-                    <time
-                      dateTime={event.at}
-                      className="text-xs text-muted-foreground"
+                  {content.kind === "system" ? (
+                    <details className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
+                      <summary className="cursor-pointer">
+                        Call activity
+                      </summary>
+                      <p className="mt-2">{content.text}</p>
+                    </details>
+                  ) : (
+                    <div
+                      className={
+                        content.kind === "tool"
+                          ? "rounded-lg border border-primary/20 bg-primary/5 p-3"
+                          : content.kind === "user"
+                            ? "rounded-xl rounded-br-sm bg-primary/10 p-3"
+                            : "rounded-xl rounded-bl-sm bg-muted p-3"
+                      }
                     >
-                      {new Date(event.at).toLocaleTimeString()}
-                    </time>
-                  </div>
-                  <p className="whitespace-pre-wrap">{content.text}</p>
+                      <div className="mb-1 flex flex-wrap justify-between gap-2">
+                        <span className="font-semibold">{content.label}</span>
+                        <time
+                          dateTime={event.at}
+                          className="text-xs text-muted-foreground"
+                        >
+                          {new Date(event.at).toLocaleTimeString()}
+                        </time>
+                      </div>
+                      <p className="whitespace-pre-wrap">{content.text}</p>
+                    </div>
+                  )}
                 </li>
               )
             })}

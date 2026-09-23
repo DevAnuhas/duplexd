@@ -211,7 +211,7 @@ function button(label: string) {
  * Absent, not merely disabled.
  *
  * The panel used to render every control in every phase and vary only
- * `disabled`, which is how a live call came to offer "Prepare test" — a second
+ * `disabled`, which is how a live call came to offer "Prepare practice call" — a second
  * reservation — next to "End call". Asserting `disabled === true` would pass
  * against that panel, so these assert the control is not in the document.
  */
@@ -231,44 +231,47 @@ afterEach(() => {
 it("keeps enabled media behind a gesture, waits for readiness, mutes and ends locally", async () => {
   const requests = await render()
   expect(fixture.media.prepare).not.toHaveBeenCalled()
-  await click(button("Prepare test"))
-  expect(button("Start voice call").disabled).toBe(false)
-  await click(button("Start voice call"))
+  fixture.media.prepare.mockImplementationOnce(async () => {
+    expect(requests.some((path) => path.endsWith("/attempts"))).toBe(false)
+  })
+  await click(button("Start practice call"))
+  expect(fixture.media.prepare).toHaveBeenCalledOnce()
   expect(container!.textContent).not.toContain("synthetic-token")
   // Readiness arrives on its own, through presence. Nobody should have to press
   // anything to stop waiting — the old flow only left this state when the
   // person clicked Refresh status.
-  expect(container!.textContent).toContain("Ready")
+  expect(container!.textContent).toContain("Connected")
   await click(button("Mute microphone"))
   expect(fixture.media.mute).toHaveBeenCalledWith(true)
   expect(button("Unmute microphone").getAttribute("aria-pressed")).toBe("true")
   await click(button("End call"))
   expect(fixture.media.stop).toHaveBeenCalledOnce()
-  expect(container!.textContent).toContain(
-    "Finishing · cleanup not yet confirmed"
+  expect(container!.textContent).toContain("Ending call…")
+  expectAbsent(
+    "Prepare practice call",
+    "Start practice call",
+    "Cancel preparation"
   )
-  expectAbsent("Prepare test", "Start voice call", "Cancel preparation")
   expect(requests.filter((p) => p.endsWith("/start"))).toHaveLength(1)
 })
 
 it("offers one action while a call is live, and never a second reservation", async () => {
   await render()
-  await click(button("Prepare test"))
-  await click(button("Start voice call"))
+  await click(button("Start practice call"))
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 450))
   })
-  expect(container!.textContent).toContain("Ready")
+  expect(container!.textContent).toContain("Connected")
   // The complaint this ticket started from: mid-call the panel showed Prepare
-  // test, Cancel preparation, Refresh status, Start voice call, Mute and End
+  // test, Cancel preparation, Refresh status, Start practice call, Mute and End
   // call at once, and offered to prepare another test during a live call.
   expectAbsent(
-    "Prepare test",
-    "Start voice call",
+    "Prepare practice call",
+    "Start practice call",
     "Cancel preparation",
     "Refresh status",
-    "Retry same preparation",
-    "Prepare another test"
+    "Retry preparation",
+    "Start another call"
   )
   expect(button("End call")).toBeDefined()
   expect(button("Mute microphone")).toBeDefined()
@@ -277,25 +280,23 @@ it("offers one action while a call is live, and never a second reservation", asy
   expect(container!.textContent).not.toContain("resource cleanup remains")
 })
 
-it("counts down the readiness wait instead of leaving hung and working identical", async () => {
+it("shows the connection stage without a countdown or false readiness", async () => {
   // The agent never reports ready, so the panel stays in the window the owner
   // sat through for two minutes with nothing on screen changing.
   await render(false, Infinity)
-  await click(button("Prepare test"))
-  await click(button("Start voice call"))
+  await click(button("Start practice call"))
 
   expect(container!.textContent).toContain("Waiting for agent readiness")
   // It must not claim readiness the server has not reported.
-  expect(container!.textContent).not.toContain("Ready.")
-  // The whole point: a number that moves, so waiting is distinguishable from
-  // hung. 120 s startup deadline, rendered at seconds resolution.
-  expect(container!.textContent).toMatch(/up to \d+:\d\d left/)
+  expect(container!.textContent).not.toContain("Connected")
+  // The current stage explains the wait without an unhelpful countdown.
+  expect(container!.textContent).not.toMatch(/up to \d+:\d\d left/)
 
   // One action, and it is the one that stops a call.
   expect(button("End call")).toBeDefined()
   expectAbsent(
-    "Prepare test",
-    "Start voice call",
+    "Prepare practice call",
+    "Start practice call",
     "Cancel preparation",
     "Refresh status",
     "Mute microphone"
@@ -304,16 +305,15 @@ it("counts down the readiness wait instead of leaving hung and working identical
 
 it("warns about silent output without ending the call, and withdraws it", async () => {
   await render()
-  await click(button("Prepare test"))
-  await click(button("Start voice call"))
-  expect(container!.textContent).toContain("Ready")
+  await click(button("Start practice call"))
+  expect(container!.textContent).toContain("Connected")
   expect(container!.textContent).not.toContain("Check your output device")
 
   await act(async () => fixture.report!({ type: "silent" }))
 
   expect(container!.textContent).toContain("Check your output device")
   // Advisory, not fatal. The call is still live and still endable.
-  expect(container!.textContent).toContain("Ready")
+  expect(container!.textContent).toContain("Connected")
   expect(fixture.media.stop).not.toHaveBeenCalled()
   expect(button("End call")).toBeDefined()
   expect(button("Mute microphone")).toBeDefined()
@@ -330,20 +330,18 @@ it("does not let a silent-output report disturb a reconnecting call", async () =
   // "interrupted" as "connected". Routed through that branch, an output
   // advisory would silently clear a reconnection in progress.
   await render()
-  await click(button("Prepare test"))
-  await click(button("Start voice call"))
+  await click(button("Start practice call"))
   await act(async () => fixture.report!({ type: "interrupted" }))
-  expect(container!.textContent).toContain("Reconnecting to the same call")
+  expect(container!.textContent).toContain("Reconnecting…")
 
   await act(async () => fixture.report!({ type: "silent" }))
 
-  expect(container!.textContent).toContain("Reconnecting to the same call")
+  expect(container!.textContent).toContain("Reconnecting…")
 })
 
 it("says the tab was hidden, rather than letting it look like an agent failure", async () => {
   await render()
-  await click(button("Prepare test"))
-  await click(button("Start voice call"))
+  await click(button("Start practice call"))
   await act(async () => {
     Object.defineProperty(document, "hidden", {
       configurable: true,
@@ -360,7 +358,7 @@ it("says the tab was hidden, rather than letting it look like an agent failure",
 })
 it("observes another tab without taking over or enabling Start", async () => {
   const requests = await render(true)
-  expect(button("Start voice call").disabled).toBe(true)
+  expect(button("Start prepared call").disabled).toBe(true)
   expect(container!.textContent).toContain("Only its original controller")
   expect(fixture.media.prepare).not.toHaveBeenCalled()
   expect(
@@ -369,8 +367,7 @@ it("observes another tab without taking over or enabling Start", async () => {
 })
 it("stops the injected capture on page hide without reconnecting on return", async () => {
   await render()
-  await click(button("Prepare test"))
-  await click(button("Start voice call"))
+  await click(button("Start practice call"))
   await act(async () => window.dispatchEvent(new Event("pagehide")))
   expect(fixture.media.stop).toHaveBeenCalledOnce()
   await act(async () => window.dispatchEvent(new Event("focus")))
@@ -378,6 +375,6 @@ it("stops the injected capture on page hide without reconnecting on return", asy
   // The attempt was dispatched and is not confirmed stopped, so what is owed
   // is cleanup — not another call. Asserting a *disabled* Start button would
   // have accepted a panel that still offered one.
-  expectAbsent("Start voice call", "Prepare test")
+  expectAbsent("Start practice call", "Start prepared call")
   expect(button("Retry stop")).toBeDefined()
 })

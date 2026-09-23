@@ -616,8 +616,10 @@ export class SandboxController {
       this.now() < this.expires.reservation
     )
   }
-  /** Must be called directly by a user gesture. Nothing on mount calls this. */
-  async start(factory: SandboxMediaFactory) {
+  /** A preflighted adapter has already opened microphone and playback in the
+   * click stack, before the reservation was created. The controller takes
+   * ownership here without asking for permission a second time. */
+  async start(factory: SandboxMediaFactory, preflighted = false) {
     if (!this.canStart()) return
     const owner = this.ownership!
     const epoch = ++this.generation
@@ -680,7 +682,7 @@ export class SandboxController {
       })
       this.media = media
       this.deadlineTimer = setInterval(() => this.tick(), 250)
-      await step(media.prepare())
+      if (!preflighted) await step(media.prepare())
       if (epoch !== this.generation) return
       if (this.now() >= this.expires.reservation) throw new Error("expired")
       owner.started = true // Before the request: uncertain dispatch is never retried.
@@ -946,10 +948,9 @@ export class SandboxController {
   }
 
   /** Hiding/leaving never resumes capture automatically on return. */
-  leave() {
-    if (this.media)
-      void this.end(
-        "Local audio stopped because you left or hid Sandbox. Checking cleanup."
-      )
+  leave(
+    reason = "Local audio stopped because you left the Practice page. Checking cleanup."
+  ) {
+    if (this.media) void this.end(reason)
   }
 }

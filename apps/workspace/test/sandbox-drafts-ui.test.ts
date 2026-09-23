@@ -231,7 +231,7 @@ describe("shared Configure and Sandbox drafts", () => {
       container.querySelector<HTMLInputElement>('input[value="preview"]')!
         .checked
     ).toBe(true)
-    await click(button("Prepare test"))
+    await click(button("Prepare without calling"))
     const body = JSON.parse(
       String(
         requests.find(
@@ -358,7 +358,7 @@ describe("shared Configure and Sandbox drafts", () => {
     expect(store.getSnapshot().baseRevision).toBe(3)
     await click(button("Switch screen"))
     expect(container.textContent).toContain("Your local draft has been kept")
-    expect(button("Prepare test").disabled).toBe(true)
+    expect(button("Prepare without calling").disabled).toBe(true)
     await click(button("Rebase my draft"))
     expect(store.getSnapshot().baseRevision).toBe(4)
     await click(button("Switch screen"))
@@ -372,7 +372,7 @@ describe("shared Configure and Sandbox drafts", () => {
     await typeInto(field('[name="tools"]'), JSON.stringify(changed))
     await click(button("Switch screen"))
     await validated()
-    expect(button("Prepare test").disabled).toBe(true)
+    expect(button("Prepare without calling").disabled).toBe(true)
     expect(container.textContent).toContain("Tool input changed")
     await typeInto(field("#sample-default-0"), "{")
     await validated()
@@ -384,7 +384,7 @@ describe("shared Configure and Sandbox drafts", () => {
     await validated()
     await click(button("I reviewed this schema and its sample results"))
     await validated()
-    expect(button("Prepare test").disabled).toBe(false)
+    expect(button("Prepare without calling").disabled).toBe(false)
     expect(button("Save sample mappings").disabled).toBe(true)
     expect(container.textContent).toContain("These mappings use unsaved tools")
     expect(requests.some((request) => request.options?.method === "PUT")).toBe(

@@ -629,7 +629,7 @@ export async function listCallsForAccount(
 
 export async function listWorkspaceCallsForAccount(
   accountId: string,
-  options: { cursor?: string | null; limit?: number } = {}
+  options: { cursor?: string | null; limit?: number; assistantId?: string } = {}
 ): Promise<
   | { kind: "invalid_cursor" }
   | { kind: "ok"; calls: WorkspaceCall[]; nextCursor: string | null }
@@ -644,16 +644,18 @@ export async function listWorkspaceCallsForAccount(
     return { kind: "invalid_cursor" }
   }
 
-  const predicate =
+  const predicate = and(
+    eq(calls.accountId, accountId),
+    options.assistantId === undefined
+      ? undefined
+      : eq(calls.assistantId, options.assistantId),
     cursor === null
-      ? eq(calls.accountId, accountId)
-      : and(
-          eq(calls.accountId, accountId),
-          or(
-            lt(calls.createdAt, cursor.createdAt),
-            and(eq(calls.createdAt, cursor.createdAt), lt(calls.id, cursor.id))
-          )
+      ? undefined
+      : or(
+          lt(calls.createdAt, cursor.createdAt),
+          and(eq(calls.createdAt, cursor.createdAt), lt(calls.id, cursor.id))
         )
+  )
 
   const rows = await getDb()
     .select(workspaceCallColumns)

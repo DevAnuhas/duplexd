@@ -146,8 +146,10 @@ function technicalLabel(type: string): string {
 
 export default async function CallDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>
+  searchParams: Promise<{ from?: string | string[] }>
 }) {
   const { account } = await requireShell()
 
@@ -159,6 +161,12 @@ export default async function CallDetailPage({
   }
 
   const { timeline, technical } = arrangeEvents(result.events)
+  const assistantPath =
+    result.call.assistantId === null
+      ? null
+      : `/assistants/${encodeURIComponent(result.call.assistantId)}/calls`
+  const from = (await searchParams).from
+  const backToAssistant = assistantPath !== null && from === assistantPath
   const preparation = preparationLabel(result.call)
   const endingLabel =
     preparation !== null
@@ -171,9 +179,11 @@ export default async function CallDetailPage({
     <main className="space-y-8">
       <header className="space-y-4">
         <Button variant="ghost" asChild className="-ml-3 h-11">
-          <Link href="/calls">
+          <Link href={backToAssistant ? (assistantPath ?? "/calls") : "/calls"}>
             <ArrowLeft aria-hidden="true" className="size-4" />
-            All calls
+            {backToAssistant
+              ? `${result.call.assistantName ?? "Assistant"} calls`
+              : "All calls"}
           </Link>
         </Button>
         <h1 className="text-2xl font-semibold tracking-tight">Call detail</h1>

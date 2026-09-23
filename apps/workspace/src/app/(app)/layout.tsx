@@ -2,6 +2,7 @@ import type { ReactNode } from "react"
 
 import { AppSidebar } from "@/components/app-sidebar"
 import { BreadcrumbTrail } from "@/components/breadcrumb-trail"
+import { PracticeSessionProvider } from "@/components/sandbox/practice-session"
 import { Separator } from "@/components/ui/separator"
 import {
   SidebarInset,
@@ -63,21 +64,22 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       jump-link bar depends on getting this right. A flex child also needs
       `min-h-0` or it refuses to shrink below its content and overflows.
     */
-    <SidebarProvider className="h-svh overflow-hidden">
-      <AppSidebar
-        account={{ id: shell.account.id, name: shell.account.name }}
-        userEmail={shell.userEmail}
-        userName={shell.userName}
-        counts={shell.counts}
-      />
-      <SidebarInset className="flex min-h-0 flex-1 flex-col">
-        <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b bg-background px-4">
-          {/* size-11 rather than the 28px default: 44px minimum target. */}
-          <SidebarTrigger className="-ml-1 size-11" />
-          <Separator orientation="vertical" className="mr-2 h-4" />
-          <BreadcrumbTrail accountName={shell.account.name} />
-        </header>
-        {/*
+    <PracticeSessionProvider>
+      <SidebarProvider className="h-svh overflow-hidden">
+        <AppSidebar
+          account={{ id: shell.account.id, name: shell.account.name }}
+          userEmail={shell.userEmail}
+          userName={shell.userName}
+          counts={shell.counts}
+        />
+        <SidebarInset className="flex min-h-0 flex-1 flex-col">
+          <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b bg-background px-4">
+            {/* size-11 rather than the 28px default: 44px minimum target. */}
+            <SidebarTrigger className="-ml-1 size-11" />
+            <Separator orientation="vertical" className="mr-2 h-4" />
+            <BreadcrumbTrail accountName={shell.account.name} />
+          </header>
+          {/*
           A `div`, not a `main`. **`SidebarInset` already renders `<main>`**,
           so wrapping the content in another one nested `<main>` inside
           `<main>` — invalid HTML, and the kind the parser is entitled to
@@ -86,12 +88,13 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           The width and padding live here, once. Pages return their content
           directly and must not repeat them.
         */}
-        <div className="min-h-0 flex-1 overflow-auto">
-          <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6">
-            {children}
+          <div className="min-h-0 flex-1 overflow-auto">
+          <div className="mx-auto w-full max-w-5xl px-4 pt-6 pb-24 sm:px-6">
+              {children}
+            </div>
           </div>
-        </div>
-      </SidebarInset>
-    </SidebarProvider>
+        </SidebarInset>
+      </SidebarProvider>
+    </PracticeSessionProvider>
   )
 }
