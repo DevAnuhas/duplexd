@@ -105,24 +105,27 @@ export function PracticeSessionProvider({
   useEffect(() => {
     void controller.refresh()
     const refresh = () => {
-      void controller.refresh()
+      if (controller.getSnapshot().mediaPhase === "off")
+        void controller.refresh()
+      else controller.visibleAgain()
     }
-    const hidden = () => {
+    const visibility = () => {
       if (document.hidden) {
-        if (controller.getSnapshot().mediaPhase !== "off") setHiddenNotice(true)
-        controller.leave(
-          "Practice stopped because this tab was hidden. Checking cleanup."
+        if (
+          controller.getSnapshot().mediaPhase !== "off" &&
+          !controller.hidden()
         )
-      }
+          setHiddenNotice(true)
+      } else controller.visibleAgain()
     }
     const leaving = () => controller.leave()
     window.addEventListener("focus", refresh)
     window.addEventListener("pagehide", leaving)
-    document.addEventListener("visibilitychange", hidden)
+    document.addEventListener("visibilitychange", visibility)
     return () => {
       window.removeEventListener("focus", refresh)
       window.removeEventListener("pagehide", leaving)
-      document.removeEventListener("visibilitychange", hidden)
+      document.removeEventListener("visibilitychange", visibility)
       controller.leave()
     }
   }, [controller])
@@ -130,7 +133,7 @@ export function PracticeSessionProvider({
   useEffect(() => {
     const interval = setInterval(
       () => {
-        void controller.refresh()
+        if (!document.hidden) void controller.refresh()
       },
       showBar ? 5_000 : 30_000
     )
@@ -176,8 +179,8 @@ export function PracticeSessionProvider({
           className="fixed inset-x-3 bottom-3 z-40 mx-auto flex max-w-2xl items-center gap-3 rounded-xl border border-amber-500/50 bg-background p-4 shadow-xl sm:inset-x-6"
         >
           <p className="flex-1 text-sm">
-            Practice stopped because this tab was hidden. Keep it visible while
-            calling.
+            Practice stopped before the call connected because this tab was
+            hidden. Start a new call when you are ready.
           </p>
           <Button
             type="button"
@@ -209,7 +212,7 @@ export function PracticeSessionProvider({
             <span className="block truncate text-sm font-semibold">{name}</span>
             <span className="block truncate text-xs text-muted-foreground">
               Practice · sample data ·{" "}
-              {hiddenNotice && state.message
+              {state.confirming && state.mediaPhase === "waiting"
                 ? state.message
                 : connectionLabel(state.mediaPhase)}
             </span>
@@ -248,7 +251,11 @@ export function PracticeSessionProvider({
               <div className="min-w-0 flex-1">
                 <h2 className="truncate text-sm font-semibold">{name}</h2>
                 <p className="text-xs text-muted-foreground">
-                  <span role="status">{connectionLabel(state.mediaPhase)}</span>
+                  <span role="status">
+                    {state.confirming && state.mediaPhase === "waiting"
+                      ? state.message
+                      : connectionLabel(state.mediaPhase)}
+                  </span>
                   <span aria-hidden="true"> · {elapsed}</span>
                   <span> · Practice sample data</span>
                 </p>
@@ -289,7 +296,11 @@ export function PracticeSessionProvider({
                 type="button"
                 variant="outline"
                 className="h-8 flex-1"
-                disabled={!state.ownsController || state.mediaPhase !== "ready"}
+                disabled={
+                  !state.ownsController ||
+                  (state.mediaPhase !== "ready" &&
+                    !(state.mediaPhase === "waiting" && state.confirming))
+                }
                 aria-pressed={state.muted}
                 onClick={() => controller.mute()}
               >

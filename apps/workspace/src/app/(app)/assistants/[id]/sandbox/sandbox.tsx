@@ -225,6 +225,7 @@ export function Sandbox({ assistant }: SandboxProps) {
   ).length
   const [endedReason, setEndedReason] = useState<string | null>(null)
   const panelPhase = sandboxPanelPhase(state)
+  const confirming = state.mediaPhase === "waiting" && state.confirming
   // Validation pending is "checking", not "broken": `issues` carries a
   // placeholder entry until the draft validates, and calling that a
   // configuration fault would tell people to fix something that is fine.
@@ -259,33 +260,31 @@ export function Sandbox({ assistant }: SandboxProps) {
 
   useEffect(() => {
     mounted.current = true
-    const release = (reason: string | null) => {
+    const release = (reason: string | null, keepCall = false) => {
       audio.stop()
       pendingMedia.current?.stop()
       pendingMedia.current = null
-      if (!sharedSession) controller.leave()
+      if (!sharedSession && !keepCall) controller.leave()
       if (reason !== null) setEndedReason(reason)
       setAudioState({
         kind: "stopped",
-        message: "Local audio stopped. No voice call is connected.",
+        message: "Local audio check stopped.",
         level: 0,
       })
     }
     const leaving = () => release(null)
-    /**
-     * Say that the tab being hidden is what did it.
-     *
-     * This is not only tab-switching: the browser reports a tab as hidden when
-     * another window covers it, so a call can end because a different
-     * application was brought to the front. Without naming the cause it is
-     * indistinguishable on screen from the agent failing, which is how an
-     * attempt was lost and blamed on the product.
-     */
     const visibility = () => {
-      if (document.hidden)
+      if (document.hidden) {
+        const continues = sharedSession
+          ? controller.canContinueHidden()
+          : controller.hidden()
         release(
-          "This test stopped because the browser reported this tab as hidden. Switching tabs, minimising, or another window covering this one will all do it — keep this window visible and in front for the whole call."
+          continues
+            ? null
+            : "Practice stopped before the call connected because this tab was hidden. Start a new call when you are ready.",
+          continues
         )
+      } else if (!sharedSession) controller.visibleAgain()
     }
     window.addEventListener("pagehide", leaving)
     document.addEventListener("visibilitychange", visibility)
@@ -740,12 +739,14 @@ export function Sandbox({ assistant }: SandboxProps) {
                     className="space-y-2 text-sm"
                   >
                     <p className="font-medium">
-                      {callStarting && state.mediaPhase === "off"
-                        ? "Starting practice call…"
-                        : phaseHeadline(
-                            panelPhase,
-                            state.attempt?.state ?? null
-                          )}
+                      {confirming
+                        ? "Confirming call…"
+                        : callStarting && state.mediaPhase === "off"
+                          ? "Starting practice call…"
+                          : phaseHeadline(
+                              panelPhase,
+                              state.attempt?.state ?? null
+                            )}
                     </p>
                     {callError && <p role="alert">{callError}</p>}
                     {panelPhase === "prepared" &&
@@ -757,15 +758,20 @@ export function Sandbox({ assistant }: SandboxProps) {
                       )}
                     {panelPhase === "connecting" && (
                       <p className="text-muted-foreground">
-                        {CONNECTING_LABEL[state.mediaPhase] ?? "Connecting"}
+                        {confirming
+                          ? "Checking the current call with the server"
+                          : (CONNECTING_LABEL[state.mediaPhase] ??
+                            "Connecting")}
                         {startupLeft !== null &&
                           startupLeft <= 0 &&
+                          state.attempt?.readyAt === null &&
                           " · The assistant did not become ready in time."}
                       </p>
                     )}
                     {!sharedSession &&
                       (panelPhase === "live" ||
-                        panelPhase === "reconnecting") && (
+                        panelPhase === "reconnecting" ||
+                        confirming) && (
                         <p className="text-muted-foreground">
                           {executionLeft === null
                             ? "Practice uses sample data."
@@ -774,11 +780,7 @@ export function Sandbox({ assistant }: SandboxProps) {
                               : "Call time limit reached."}
                         </p>
                       )}
-                    {/* Not gated on `mediaPhase === "off"`. Hiding the tab ends the
-                    call *through* cleanup, so the panel sits in `finishing`
-                    for a while — which is exactly when someone is staring at
-                    it wondering what went wrong. Gating on "off" hid this
-                    message during the only moments it was needed. */}
+                    {/* Keep a pre-ready hide reason visible through cleanup. */}
                     {/* Advisory, never fatal, and it withdraws itself when output
                     resumes. The call keeps running either way — ending it on
                     this signal would be one more control that stops a call
@@ -953,7 +955,7 @@ export function Sandbox({ assistant }: SandboxProps) {
                     <p className="text-sm text-muted-foreground">
                       {!state.ownsController
                         ? "This tab can observe or stop this test. Only its original controller can start or join it."
-                        : "Start checks microphone and playback before dispatch. Calls are limited to 10 minutes. Keep this window visible and in front; hiding it or switching away stops the call."}
+                        : "Start checks microphone and playback before dispatch. Calls are limited to 10 minutes and normally end after about 5 minutes without speech. Keep this tab visible until the assistant connects; then you can switch tabs. End the call when finished."}
                     </p>
                   )}
                 </>

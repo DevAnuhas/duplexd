@@ -8,7 +8,8 @@ import {
 import { sandboxLifecycle } from "@/sandbox/provider"
 
 /**
- * Renews the presence lease that proves a human is still in the tab.
+ * Renews the presence lease that proves the browser controller is still alive.
+ * A ready Practice call may continue while the tab is hidden.
  *
  * **The attempt travels with the renewal, and that is load-bearing.** Nothing
  * else polls it once audio is connected, and the browser holds the call open

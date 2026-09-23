@@ -339,8 +339,8 @@ it("does not let a silent-output report disturb a reconnecting call", async () =
   expect(container!.textContent).toContain("Reconnecting…")
 })
 
-it("says the tab was hidden, rather than letting it look like an agent failure", async () => {
-  await render()
+it("explains why a call still waiting for the agent stopped on tab hide", async () => {
+  await render(false, Infinity)
   await click(button("Start practice call"))
   await act(async () => {
     Object.defineProperty(document, "hidden", {
@@ -350,7 +350,9 @@ it("says the tab was hidden, rather than letting it look like an agent failure",
     document.dispatchEvent(new Event("visibilitychange"))
   })
   expect(fixture.media.stop).toHaveBeenCalled()
-  expect(container!.textContent).toContain("reported this tab as hidden")
+  expect(container!.textContent).toContain(
+    "Practice stopped before the call connected because this tab was hidden"
+  )
   Object.defineProperty(document, "hidden", {
     configurable: true,
     get: () => false,
