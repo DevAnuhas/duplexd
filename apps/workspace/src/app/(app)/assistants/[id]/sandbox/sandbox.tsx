@@ -134,6 +134,31 @@ const PHASE_HEADLINE: Record<SandboxPanelPhase, string> = {
   error: "Preparation could not continue",
 }
 
+/**
+ * `finished` is reached by three different routes, and which one it was is the
+ * person's business.
+ *
+ * Collapsing canceled, expired and released into one phase is right for
+ * *controls* — all three offer exactly the same actions, which is the job
+ * `sandboxPanelPhase` exists to do. It is wrong for the headline. Before the
+ * phase rewrite this panel said "Preparation canceled" and "Preparation
+ * expired"; folding both into a sentence about resources answers a question
+ * about the system instead of the one the person asked, which is what happened
+ * to their test.
+ *
+ * "I cancelled this", "it expired while I was away" and "the call ended" are
+ * not the same fact.
+ */
+function phaseHeadline(
+  phase: SandboxPanelPhase,
+  attemptState: string | null
+): string {
+  if (phase !== "finished") return PHASE_HEADLINE[phase]
+  if (attemptState === "canceled") return "Preparation canceled"
+  if (attemptState === "expired") return "Preparation expired"
+  return PHASE_HEADLINE.finished
+}
+
 export function Sandbox({ assistant }: SandboxProps) {
   const {
     store,
@@ -619,7 +644,9 @@ export function Sandbox({ assistant }: SandboxProps) {
                 aria-live="polite"
                 className="space-y-2 text-sm"
               >
-                <p className="font-medium">{PHASE_HEADLINE[panelPhase]}</p>
+                <p className="font-medium">
+                  {phaseHeadline(panelPhase, state.attempt?.state ?? null)}
+                </p>
                 {panelPhase === "prepared" && reservationLeft !== null && (
                   <p className="text-muted-foreground">
                     {reservationLeft > 0
