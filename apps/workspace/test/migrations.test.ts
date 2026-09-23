@@ -10,7 +10,11 @@ import { beforeAll, describe, expect, it } from "vitest"
 
 import { applyMigrations as applyApplicationMigrations } from "@/db/migrate"
 
-import { EXPECTED_TABLES, withTestPool } from "./helpers/database.ts"
+import {
+  dropAllSchemas,
+  EXPECTED_TABLES,
+  withTestPool,
+} from "./helpers/database.ts"
 import { isDatabaseConfigured } from "./helpers/environment.ts"
 
 /**
@@ -39,13 +43,11 @@ describeDatabase("migrations from an empty database", () => {
   let firstReport = { before: -1, after: -1, applied: -1 }
 
   beforeAll(async () => {
-    // Unguarded on purpose. If DATABASE_URL is set and this fails, the run
-    // fails; it never downgrades to a skip.
-    await withTestPool(async (pool) => {
-      await pool.query("DROP SCHEMA IF EXISTS drizzle CASCADE")
-      await pool.query("DROP SCHEMA IF EXISTS public CASCADE")
-      await pool.query("CREATE SCHEMA public")
-    })
+    // Unguarded against skipping, on purpose: if DATABASE_URL is set and this
+    // fails, the run fails and never downgrades to a skip. It does go through
+    // `dropAllSchemas`, which is the one place that refuses to wipe the
+    // database `.env.local` names.
+    await dropAllSchemas()
     firstReport = await applyApplicationMigrations()
 
     ;({ indexes, tables } = await withTestPool(async (pool) => {

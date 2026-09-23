@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 
 /**
@@ -50,6 +50,28 @@ const TEST_ONLY_DEFAULTS: Readonly<Record<string, string>> = {
  * reproduces a fresh clone's skip path on a machine that does have a
  * `.env.local`.
  */
+/**
+ * `DATABASE_URL` as written in `.env.local`, read from the file rather than the
+ * environment.
+ *
+ * The distinction is the whole point. After {@link loadTestEnvironment}, an
+ * unset `DATABASE_URL` has already been filled in from this file — so the
+ * process environment cannot tell "I chose this database" from "I forgot to
+ * choose one and got the app's". Reading the file separately is what lets the
+ * destructive-run guard compare the two.
+ */
+export function envLocalDatabaseUrl(): string | undefined {
+  for (const envLocal of [
+    `${workspaceRoot}.env.local`,
+    `${repositoryRoot}.env.local`,
+  ]) {
+    if (!existsSync(envLocal)) continue
+    const line = readFileSync(envLocal, "utf8").match(/^DATABASE_URL=(.*)$/m)
+    if (line?.[1] !== undefined) return line[1].trim().replace(/^["']|["']$/g, "")
+  }
+  return undefined
+}
+
 export function loadTestEnvironment(): void {
   // Next's conventional location is the package directory. The root fallback
   // preserves older worktrees. `loadEnvFile` never overwrites an existing
