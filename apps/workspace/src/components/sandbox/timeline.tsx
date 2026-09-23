@@ -94,12 +94,14 @@ export function SandboxTimeline({
         <Badge variant="secondary">
           {evidence?.state === "complete"
             ? "Reported record"
-            : "Partial record"}
+            : evidence?.state === "partial"
+              ? "Partial record"
+              : "Completeness unknown"}
         </Badge>
       </div>
       <p className="text-xs text-muted-foreground">
-        Reported turns and sample tool activity. A partial record may omit
-        conversation.
+        Reported turns and sample tool activity. A partial or unsealed record
+        may omit conversation.
       </p>
       <p role="status" aria-live="polite" className="text-sm">
         {state.events.length} events loaded{state.loading ? " · Updating…" : ""}
@@ -190,7 +192,7 @@ export function SandboxTimeline({
                           dateTime={event.at}
                           className="text-xs text-muted-foreground"
                         >
-                          {new Date(event.at).toLocaleTimeString()}
+                          {new Date(event.at).toISOString().slice(11, 19)} UTC
                         </time>
                       </div>
                       <p className="whitespace-pre-wrap">{content.text}</p>

@@ -86,7 +86,12 @@ export function AppSidebar({
     { href: "/keys", label: "API keys", icon: KeyRound, count: counts.apiKeys },
   ]
   const observe: NavItem[] = [
-    { href: "/calls", label: "Calls", icon: PhoneCall, count: counts.calls },
+    {
+      href: "/calls?source=integration",
+      label: "Calls",
+      icon: PhoneCall,
+      count: counts.calls,
+    },
   ]
 
   /**
@@ -95,10 +100,12 @@ export function AppSidebar({
    * `/` is the exception and needs the explicit guard: every path starts with
    * a slash, so a prefix test would light up Overview on every page.
    */
-  const isActive = (href: string): boolean =>
-    href === "/"
+  const isActive = (href: string): boolean => {
+    const path = href.split("?")[0]!
+    return path === "/"
       ? pathname === "/"
-      : pathname === href || pathname.startsWith(`${href}/`)
+      : pathname === path || pathname.startsWith(`${path}/`)
+  }
 
   const renderItems = (items: NavItem[]) =>
     items.map((item) => (

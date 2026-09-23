@@ -62,6 +62,11 @@ export const DATABASE_BACKED_FILES = [
   "sandbox-lifecycle",
   "sandbox-evidence",
   "sandbox-execution-routes",
+  // A06 durable review and dashboard classification.
+  "workspace-call-review",
+  "shell-context-call-counts",
+  "call-observations",
+  "call-observation-route",
   // Riley demo seed.
   "riley-seed-database",
 ] as const

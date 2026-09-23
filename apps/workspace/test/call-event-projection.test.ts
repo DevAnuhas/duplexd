@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest"
 
+import { AGENT_SEQUENCE_LIMIT } from "@/control/constants"
 import {
+  projectPracticeScenario,
+  projectReviewEvents,
   projectWorkspaceCallEvent,
+  projectWorkspaceCallEvents,
+  reviewInvocationIds,
   type WorkspaceCallEvent,
   type WorkspaceCallEventRow,
 } from "@/data/calls"
+import { sandboxEvidenceState } from "@/sandbox/protocol"
 
 /**
  * The workspace-scoped projection over `call_events`.
@@ -79,6 +85,45 @@ const ERROR_CATEGORY_LABELS: Readonly<Record<string, string>> = {
   webhook_http_error: "HTTP error",
   webhook_invalid_response: "Invalid response",
 }
+
+it("projects only the historical scenario kind, without inventing restored overrides", () => {
+  expect(
+    projectPracticeScenario({ transport: "success", overrides: {} })
+  ).toStrictEqual({
+    scenario: "success",
+    hasOverrides: false,
+  })
+  expect(
+    projectPracticeScenario({
+      transport: "success",
+      overrides: { one: "unavailable" },
+    })
+  ).toStrictEqual({
+    scenario: "unavailable",
+    hasOverrides: true,
+  })
+  expect(
+    projectPracticeScenario({
+      transport: "success",
+      overrides: { one: "custom" },
+    })
+  ).toStrictEqual({
+    scenario: "custom",
+    hasOverrides: true,
+  })
+  expect(
+    projectPracticeScenario({ transport: "slow", overrides: { one: "custom" } })
+  ).toStrictEqual({
+    scenario: "slow",
+    hasOverrides: true,
+  })
+  expect(
+    projectPracticeScenario({ transport: "bogus", overrides: {} })
+  ).toStrictEqual({
+    scenario: null,
+    hasOverrides: false,
+  })
+})
 
 /** A `tool_finished` payload that is valid in every respect. */
 function toolFinished(overrides: Record<string, unknown> = {}) {
@@ -784,4 +829,370 @@ describe("a whole call, projected", () => {
       )
     ).toStrictEqual(["inv-0001", "inv-0001"])
   })
+})
+
+/**
+ * #65: the review projection shared by the live Practice poll
+ * (`getSandboxEventPage`) and the durable Calls detail
+ * (`getWorkspaceCallForAccount`).
+ *
+ * Before #65 the live page enriched `tool_finished` inline with whatever
+ * `practice_invocations.scenario` and `status_code` held, copied raw, and the
+ * Calls detail had no review model at all. The rules below are the ones that
+ * now hold for both views, and every "drops" case would pass against the old
+ * inline copy only if the stored value happened to be well-formed.
+ */
+describe("the review projection", () => {
+  const selection = {
+    invocationId: "inv-0001",
+    scenario: "failure",
+    statusCode: 503,
+  }
+
+  function review(
+    rows: WorkspaceCallEventRow[],
+    selections: Array<{
+      invocationId: string
+      scenario: string
+      statusCode: number
+    }> = [selection]
+  ) {
+    return projectReviewEvents(projectWorkspaceCallEvents(rows), selections)
+  }
+
+  it("adds the selected sample scenario and status to the matching tool_finished", () => {
+    expect(review([row("tool_finished", toolFinished(), 3)])).toStrictEqual([
+      {
+        ...envelope("tool_finished", 3),
+        namespace: "agent",
+        payload: {
+          tool: "lookup_order",
+          invocationId: "inv-0001",
+          outcome: "success",
+          durationMs: 412,
+          practiceScenario: "failure",
+          practiceSelectedStatus: 503,
+        },
+      },
+    ])
+  })
+
+  /**
+   * The pairing key is the invocation id and nothing else. A tool_started
+   * carrying the same id is the other half of the card, not the result, so it
+   * must stay exactly as the base projection left it.
+   */
+  it("enriches only tool_finished, never the tool_started with the same id", () => {
+    const [started] = review([
+      row(
+        "tool_started",
+        { tool: "lookup_order", invocationId: "inv-0001" },
+        2
+      ),
+    ])
+
+    expect(started).toStrictEqual({
+      ...envelope("tool_started", 2),
+      namespace: "agent",
+      payload: { tool: "lookup_order", invocationId: "inv-0001" },
+    })
+  })
+
+  it("leaves a tool_finished with no matching selection unenriched", () => {
+    const [finished] = review([
+      row("tool_finished", toolFinished({ invocationId: "inv-0002" }), 3),
+    ])
+
+    expect(finished!.payload).toStrictEqual({
+      tool: "lookup_order",
+      invocationId: "inv-0002",
+      outcome: "success",
+      durationMs: 412,
+    })
+  })
+
+  it("routes each selection to its own invocation when a call has several", () => {
+    const events = review(
+      [
+        row("tool_finished", toolFinished({ invocationId: "inv-a" }), 3),
+        row("tool_finished", toolFinished({ invocationId: "inv-b" }), 5),
+      ],
+      [
+        { invocationId: "inv-b", scenario: "slow", statusCode: 200 },
+        { invocationId: "inv-a", scenario: "failure", statusCode: 500 },
+      ]
+    )
+
+    expect(
+      events.map((event) => [
+        event.payload?.invocationId,
+        event.payload?.practiceScenario,
+        event.payload?.practiceSelectedStatus,
+      ])
+    ).toStrictEqual([
+      ["inv-a", "failure", 500],
+      ["inv-b", "slow", 200],
+    ])
+  })
+
+  /**
+   * A degraded tool_finished has no payload and therefore no invocation id to
+   * pair on. Enrichment must not resurrect a payload for it: a card reading
+   * "failure scenario · HTTP 503" with no tool and no outcome is exactly the
+   * half-truth the base projection refuses to render.
+   */
+  it("does not give a degraded tool_finished a payload back", () => {
+    expect(
+      review([row("tool_finished", toolFinished({ durationMs: -1 }), 3)])
+    ).toStrictEqual([{ ...envelope("tool_finished", 3), namespace: "agent" }])
+  })
+
+  it.each(["success", "slow", "failure"])(
+    "keeps the stored %s scenario",
+    (scenario) => {
+      const [event] = review(
+        [row("tool_finished", toolFinished(), 3)],
+        [{ ...selection, scenario }]
+      )
+
+      expect(event!.payload?.practiceScenario).toBe(scenario)
+    }
+  )
+
+  /**
+   * The discriminating half against the pre-#65 live page, which copied the
+   * stored column verbatim. A scenario outside the stored transport vocabulary
+   * is dropped while the valid status beside it survives — each field is
+   * judged on its own, and neither takes the tool result down with it.
+   */
+  it.each([
+    ["the UI-only unavailable label", "unavailable"],
+    ["the wrong case", "FAILURE"],
+    ["the empty string", ""],
+    ["markup", "<b>failure</b>"],
+    ["an inherited key", "constructor"],
+  ])("drops a scenario that is %s", (_label, scenario) => {
+    const [event] = review(
+      [row("tool_finished", toolFinished(), 3)],
+      [{ ...selection, scenario }]
+    )
+
+    expect(event!.payload).toStrictEqual({
+      tool: "lookup_order",
+      invocationId: "inv-0001",
+      outcome: "success",
+      durationMs: 412,
+      practiceSelectedStatus: 503,
+    })
+  })
+
+  it.each([
+    ["the lowest code", 100],
+    ["the highest code", 599],
+  ])("keeps %s as the selected status", (_label, statusCode) => {
+    const [event] = review(
+      [row("tool_finished", toolFinished(), 3)],
+      [{ ...selection, statusCode }]
+    )
+
+    expect(event!.payload?.practiceSelectedStatus).toBe(statusCode)
+  })
+
+  it.each([
+    ["below the range", 99],
+    ["above the range", 600],
+    ["zero", 0],
+    ["negative", -200],
+    ["fractional", 200.5],
+    ["NaN", Number.NaN],
+  ])("drops a selected status %s", (_label, statusCode) => {
+    const [event] = review(
+      [row("tool_finished", toolFinished(), 3)],
+      [{ ...selection, statusCode }]
+    )
+
+    expect(event!.payload).toStrictEqual({
+      tool: "lookup_order",
+      invocationId: "inv-0001",
+      outcome: "success",
+      durationMs: 412,
+      practiceScenario: "failure",
+    })
+  })
+
+  /**
+   * The selection row also holds the sample's response body. Only the two
+   * named fields may cross; a future query that selected more columns must not
+   * turn into a leak just because they arrived on the same object.
+   */
+  it("copies only the two named fields off a selection carrying more", () => {
+    const CANARY = "practice-response-body-canary-51e0"
+    const [event] = projectReviewEvents(
+      projectWorkspaceCallEvents([row("tool_finished", toolFinished(), 3)]),
+      [
+        {
+          ...selection,
+          responseBody: { secret: CANARY },
+          requestDigest: CANARY,
+          toolName: CANARY,
+        } as typeof selection,
+      ]
+    )
+
+    expect(JSON.stringify(event)).not.toContain(CANARY)
+    expect(event!.payload?.practiceScenario).toBe("failure")
+  })
+
+  it("drops raw stored keys end to end, from row to review event", () => {
+    const CANARY = "raw-tool-payload-canary-7c3d"
+    const [event] = review([
+      row(
+        "tool_finished",
+        toolFinished({
+          arguments: { secret: CANARY },
+          result: CANARY,
+          serverSecret: CANARY,
+          reasoning: CANARY,
+          practiceScenario: "success",
+        }),
+        3
+      ),
+    ])
+
+    expect(JSON.stringify(event)).not.toContain(CANARY)
+    // A stored `practiceScenario` is agent-controlled JSON, not the selection.
+    // Only the platform's own row may set it.
+    expect(event!.payload?.practiceScenario).toBe("failure")
+    expect(event!.payload?.invocationId).toBe("inv-0001")
+  })
+
+  it("does not mutate the base projection it enriches", () => {
+    const base = projectWorkspaceCallEvents([
+      row("tool_finished", toolFinished(), 3),
+    ])
+    const before = structuredClone(base)
+
+    projectReviewEvents(base, [selection])
+
+    expect(base).toStrictEqual(before)
+  })
+
+  it.each([
+    ["the first agent sequence", 1, "agent"],
+    ["the last agent sequence", AGENT_SEQUENCE_LIMIT - 1, "agent"],
+    ["the platform sweep sequence", AGENT_SEQUENCE_LIMIT, "platform"],
+    ["the platform correction sequence", AGENT_SEQUENCE_LIMIT + 1, "platform"],
+  ])("puts %s (seq %i) in the %s namespace", (_label, seq, namespace) => {
+    const [event] = review([row("interruption", null, seq)], [])
+
+    expect(event).toStrictEqual({
+      ...envelope("interruption", seq),
+      namespace,
+    })
+  })
+
+  it("keeps one event per input, in order, with no cursor", () => {
+    const events = review(
+      [
+        row("transcript_user", { text: "Where is my order?" }, 1),
+        row(
+          "tool_started",
+          { tool: "lookup_order", invocationId: "inv-0001" },
+          2
+        ),
+        row("tool_finished", toolFinished(), 3),
+        row("mystery_event", { text: "newer agent build" }, 4),
+      ],
+      [selection]
+    )
+
+    expect(events.map((event) => [event.seq, event.type])).toStrictEqual([
+      [1, "transcript_user"],
+      [2, "tool_started"],
+      [3, "tool_finished"],
+      [4, "mystery_event"],
+    ])
+    expect(events.some((event) => "cursor" in event)).toBe(false)
+  })
+})
+
+describe("the invocation ids a review needs", () => {
+  it("collects each tool_finished id once and ignores tool_started", () => {
+    expect(
+      reviewInvocationIds(
+        projectWorkspaceCallEvents([
+          row("tool_started", { tool: "t", invocationId: "only-started" }, 1),
+          row("tool_finished", toolFinished({ invocationId: "inv-a" }), 2),
+          row("tool_finished", toolFinished({ invocationId: "inv-a" }), 3),
+          row("tool_finished", toolFinished({ invocationId: "inv-b" }), 4),
+          row("tool_finished", toolFinished({ durationMs: -1 }), 5),
+        ])
+      )
+    ).toStrictEqual(["inv-a", "inv-b"])
+  })
+
+  it("asks for nothing on a call with no finished tools", () => {
+    expect(
+      reviewInvocationIds(
+        projectWorkspaceCallEvents([row("transcript_user", { text: "hi" }, 1)])
+      )
+    ).toStrictEqual([])
+  })
+})
+
+/**
+ * The evidence state is the one fact the Calls list and the live Practice
+ * poll must agree on. It is a pure function of the ledger now, so it is tested
+ * as one: every flag that can make evidence partial is flipped on its own
+ * against an otherwise complete ledger, so a check that forgot one flag fails
+ * exactly one case rather than none.
+ */
+describe("the Sandbox evidence state", () => {
+  const complete = {
+    finalSeq: 12,
+    contiguousSeq: 12,
+    producerLoss: false,
+    truncated: false,
+    integrityConflict: false,
+  }
+
+  it("is complete when every sequence up to the sealed final one arrived clean", () => {
+    expect(sandboxEvidenceState(complete)).toBe("complete")
+  })
+
+  it("is complete for a sealed call that reported no events at all", () => {
+    expect(
+      sandboxEvidenceState({ ...complete, finalSeq: 0, contiguousSeq: 0 })
+    ).toBe("complete")
+  })
+
+  it.each([
+    ["producer loss", { producerLoss: true }],
+    ["truncation", { truncated: true }],
+    ["an integrity conflict", { integrityConflict: true }],
+    ["a gap below the final sequence", { contiguousSeq: 11 }],
+    ["no contiguous events against a sealed final", { contiguousSeq: 0 }],
+    ["a watermark past the seal", { contiguousSeq: 13 }],
+  ])("is partial with %s", (_label, override) => {
+    expect(sandboxEvidenceState({ ...complete, ...override })).toBe("partial")
+  })
+
+  /**
+   * Unknown is not a weaker partial. Without a seal there is no final sequence
+   * to measure against, so nothing — not even a contiguous run that looks
+   * complete, nor a flag that would otherwise make it partial — may promote it.
+   */
+  it.each([
+    ["a clean ledger", {}],
+    ["producer loss", { producerLoss: true }],
+    ["a conflict", { integrityConflict: true }],
+    ["a long contiguous run", { contiguousSeq: 400 }],
+  ])(
+    "is unknown with no sealed final sequence, even with %s",
+    (_label, override) => {
+      expect(
+        sandboxEvidenceState({ ...complete, finalSeq: null, ...override })
+      ).toBe("unknown")
+    }
+  )
 })

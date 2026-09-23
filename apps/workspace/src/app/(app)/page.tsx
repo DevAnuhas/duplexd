@@ -116,11 +116,15 @@ function Stats({ counts }: { counts: Counts }) {
         href="/assistants"
       />
       <StatTile label="API keys" value={counts.apiKeys} href="/keys" />
-      <StatTile label="Calls" value={counts.calls} href="/calls" />
       <StatTile
-        label="Incomplete"
+        label="Integration calls"
+        value={counts.calls}
+        href="/calls?source=integration"
+      />
+      <StatTile
+        label="Incomplete integration calls"
         value={counts.incompleteCalls}
-        href="/calls"
+        href="/calls?source=integration"
         tone="warning"
       />
     </div>
@@ -197,11 +201,11 @@ async function RecentActivity({
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <div>
-          <CardTitle>Recent calls</CardTitle>
+          <CardTitle>Recent integration calls</CardTitle>
           <CardDescription>The five most recent.</CardDescription>
         </div>
         <Button asChild variant="outline" size="sm">
-          <Link href="/calls">All calls</Link>
+          <Link href="/calls?source=integration">All integration calls</Link>
         </Button>
       </CardHeader>
       <CardContent>

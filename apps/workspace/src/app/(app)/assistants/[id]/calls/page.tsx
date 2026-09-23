@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation"
 import { CallsList } from "@/app/(app)/calls/calls-list"
 import { getAssistantForAccount } from "@/data/assistants"
 import { listWorkspaceCallsForAccount } from "@/data/calls"
+import { parseCallListFilters } from "@/data/call-list-filters"
 import { requireShell } from "../../../shell-data"
 import { AssistantNavigation } from "../../assistant-navigation"
 
@@ -13,18 +14,22 @@ export default async function AssistantCallsPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ cursor?: string | string[] }>
+  searchParams: Promise<{
+    cursor?: string | string[]
+    source?: string | string[]
+    mode?: string | string[]
+  }>
 }) {
   const { account } = await requireShell()
   const { id } = await params
   const assistant = await getAssistantForAccount(account.id, id)
   if (assistant === null) notFound()
   const basePath = `/assistants/${encodeURIComponent(id)}/calls`
-  const value = (await searchParams).cursor
-  const cursor = typeof value === "string" ? value : null
+  const filters = parseCallListFilters(await searchParams)
+  if (filters === null) redirect(basePath)
   const result = await listWorkspaceCallsForAccount(account.id, {
     assistantId: id,
-    cursor,
+    ...filters,
   })
   if (result.kind === "invalid_cursor") redirect(basePath)
 
@@ -43,6 +48,8 @@ export default async function AssistantCallsPage({
         nextCursor={result.nextCursor}
         basePath={basePath}
         assistantName={assistant.name}
+        source={filters.source}
+        mode={filters.mode}
       />
     </div>
   )

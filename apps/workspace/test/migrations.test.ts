@@ -377,8 +377,8 @@ describeDatabase(
         })
         expect(await applyApplicationMigrations()).toEqual({
           before: 7,
-          after: 8,
-          applied: 1,
+          after: 9,
+          applied: 2,
         })
         await withTestPool(async (pool) => {
           const call = await pool.query(
@@ -405,6 +405,14 @@ describeDatabase(
             (
               await pool.query(
                 "SELECT * FROM sandbox_evidence WHERE call_id = $1",
+                [callId]
+              )
+            ).rows
+          ).toEqual([])
+          expect(
+            (
+              await pool.query(
+                "SELECT * FROM call_observations WHERE call_id = $1",
                 [callId]
               )
             ).rows

@@ -50,6 +50,22 @@ export type SandboxCompletion = {
   truncated: boolean
 }
 export type SandboxEvidenceState = "unknown" | "partial" | "complete"
+/** Pure projection shared by the live event page and durable Calls reads. */
+export function sandboxEvidenceState(value: {
+  finalSeq: number | null
+  contiguousSeq: number
+  producerLoss: boolean
+  truncated: boolean
+  integrityConflict: boolean
+}): SandboxEvidenceState {
+  if (value.finalSeq === null) return "unknown"
+  return value.producerLoss ||
+    value.truncated ||
+    value.integrityConflict ||
+    value.contiguousSeq !== value.finalSeq
+    ? "partial"
+    : "complete"
+}
 export type SandboxEvidenceAck = {
   protocol: typeof SANDBOX_PROTOCOL
   contiguousSeq: number
