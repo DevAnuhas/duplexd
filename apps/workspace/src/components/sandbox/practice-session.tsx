@@ -21,11 +21,6 @@ import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { LiveSandboxTimeline } from "@/components/sandbox/timeline"
 import { SandboxController, sandboxReleased } from "@/sandbox/client/controller"
-import {
-  practiceProbeExport,
-  practiceProbeEnabled,
-  recordPracticeProbe,
-} from "@/sandbox/client/background-probe"
 import { SANDBOX_LIMITS } from "@/sandbox/protocol"
 
 const PracticeSessionContext = createContext<{
@@ -83,8 +78,6 @@ export function PracticeSessionProvider({
   }, [])
   const [expanded, setExpanded] = useState(false)
   const [hiddenNotice, setHiddenNotice] = useState(false)
-  const [probeText, setProbeText] = useState<string | null>(null)
-  const [probeOn, setProbeOn] = useState(false)
   const wasShowing = useRef(false)
   const closePanel = useRef<HTMLButtonElement>(null)
   const [now, setNow] = useState(() => performance.now())
@@ -110,7 +103,6 @@ export function PracticeSessionProvider({
     state.deadlines.execution > 0 && state.deadlines.execution - now <= 60_000
 
   useEffect(() => {
-    setProbeOn(practiceProbeEnabled())
     void controller.refresh()
     const refresh = () => {
       if (controller.getSnapshot().mediaPhase === "off")
@@ -118,7 +110,6 @@ export function PracticeSessionProvider({
       else controller.visibleAgain()
     }
     const visibility = () => {
-      recordPracticeProbe("visibilitychange")
       if (document.hidden) {
         if (
           controller.getSnapshot().mediaPhase !== "off" &&
@@ -127,34 +118,14 @@ export function PracticeSessionProvider({
           setHiddenNotice(true)
       } else controller.visibleAgain()
     }
-    const leaving = (event: PageTransitionEvent) => {
-      recordPracticeProbe("pagehide", { persisted: event.persisted })
-      controller.leave()
-    }
-    const freeze = () => recordPracticeProbe("freeze")
-    const resume = () => recordPracticeProbe("resume")
-    const online = () => recordPracticeProbe("online")
-    const offline = () => recordPracticeProbe("offline")
-    recordPracticeProbe("page-open", {
-      wasDiscarded:
-        (document as Document & { wasDiscarded?: boolean }).wasDiscarded ??
-        false,
-    })
+    const leaving = () => controller.leave()
     window.addEventListener("focus", refresh)
     window.addEventListener("pagehide", leaving)
-    window.addEventListener("online", online)
-    window.addEventListener("offline", offline)
     document.addEventListener("visibilitychange", visibility)
-    document.addEventListener("freeze", freeze)
-    document.addEventListener("resume", resume)
     return () => {
       window.removeEventListener("focus", refresh)
       window.removeEventListener("pagehide", leaving)
-      window.removeEventListener("online", online)
-      window.removeEventListener("offline", offline)
       document.removeEventListener("visibilitychange", visibility)
-      document.removeEventListener("freeze", freeze)
-      document.removeEventListener("resume", resume)
       controller.leave()
     }
   }, [controller])
@@ -319,30 +290,6 @@ export function PracticeSessionProvider({
                 You may not be able to hear the assistant. Check your output
                 device and volume.
               </p>
-            )}
-            {probeOn && (
-              <div className="mt-2 text-xs">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const data = practiceProbeExport()
-                    setProbeText(data)
-                    void navigator.clipboard?.writeText(data).catch(() => {})
-                  }}
-                >
-                  Copy call timing log
-                </Button>
-                {probeText !== null && (
-                  <details className="mt-2">
-                    <summary>Call timing log</summary>
-                    <pre className="max-h-40 overflow-auto break-all whitespace-pre-wrap">
-                      {probeText}
-                    </pre>
-                  </details>
-                )}
-              </div>
             )}
             <div className="mt-3 flex items-center gap-2">
               <Button

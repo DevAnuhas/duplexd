@@ -28,70 +28,22 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ): Promise<Response> {
-  const probe =
-    process.env.VERCEL_ENV === "preview" &&
-    process.env.VERCEL_GIT_COMMIT_REF ===
-      "feat/82-practice-background-continuity"
-  const rawSequence = request.headers.get("x-duplexd-practice-probe-seq")
-  const sequence = probe && rawSequence !== null ? Number(rawSequence) : null
-  const safeSequence =
-    sequence !== null && Number.isSafeInteger(sequence) && sequence > 0
-      ? sequence
-      : null
-  const rawAttemptId = probe ? (await params).id : null
-  const attemptId =
-    rawAttemptId !== null && /^[0-9a-f-]{36}$/i.test(rawAttemptId)
-      ? rawAttemptId
-      : null
-  const logFailure = (outcome: string, status: number) => {
-    if (probe)
-      console.info(
-        "[practice-background-probe]",
-        JSON.stringify({
-          attemptId,
-          sequence: safeSequence,
-          at: new Date().toISOString(),
-          outcome,
-          status,
-        })
-      )
-  }
-  try {
-    const browser = await requireSandboxBrowserOwner(request, params)
-    if (!browser.ok) {
-      logFailure("authorization", browser.response.status)
-      return browser.response
-    }
-    const result = await sandboxLifecycle().presence({
-      ...browser.owner,
-      probeSequence: safeSequence,
-    })
-    if (result.kind !== "ok") {
-      const response = sandboxExecutionProblem(result, "renew")
-      logFailure(result.kind, response.status)
-      return response
-    }
+  const browser = await requireSandboxBrowserOwner(request, params)
+  if (!browser.ok) return browser.response
 
-    const attempt = await getSandboxAttemptForAccount({
-      accountId: browser.owner.accountId,
-      attemptId: browser.owner.attemptId,
-    })
+  const result = await sandboxLifecycle().presence(browser.owner)
+  if (result.kind !== "ok") return sandboxExecutionProblem(result, "renew")
 
-    if (attempt === null) {
-      logFailure("missing-attempt", 404)
-      return sandboxProblem(
-        404,
-        "attempt_not_found",
-        "The attempt was not found."
-      )
-    }
-    return noStoreJson({
-      serverTime: attempt.serverTime,
-      presenceExpiresAt: result.presenceExpiresAt,
-      attempt,
-    })
-  } catch (error) {
-    logFailure("exception", 500)
-    throw error
-  }
+  const attempt = await getSandboxAttemptForAccount({
+    accountId: browser.owner.accountId,
+    attemptId: browser.owner.attemptId,
+  })
+
+  return attempt === null
+    ? sandboxProblem(404, "attempt_not_found", "The attempt was not found.")
+    : noStoreJson({
+        serverTime: attempt.serverTime,
+        presenceExpiresAt: result.presenceExpiresAt,
+        attempt,
+      })
 }

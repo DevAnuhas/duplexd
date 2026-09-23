@@ -2,10 +2,6 @@ import {
   sandboxResourcesReleased,
   type SandboxBrowserAttempt,
 } from "@/sandbox/browser-contract"
-import {
-  nextPracticeProbeSequence,
-  recordPracticeProbe,
-} from "@/sandbox/client/background-probe"
 import { SANDBOX_LIMITS, type SandboxJoin } from "@/sandbox/protocol"
 import type { SandboxMedia, SandboxMediaFactory } from "./media"
 
@@ -233,8 +229,6 @@ export class SandboxController {
     }
   }
   private update(patch: Partial<SandboxClientState>) {
-    if (patch.mediaPhase && patch.mediaPhase !== this.state.mediaPhase)
-      recordPracticeProbe("media-phase", { phase: patch.mediaPhase })
     this.state = { ...this.state, ...patch }
     this.listeners.forEach((listener) => listener())
   }
@@ -242,8 +236,7 @@ export class SandboxController {
     path: string,
     body?: unknown,
     proof?: string,
-    timeoutMs = REQUEST_TIMEOUT_MS,
-    extraHeaders: Record<string, string> = {}
+    timeoutMs = REQUEST_TIMEOUT_MS
   ) {
     const startedAt = this.now()
     if (body !== undefined && this.csrf === null) {
@@ -269,7 +262,6 @@ export class SandboxController {
             headers: {
               "content-type": "application/json",
               "x-duplexd-csrf": this.csrf!,
-              ...extraHeaders,
               ...(proof === undefined
                 ? {}
                 : { "x-duplexd-controller-proof": proof }),
@@ -648,10 +640,6 @@ export class SandboxController {
     )
   }
   hidden() {
-    recordPracticeProbe("hidden", {
-      attemptId: this.state.attempt?.attemptId ?? null,
-      phase: this.state.mediaPhase,
-    })
     if (this.canContinueHidden()) {
       this.returnPending = true
       return true
@@ -669,9 +657,6 @@ export class SandboxController {
     if (!this.media || !this.readyOnce || this.state.mediaPhase === "finishing")
       return
     if (!this.needsConfirmation && !this.returnPending) return
-    recordPracticeProbe("visible-again", {
-      attemptId: this.state.attempt?.attemptId ?? null,
-    })
     const fromHidden = this.returnPending
     this.returnPending = false
     if (this.confirmationAfterSequence !== null) {
@@ -898,7 +883,6 @@ export class SandboxController {
     this.lastTick = { wall, monotonic: now }
     const sleepGap = wallGap - monotonicGap
     if (sleepGap > 2_000) {
-      recordPracticeProbe("clock-gap", { milliseconds: Math.round(sleepGap) })
       for (const key of [
         "reservation",
         "startup",
@@ -982,54 +966,26 @@ export class SandboxController {
     const requestSequence = ++this.presenceSequence
     const epoch = this.generation
     let authoritativeFailure = false
-    let failureKind: string | null = null
-    const previousExpiry = this.presenceExpiry
-    const probeSequence = nextPracticeProbeSequence()
-    recordPracticeProbe("presence-sent", {
-      attemptId: owner.attemptId,
-      priming,
-      sequence: probeSequence,
-      previousExpiry:
-        previousExpiry > 0 ? new Date(previousExpiry).toISOString() : null,
-    })
     try {
       const response = await this.request(
         `attempts/${encodeURIComponent(owner.attemptId)}/presence`,
         {},
-        owner.proof,
-        REQUEST_TIMEOUT_MS,
-        probeSequence === null
-          ? {}
-          : { "x-duplexd-practice-probe-seq": String(probeSequence) }
+        owner.proof
       )
       if (epoch !== this.generation) return
       const server = response.data?.serverTime
       const expiry = response.data?.presenceExpiresAt
-      recordPracticeProbe("presence-received", {
-        attemptId: owner.attemptId,
-        status: response.status,
-        sequence: probeSequence,
-        serverTime: typeof server === "string" ? server : null,
-        nextExpiry: typeof expiry === "string" ? expiry : null,
-        previousMarginMs:
-          previousExpiry > 0 && typeof server === "string"
-            ? previousExpiry - Date.parse(server)
-            : null,
-      })
       if (
         !response.ok ||
         typeof server !== "string" ||
         typeof expiry !== "string"
       ) {
         authoritativeFailure = response.status >= 400 && response.status < 500
-        failureKind = authoritativeFailure ? "refused" : "server-or-protocol"
         throw new Error("presence")
       }
       const remaining = Date.parse(expiry) - Date.parse(server)
-      if (!Number.isFinite(remaining) || remaining <= 0) {
-        failureKind = "invalid-lease"
+      if (!Number.isFinite(remaining) || remaining <= 0)
         throw new Error("lease")
-      }
       // The renewal carries the attempt, which is the only thing that observes
       // readiness once audio is connected: nothing else polls while a call is
       // running, and a call whose `readyAt` is never seen here is torn down by
@@ -1042,7 +998,6 @@ export class SandboxController {
         attempt?.attemptId !== owner.attemptId
       ) {
         authoritativeFailure = true
-        failureKind = "missing-attempt"
         throw new Error("missing attempt")
       }
       if (attempt !== null && attempt.attemptId === owner.attemptId) {
@@ -1059,23 +1014,7 @@ export class SandboxController {
       } else {
         this.observePresence(expiry, Date.parse(server), response.startedAt)
       }
-    } catch (error) {
-      const errorName =
-        error !== null && typeof error === "object" && "name" in error
-          ? String(error.name)
-          : ""
-      recordPracticeProbe("presence-failed", {
-        attemptId: owner.attemptId,
-        priming,
-        sequence: probeSequence,
-        error:
-          failureKind ??
-          (errorName === "TimeoutError"
-            ? "timeout"
-            : errorName === "SyntaxError"
-              ? "parse"
-              : "network"),
-      })
+    } catch {
       if (epoch === this.generation && !priming) {
         if (
           !authoritativeFailure &&
@@ -1118,9 +1057,6 @@ export class SandboxController {
     }
   }
   private releaseMedia() {
-    recordPracticeProbe("media-released", {
-      attemptId: this.state.attempt?.attemptId ?? null,
-    })
     this.generation++
     this.confirmationAfterSequence = null
     this.confirmationRecheck = false

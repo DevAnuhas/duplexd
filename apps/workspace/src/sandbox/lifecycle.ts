@@ -53,7 +53,6 @@ type BrowserOwner = {
   userId: string
   attemptId: string
   controllerProofHash: string
-  probeSequence?: number | null
 }
 type Agent = { callId: string; token: string; owner: SandboxOwner }
 type Failure = {
@@ -618,7 +617,7 @@ export function createSandboxLifecycle(provider?: {
 
   async function presence(input: BrowserOwner) {
     if (!provider) return refuseDisabledSandboxExecution(input)
-    const result = await getDb().transaction(async (tx) => {
+    return getDb().transaction(async (tx) => {
       const row = await locked(tx, input.attemptId)
       const denied = browserFailure(row, input)
       if (denied || !row) return denied ?? { kind: "not_found" as const }
@@ -640,42 +639,8 @@ export function createSandboxLifecycle(provider?: {
         .update(sandboxAttempts)
         .set({ presenceExpiresAt: expires })
         .where(eq(sandboxAttempts.id, input.attemptId))
-      return {
-        kind: "ok" as const,
-        presenceExpiresAt: expires.toISOString(),
-        probe: {
-          at: at.toISOString(),
-          previousExpiry: row.attempt.presenceExpiresAt?.toISOString() ?? null,
-          marginMs:
-            row.attempt.presenceExpiresAt === null
-              ? null
-              : row.attempt.presenceExpiresAt.getTime() - at.getTime(),
-        },
-      }
+      return { kind: "ok" as const, presenceExpiresAt: expires.toISOString() }
     })
-    if (
-      result.kind === "ok" &&
-      process.env.VERCEL_ENV === "preview" &&
-      process.env.VERCEL_GIT_COMMIT_REF ===
-        "feat/82-practice-background-continuity"
-    ) {
-      // Temporary #82 experiment. This runs after commit and contains only
-      // safe lease timing, never controller proof, credentials or call data.
-      console.info(
-        "[practice-background-probe]",
-        JSON.stringify({
-          attemptId: input.attemptId,
-          sequence: input.probeSequence ?? null,
-          at: result.probe.at,
-          previousExpiry: result.probe.previousExpiry,
-          nextExpiry: result.presenceExpiresAt,
-          marginMs: result.probe.marginMs,
-        })
-      )
-    }
-    return result.kind === "ok"
-      ? { kind: "ok" as const, presenceExpiresAt: result.presenceExpiresAt }
-      : result
   }
 
   async function stop(input: Omit<BrowserOwner, "controllerProofHash">) {
