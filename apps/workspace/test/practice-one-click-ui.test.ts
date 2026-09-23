@@ -27,6 +27,8 @@ const fixture = vi.hoisted(() => ({
     join: ReturnType<typeof vi.fn>
     mute: ReturnType<typeof vi.fn>
     stop: ReturnType<typeof vi.fn>
+    /** The controller's media listener: lets a test report a Daily event. */
+    report: (event: { type: string }) => void
   }>,
   /** Replaced per test to hold or reject the permission prompt. */
   prepare: null as null | (() => Promise<void>),
@@ -45,7 +47,9 @@ vi.mock("@/sandbox/client/daily-media", () => ({
     stop = vi.fn(() => {
       fixture.log.push("media.stop")
     })
-    constructor() {
+    report: (event: { type: string }) => void
+    constructor(report: (event: { type: string }) => void) {
+      this.report = report
       fixture.adapters.push(this)
     }
   },
@@ -96,12 +100,38 @@ type Network = {
   reservation?: Promise<void>
   /** A non-2xx answer to the reservation, e.g. a revision conflict. */
   rejectReservation?: { status: number; body: unknown }
+  /** Held until the test releases it: the start POST in flight. */
+  start?: Promise<void>
+  /** The agent never reports readiness, so the call stays pre-ready. */
+  neverReady?: boolean
 }
 
 let requests: Array<{ path: string; method: string }> = []
+/** The server's view of the attempt. A test can change it behind the
+ * browser's back, the way the sweeper or the agent would. */
+let current: SandboxBrowserAttempt | null = null
+/**
+ * A request the server has received but not answered. `index` is its position
+ * in `requests`, so a test can tell a renewal sent before the tab was hidden
+ * from one sent after it came back. `fail` is a dropped connection.
+ */
+type Held = {
+  path: string
+  index: number
+  release: () => void
+  fail: () => void
+}
+/** While set, matching requests wait in `held` until the test answers them. */
+let hold: ((path: string) => boolean) | null = null
+let held: Held[] = []
+const isPresence = (path: string) => path.endsWith("/presence")
+/** Off: presence answers 200 with a renewed lease but no attempt — a server
+ * shape the controller must not treat as silence. */
+let presenceCarriesAttempt = true
 function stubNetwork(network: Network = {}) {
-  let current: SandboxBrowserAttempt | null = null
+  current = null
   requests = []
+  held = []
   vi.stubGlobal(
     "fetch",
     vi.fn<typeof fetch>(async (url, init) => {
@@ -109,6 +139,16 @@ function stubNetwork(network: Network = {}) {
       const method = init?.method ?? "GET"
       requests.push({ path, method })
       if (path.endsWith("/csrf")) return Response.json({ token: "csrf" })
+      if (hold?.(path)) {
+        const answer = deferred()
+        held.push({
+          path,
+          index: requests.length - 1,
+          release: answer.resolve,
+          fail: () => answer.reject(new TypeError("Failed to fetch")),
+        })
+        await answer.promise
+      }
       if (path.endsWith("/events"))
         return Response.json({
           events: [],
@@ -136,6 +176,7 @@ function stubNetwork(network: Network = {}) {
       }
       if (path.endsWith("/start")) {
         fixture.log.push("POST start")
+        await network.start
         current = {
           ...current!,
           state: "starting",
@@ -155,9 +196,12 @@ function stubNetwork(network: Network = {}) {
           },
         })
       else if (path.endsWith("/presence")) {
+        // As the real route does: a stop already requested is not renewable.
+        if (current?.stopRequestedAt)
+          return Response.json({ code: "expired" }, { status: 409 })
         current = {
           ...current!,
-          ...(current?.state === "starting"
+          ...(current?.state === "starting" && !network.neverReady
             ? { state: "active" as const, readyAt: iso() }
             : {}),
           serverTime: iso(),
@@ -166,7 +210,7 @@ function stubNetwork(network: Network = {}) {
         return Response.json({
           serverTime: iso(),
           presenceExpiresAt: iso(60000),
-          attempt: current,
+          ...(presenceCarriesAttempt ? { attempt: current } : {}),
         })
       } else if (path.endsWith("/stop")) {
         fixture.log.push("POST stop")
@@ -254,6 +298,134 @@ function button(label: string) {
 }
 const posted = (suffix: string) =>
   requests.filter((r) => r.method === "POST" && r.path.endsWith(suffix))
+const bar = () =>
+  container!.querySelector('[aria-label="Active practice call"]')
+
+/**
+ * What Chrome does when the tab is switched away from or another window
+ * covers it: `document.hidden` flips and `visibilitychange` fires. Coming
+ * back also focuses the window, so return fires both, in that order.
+ */
+async function setHidden(hidden: boolean, { focus = true } = {}) {
+  Object.defineProperty(document, "hidden", {
+    configurable: true,
+    get: () => hidden,
+  })
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    get: () => (hidden ? "hidden" : "visible"),
+  })
+  await act(async () => {
+    document.dispatchEvent(new Event("visibilitychange"))
+    if (!hidden && focus) window.dispatchEvent(new Event("focus"))
+  })
+}
+/**
+ * Copy that tells the person their call ended. Not "Local audio stopped" on
+ * its own: the audio check says "Local audio stopped before preparation."
+ * about its own microphone test, which is true during a call.
+ */
+const HIDDEN_STOP_COPY = [
+  "stopped because this tab was hidden",
+  "stopped because the browser reported this tab as hidden",
+  "No voice call is connected",
+]
+function expectNoStoppedCopy() {
+  for (const phrase of HIDDEN_STOP_COPY)
+    expect(container!.textContent).not.toContain(phrase)
+}
+/** A ready call in the shell's session: joined, renewed, agent reported ready. */
+async function readySharedCall() {
+  await render(practiceRoute(), true)
+  await click(button("Start practice call"))
+  await settle(50)
+  // Control: the rest of each test means nothing unless the call was up, and
+  // the stopped-copy assertions mean nothing if that copy was already there.
+  expect(bar()?.textContent).toContain("Connected")
+  expect(current?.readyAt).not.toBeNull()
+  expectNoStoppedCopy()
+}
+/**
+ * Interval timers only — the 15 s presence renewal and the 5 s shell refresh —
+ * so a test can fire them on demand. `settle()` still uses a real `setTimeout`.
+ * Must run before render: intervals created earlier stay real.
+ */
+function fakeIntervals() {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
+}
+async function advanceIntervals(ms: number) {
+  await act(async () => {
+    vi.advanceTimersByTime(ms)
+  })
+  await settle(20)
+}
+/**
+ * Intervals that fire only when a test fires them, by period, in the order
+ * the test chooses. Fake timers cannot express "the overdue 15 s renewal runs
+ * before the 250 ms deadline tick": on a tie they always run the tick first.
+ */
+type ManualInterval = { callback: () => void; ms: number; cleared: boolean }
+let intervals: ManualInterval[] = []
+function manualIntervals() {
+  intervals = []
+  vi.stubGlobal("setInterval", (callback: () => void, ms: number) => {
+    const interval = { callback, ms, cleared: false }
+    intervals.push(interval)
+    return interval
+  })
+  vi.stubGlobal("clearInterval", (interval?: ManualInterval) => {
+    if (interval) interval.cleared = true
+  })
+}
+const PRESENCE_MS = 15_000
+const REFRESH_MS = 5_000
+const TICK_MS = 250
+async function fireIntervals(ms: number) {
+  const due = intervals.filter((i) => !i.cleared && i.ms === ms)
+  expect(due.length).toBeGreaterThan(0)
+  await act(async () => due.forEach((i) => i.callback()))
+  await settle(20)
+}
+/** Return to the tab. Answers the index of the first request sent after it. */
+async function returnToTab() {
+  const since = requests.length
+  await setHidden(false)
+  await settle(20)
+  return since
+}
+const presenceSince = (since: number) =>
+  held.filter((h) => isPresence(h.path) && h.index >= since)
+/** On return the controller re-enters `waiting` until a fresh renewal lands.
+ * The bar may name the check itself rather than the generic waiting label. */
+function expectRevalidating() {
+  expect(bar()?.textContent).toMatch(
+    /Waiting for assistant|Confirming the call/
+  )
+  expect(container!.textContent).not.toContain("Connected")
+  // Checking is not a reason to drop the call.
+  expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
+  expect(posted("/stop")).toHaveLength(0)
+}
+
+/** The sweeper's view: presence lapsed, stop requested. The tab has not heard. */
+function serverStopsCall() {
+  current = {
+    ...current!,
+    state: "stopping",
+    resourceState: "stop_requested",
+    stopRequestedAt: iso(),
+    serverTime: iso(),
+  }
+}
+function expectStoppedNotRevived() {
+  expect(fixture.adapters[0]!.stop).toHaveBeenCalled()
+  expect(container!.textContent).not.toContain("Connected")
+  // Returning is not a new call: nothing is re-reserved, re-dispatched or
+  // re-joined to paper over the lapse.
+  expect(posted("/attempts")).toHaveLength(1)
+  expect(posted("/start")).toHaveLength(1)
+  expect(fixture.adapters[0]!.join).toHaveBeenCalledOnce()
+}
 
 afterEach(() => {
   act(() => root?.unmount())
@@ -263,7 +435,17 @@ afterEach(() => {
   fixture.log = []
   fixture.adapters = []
   fixture.prepare = null
+  hold = null
+  held = []
+  current = null
+  presenceCarriesAttempt = true
+  intervals = []
+  vi.useRealTimers()
+  // The overrides are own properties; deleting them restores jsdom's getters.
+  delete (document as { hidden?: boolean }).hidden
+  delete (document as { visibilityState?: string }).visibilityState
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   vi.clearAllMocks()
 })
 
@@ -399,8 +581,6 @@ it("keeps a live call through signed-in navigation and still ends it on page hid
 
   await click(button("Start practice call"))
   await settle(50)
-  const bar = () =>
-    container!.querySelector('[aria-label="Active practice call"]')
   expect(bar()?.textContent).toContain("Synthetic practice fixture")
   expect(bar()?.textContent).toContain("Connected")
 
@@ -450,4 +630,531 @@ it("identifies the other assistant's live call without locking this assistant's 
     "Editing is locked while a test is being checked"
   )
   expect(posted("/stop")).toHaveLength(0)
+})
+
+/*
+ * #82: a hidden tab is not a person leaving.
+ *
+ * Chrome reports the tab hidden on a tab switch and when another window covers
+ * it. Once a call is ready, that alone must not stop it: presence renewal is
+ * what bounds an abandoned call, and `pagehide` is what ends a closed one.
+ * Before readiness nothing has been promised yet, so hiding still abandons the
+ * start rather than dispatching an agent into a tab nobody is looking at.
+ */
+
+it("keeps a ready shared call through a hidden tab without stopping audio or the call", async () => {
+  stubNetwork()
+  await readySharedCall()
+
+  await setHidden(true)
+  await settle(50)
+
+  expect(fixture.adapters).toHaveLength(1)
+  expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
+  expect(posted("/stop")).toHaveLength(0)
+  // Nothing on screen may claim the call stopped while it is still running:
+  // not the shell's toast, not its bar, not the route's panel.
+  expect(bar()).not.toBeNull()
+  expectNoStoppedCopy()
+})
+
+it("still ends a ready call when a hidden tab is closed", async () => {
+  stubNetwork()
+  await readySharedCall()
+
+  // Closing a tab reports it hidden first, then fires `pagehide`. Surviving
+  // the first must not mean surviving the second.
+  await setHidden(true)
+  await act(async () => window.dispatchEvent(new Event("pagehide")))
+  await settle(50)
+
+  expect(fixture.adapters[0]!.stop).toHaveBeenCalledOnce()
+  expect(posted("/attempts/attempt/stop")).toHaveLength(1)
+})
+
+it("on return, waits in Waiting for a fresh presence renewal before saying Connected", async () => {
+  fakeIntervals()
+  stubNetwork()
+  await readySharedCall()
+  await setHidden(true)
+  await settle(50)
+
+  hold = isPresence
+  const since = await returnToTab()
+
+  // Hidden-tab timers are throttled or frozen, so the last renewal the tab saw
+  // may be arbitrarily old. Presence is the check, because only presence
+  // proves this controller still holds the lease; a status read does not.
+  expect(presenceSince(since)).toHaveLength(1)
+  expectRevalidating()
+
+  // Whatever else runs on a timer meanwhile — status reads, readiness checks
+  // on every deadline tick — sees an active, ready attempt. None of it is the
+  // confirmation, so none of it may flip the call back to Connected.
+  await advanceIntervals(5_000)
+  expectRevalidating()
+  // A media blip that recovers re-runs the readiness check, against an
+  // attempt that still says ready. The unanswered renewal must still gate it.
+  await act(async () => fixture.adapters[0]!.report({ type: "interrupted" }))
+  await act(async () => fixture.adapters[0]!.report({ type: "connected" }))
+  expectRevalidating()
+
+  hold = null
+  await act(async () => presenceSince(since)[0]!.release())
+  await settle(50)
+
+  expect(bar()?.textContent).toContain("Connected")
+  expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
+  expect(posted("/stop")).toHaveLength(0)
+  expectNoStoppedCopy()
+})
+
+it("does not take a renewal already in flight when the tab returns as the confirmation", async () => {
+  fakeIntervals()
+  stubNetwork()
+  await readySharedCall()
+
+  // The scheduled renewal goes out and is still unanswered when the tab is
+  // hidden. Its answer, whenever it lands, describes the lease before the
+  // hidden interval — not after it.
+  hold = isPresence
+  await advanceIntervals(15_000)
+  expect(held.filter((h) => isPresence(h.path))).toHaveLength(1)
+  const stale = held[0]!
+  await setHidden(true)
+  const since = await returnToTab()
+  expectRevalidating()
+
+  await act(async () => stale.release())
+  await settle(20)
+  expectRevalidating()
+
+  // The in-flight request must not swallow the return check: a fresh one is
+  // sent, whether at return or as soon as the stale one finishes.
+  const fresh = presenceSince(since)
+  expect(fresh).toHaveLength(1)
+  hold = null
+  await act(async () => fresh[0]!.release())
+  await settle(50)
+
+  expect(bar()?.textContent).toContain("Connected")
+  expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
+})
+
+it("keeps the call through a brief network failure on the return check, without claiming Connected", async () => {
+  fakeIntervals()
+  stubNetwork()
+  await readySharedCall()
+  await setHidden(true)
+  await settle(50)
+
+  hold = isPresence
+  const since = await returnToTab()
+  await act(async () => presenceSince(since)[0]!.fail())
+  await settle(20)
+
+  // A dropped request is not a refused lease: the lease this tab holds is
+  // still locally valid, so the call stays up — but unconfirmed.
+  expectRevalidating()
+
+  // The next scheduled renewal is the retry. When it lands, the call is
+  // confirmed again.
+  const retrySince = requests.length
+  await advanceIntervals(15_000)
+  const retry = presenceSince(retrySince)
+  expect(retry).toHaveLength(1)
+  hold = null
+  await act(async () => retry[0]!.release())
+  await settle(50)
+
+  expect(bar()?.textContent).toContain("Connected")
+  expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
+  expect(posted("/stop")).toHaveLength(0)
+})
+
+it("stops local audio when the server refuses the return check, even with a locally valid lease", async () => {
+  stubNetwork()
+  await readySharedCall()
+  await setHidden(true)
+  await settle(50)
+
+  // Stopped server-side while hidden — another tab's End, the call cap, the
+  // sweeper — while this tab's own lease clock still has time on it.
+  serverStopsCall()
+  const since = await returnToTab()
+  await settle(50)
+
+  // A 409 is the server saying no, not a dropped packet. Retrying it on a
+  // timer until the local lease runs out keeps a hot microphone on a call the
+  // server has already stopped, for up to a minute.
+  expect(requests.slice(since).some((r) => isPresence(r.path))).toBe(true)
+  expectStoppedNotRevived()
+})
+
+it("after sleep, stops a call whose lease lapsed even though the monotonic clock stood still", async () => {
+  stubNetwork()
+  await readySharedCall()
+  await setHidden(true)
+  await settle(50)
+
+  // A sleeping laptop can pause `performance.now()` while wall time moves on,
+  // so the local lease still looks valid. Two minutes of wall time pass.
+  const realDateNow = Date.now.bind(Date)
+  vi.spyOn(Date, "now").mockImplementation(() => realDateNow() + 120_000)
+  // On wake the network is not back yet: renewals go out and never answer.
+  // Without a server verdict, only the wall-clock gap can say the lease is
+  // gone — the call must not sit on "Confirming…" with a live microphone
+  // until the frozen monotonic lease runs out.
+  hold = isPresence
+  await returnToTab()
+  // A few deadline ticks: the drift is only visible between two of them.
+  await settle(600)
+
+  expectStoppedNotRevived()
+})
+
+it("on return, stops local audio for a call whose lease lapsed while the tab was hidden", async () => {
+  stubNetwork()
+  await readySharedCall()
+  await setHidden(true)
+  await settle(50)
+
+  // Chrome throttles hidden-tab timers, so renewals can stop for longer than
+  // the 60 s lease. Jump the controller's clock past it, and let the server
+  // have swept the call.
+  const realNow = performance.now.bind(performance)
+  vi.spyOn(performance, "now").mockImplementation(() => realNow() + 61_000)
+  serverStopsCall()
+  await returnToTab()
+  await settle(300)
+
+  expectStoppedNotRevived()
+})
+
+it("does not resurface a hidden-tab stop message when a continued call reconnects", async () => {
+  stubNetwork()
+  await readySharedCall()
+  await setHidden(true)
+  await setHidden(false)
+  await settle(50)
+  expect(bar()?.textContent).toContain("Connected")
+
+  // Any "stopped because hidden" reason captured on the way out would be
+  // shown the moment the panel leaves its live phase. Reconnecting is that
+  // moment, and the call is still running.
+  await act(async () => fixture.adapters[0]!.report({ type: "interrupted" }))
+
+  expect(container!.textContent).toContain("Reconnecting")
+  expectNoStoppedCopy()
+  expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
+  expect(posted("/stop")).toHaveLength(0)
+})
+
+it("hiding during the permission prompt still abandons the start", async () => {
+  stubNetwork()
+  const permission = deferred()
+  fixture.prepare = () => permission.promise
+  await render(practiceRoute(), true)
+  await click(button("Start practice call"))
+
+  await setHidden(true)
+  expect(fixture.adapters[0]!.stop).toHaveBeenCalled()
+
+  await act(async () => permission.resolve())
+  await settle(50)
+
+  expect(posted("/attempts")).toHaveLength(0)
+  expect(posted("/start")).toHaveLength(0)
+  expect(fixture.adapters[0]!.join).not.toHaveBeenCalled()
+})
+
+it("hiding while the reservation is in flight cancels it instead of starting", async () => {
+  const reservation = deferred()
+  stubNetwork({ reservation: reservation.promise })
+  await render(practiceRoute(), true)
+  await click(button("Start practice call"))
+  expect(posted("/attempts")).toHaveLength(1)
+
+  await setHidden(true)
+  await act(async () => reservation.resolve())
+  await settle(50)
+
+  expect(posted("/start")).toHaveLength(0)
+  expect(posted("/attempts/attempt/stop")).toHaveLength(1)
+  expect(fixture.adapters[0]!.stop).toHaveBeenCalled()
+  expect(fixture.adapters[0]!.join).not.toHaveBeenCalled()
+})
+
+it("hiding while the agent is being dispatched stops audio and asks the server to stop", async () => {
+  const start = deferred()
+  stubNetwork({ start: start.promise })
+  await render(practiceRoute(), true)
+  await click(button("Start practice call"))
+  await settle(20)
+  expect(fixture.log).toContain("POST start")
+
+  await setHidden(true)
+  expect(fixture.adapters[0]!.stop).toHaveBeenCalled()
+
+  await act(async () => start.resolve())
+  await settle(50)
+
+  expect(fixture.adapters[0]!.join).not.toHaveBeenCalled()
+  expect(posted("/attempts/attempt/stop").length).toBeGreaterThanOrEqual(1)
+})
+
+it("hiding before the agent reports ready still ends the call", async () => {
+  stubNetwork({ neverReady: true })
+  await render(practiceRoute(), true)
+  await click(button("Start practice call"))
+  await settle(50)
+  // Control: joined and renewing, but the agent never said it was ready.
+  expect(fixture.adapters[0]!.join).toHaveBeenCalledOnce()
+  expect(bar()?.textContent).toContain("Waiting for assistant")
+
+  await setHidden(true)
+  await settle(50)
+
+  expect(fixture.adapters[0]!.stop).toHaveBeenCalledOnce()
+  expect(posted("/attempts/attempt/stop")).toHaveLength(1)
+  // Here the honest cause is the hidden tab, and it is named.
+  expect(container!.textContent).toMatch(/hidden/)
+})
+
+it("keeps a valid call when an overdue renewal fails after sleep, before the deadline tick runs", async () => {
+  manualIntervals()
+  stubNetwork()
+  await readySharedCall()
+
+  // Thirty seconds of sleep: wall time moved, the monotonic clock did not.
+  // The lease was renewed moments ago for 60 s, so about 30 s of it is left.
+  // The tab never reported itself hidden — a lid close need not.
+  const realDateNow = Date.now.bind(Date)
+  vi.spyOn(Date, "now").mockImplementation(() => realDateNow() + 30_000)
+
+  // On wake the overdue 15 s renewal runs before any deadline tick has seen
+  // the drift, and the network is not back: the request rejects.
+  hold = isPresence
+  await fireIntervals(PRESENCE_MS)
+  const overdue = held.filter((h) => isPresence(h.path))
+  expect(overdue).toHaveLength(1)
+  await act(async () => overdue[0]!.fail())
+  await settle(20)
+
+  // A dropped request during a valid lease is not a lost lease. The call
+  // stays up, unconfirmed.
+  expectRevalidating()
+  await fireIntervals(TICK_MS)
+  expectRevalidating()
+
+  // The network returns; the next renewal confirms the call.
+  hold = null
+  await fireIntervals(PRESENCE_MS)
+  await fireIntervals(TICK_MS)
+
+  expect(bar()?.textContent).toContain("Connected")
+  expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
+  expect(posted("/stop")).toHaveLength(0)
+})
+
+it("does not leave a returned call unconfirmed forever when presence answers without the attempt", async () => {
+  fakeIntervals()
+  stubNetwork()
+  await readySharedCall()
+  await setHidden(true)
+  await settle(50)
+
+  presenceCarriesAttempt = false
+  await returnToTab()
+  await advanceIntervals(PRESENCE_MS)
+
+  // Either the renewal counts as the confirmation, or the controller fails
+  // closed. Sitting on "Confirming…" with a live microphone is neither.
+  const stopped = fixture.adapters[0]!.stop.mock.calls.length > 0
+  const connected = bar()?.textContent?.includes("Connected") ?? false
+  expect(stopped || connected).toBe(true)
+  // And never both: a stopped call is not advertised as connected.
+  if (stopped) expect(container!.textContent).not.toContain("Connected")
+})
+
+const statusReadsSince = (since: number) =>
+  requests
+    .slice(since)
+    .filter((r) => r.method === "GET" && r.path.endsWith("/attempts/attempt"))
+
+it("shows a server-side stop on a visible live call within one refresh interval", async () => {
+  manualIntervals()
+  stubNetwork()
+  await readySharedCall()
+
+  // Stopped from elsewhere — another tab's End, the cap, the sweeper.
+  serverStopsCall()
+  await settle(50)
+  // Control: nothing has asked yet, so the tab cannot know.
+  expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
+
+  const since = requests.length
+  await fireIntervals(REFRESH_MS)
+
+  expect(statusReadsSince(since)).toHaveLength(1)
+  expectStoppedNotRevived()
+})
+
+it("skips status reads while hidden but keeps renewing presence", async () => {
+  manualIntervals()
+  stubNetwork()
+  await readySharedCall()
+  await setHidden(true)
+
+  const since = requests.length
+  await fireIntervals(REFRESH_MS)
+  expect(statusReadsSince(since)).toHaveLength(0)
+
+  // The lease is what keeps a hidden call alive; skipping reads must not
+  // skip renewals.
+  await fireIntervals(PRESENCE_MS)
+  expect(requests.slice(since).filter((r) => isPresence(r.path))).toHaveLength(
+    1
+  )
+  expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
+  expect(posted("/stop")).toHaveLength(0)
+})
+
+it("still confirms on return after a renewal succeeded while the tab was hidden", async () => {
+  manualIntervals()
+  stubNetwork()
+  await readySharedCall()
+  await setHidden(true)
+
+  // A scheduled renewal lands while the tab is still hidden. It proves the
+  // lease at that moment, not at the moment the person comes back.
+  const hiddenSince = requests.length
+  await fireIntervals(PRESENCE_MS)
+  expect(
+    requests.slice(hiddenSince).filter((r) => isPresence(r.path))
+  ).toHaveLength(1)
+  expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
+
+  hold = isPresence
+  const since = await returnToTab()
+
+  // Return asks again with its own request; the hidden renewal must not have
+  // used up the confirmation the return owes.
+  expect(presenceSince(since)).toHaveLength(1)
+  expectRevalidating()
+
+  hold = null
+  await act(async () => presenceSince(since)[0]!.release())
+  await settle(50)
+
+  expect(bar()?.textContent).toContain("Connected")
+  expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
+})
+
+it("keeps a call that starts reconnecting while hidden, but still ends it at the reconnect timeout", async () => {
+  stubNetwork()
+  await readySharedCall()
+  await setHidden(true)
+
+  // Daily loses the connection while nobody is looking. Recovery is still
+  // allowed: a hidden tab is not a reason to give up on it.
+  await act(async () => fixture.adapters[0]!.report({ type: "interrupted" }))
+  await settle(300)
+  expect(bar()?.textContent).toContain("Reconnecting")
+  expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
+  expect(posted("/stop")).toHaveLength(0)
+  expectNoStoppedCopy()
+
+  // But being hidden does not suspend the 20 s recovery bound either. The
+  // presence lease (60 s) still has time, so only the reconnect deadline can
+  // be what ends it.
+  const realNow = performance.now.bind(performance)
+  vi.spyOn(performance, "now").mockImplementation(() => realNow() + 21_000)
+  await settle(300)
+
+  expect(fixture.adapters[0]!.stop).toHaveBeenCalledOnce()
+  expect(posted("/attempts/attempt/stop")).toHaveLength(1)
+  expect(bar()?.textContent).not.toContain("Reconnecting")
+  expect(container!.textContent).not.toContain("Connected")
+  expect(posted("/start")).toHaveLength(1)
+  expect(fixture.adapters[0]!.join).toHaveBeenCalledOnce()
+})
+
+it("confirms a non-shared panel's call on return from visibility alone, before saying Connected", async () => {
+  stubNetwork()
+  // Outside the signed-in shell: the panel owns its own controller.
+  await render(practiceRoute(), false)
+  await click(button("Start practice call"))
+  await settle(50)
+  expect(container!.textContent).toContain("Connected")
+  expect(bar()).toBeNull()
+
+  await setHidden(true)
+  await settle(50)
+  expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
+  expect(posted("/stop")).toHaveLength(0)
+  expectNoStoppedCopy()
+
+  // Coming back need not focus the window (another window can be moved off
+  // it). Visibility alone must start the check.
+  hold = isPresence
+  const since = requests.length
+  await setHidden(false, { focus: false })
+  await settle(20)
+
+  expect(presenceSince(since)).toHaveLength(1)
+  expect(container!.textContent).not.toContain("Connected")
+  expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
+
+  hold = null
+  await act(async () => presenceSince(since)[0]!.release())
+  await settle(50)
+
+  expect(container!.textContent).toContain("Connected")
+  expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
+  expect(posted("/stop")).toHaveLength(0)
+})
+
+it("after sleep while hidden, only a renewal sent after return confirms the call, and only once", async () => {
+  manualIntervals()
+  stubNetwork()
+  await readySharedCall()
+  await setHidden(true)
+
+  // The laptop sleeps with the tab hidden: 30 s of wall time, no monotonic
+  // time, so about 30 s of lease is left. The overdue renewal notices the
+  // drift, arms confirmation, and goes out — while still hidden — and hangs.
+  const realDateNow = Date.now.bind(Date)
+  vi.spyOn(Date, "now").mockImplementation(() => realDateNow() + 30_000)
+  hold = isPresence
+  await fireIntervals(PRESENCE_MS)
+  const hiddenRenewal = held.filter((h) => isPresence(h.path))
+  expect(hiddenRenewal).toHaveLength(1)
+  expectRevalidating()
+
+  const since = await returnToTab()
+  expectRevalidating()
+
+  // The hidden renewal lands. It predates the return, so it renews the lease
+  // but cannot confirm the returned tab.
+  await act(async () => hiddenRenewal[0]!.release())
+  await settle(20)
+  expectRevalidating()
+
+  // One renewal begun after the return — queued behind the hidden one if it
+  // was not sent at return — is the confirmation.
+  const fresh = presenceSince(since)
+  expect(fresh).toHaveLength(1)
+  hold = null
+  await act(async () => fresh[0]!.release())
+  await settle(50)
+
+  expect(bar()?.textContent).toContain("Connected")
+  expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
+  expect(posted("/stop")).toHaveLength(0)
+  // Confirmed means done: no duplicate renewal chases the confirmation.
+  await settle(50)
+  expect(requests.slice(since).filter((r) => isPresence(r.path))).toHaveLength(
+    1
+  )
 })

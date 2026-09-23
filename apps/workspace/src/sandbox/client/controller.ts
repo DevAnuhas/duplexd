@@ -1095,7 +1095,11 @@ export class SandboxController {
       this.presenceBusy = false
       if (this.confirmationRecheck && epoch === this.generation) {
         this.confirmationRecheck = false
-        void this.presence()
+        if (
+          this.confirmationAfterSequence !== null &&
+          this.confirmationTimer === null
+        )
+          void this.presence()
       }
     }
   }

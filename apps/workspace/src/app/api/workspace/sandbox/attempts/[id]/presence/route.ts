@@ -38,7 +38,11 @@ export async function POST(
     sequence !== null && Number.isSafeInteger(sequence) && sequence > 0
       ? sequence
       : null
-  const attemptId = probe ? (await params).id : null
+  const rawAttemptId = probe ? (await params).id : null
+  const attemptId =
+    rawAttemptId !== null && /^[0-9a-f-]{36}$/i.test(rawAttemptId)
+      ? rawAttemptId
+      : null
   const logFailure = (outcome: string, status: number) => {
     if (probe)
       console.info(
