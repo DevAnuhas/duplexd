@@ -230,7 +230,7 @@ pnpm build                                     # production build
 pnpm --filter workspace start                  # runs .next/standalone/apps/workspace/server.js
 ```
 
-`next start` does **not** work with `output: 'standalone'`; the build emits its own server and the `start` script runs it. Vercel does not consume this artifact—it remains solely because the test suite boots a real production Next server to verify startup validation, Better Auth proxy behavior, and rate limiting. `BETTER_AUTH_URL` must be set to the origin you are serving from.
+`next start` does **not** work with `output: 'standalone'`; the build emits its own server and the `start` script runs it. Vercel does not consume this artifact—it remains solely because the test suite boots a real production Next server to verify startup validation, Better Auth proxy behavior, origin and CSRF rejection, session cookie attributes, and rate limiting. `BETTER_AUTH_URL` must be set to the origin you are serving from. The cookie test configures the public HTTPS origin while the local listener stays on HTTP, matching production TLS termination; it checks cookie flags, not TLS transport.
 
 `pnpm build` deliberately needs **no** database: the database and auth clients are constructed on first use rather than at module import, and every page that reads the database is dynamic. A build that required `DATABASE_URL` would make every deploy depend on the database being reachable from the builder. CI proves this on every pull request by running the build step with no database environment.
 

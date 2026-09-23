@@ -246,6 +246,88 @@ describeDatabase("standalone startup validation", () => {
     await stop(child)
   })
 
+  it("rejects foreign-origin and cross-site auth writes while issuing protected session cookies", async () => {
+    const port = await unusedPort()
+    const env = productionEnvironment(port)
+    // The listener remains local HTTP; the configured public origin is HTTPS,
+    // as it is behind the production TLS terminator. Better Auth derives the
+    // Secure cookie attribute from that public origin.
+    const publicOrigin = `https://127.0.0.1:${port}`
+    env.BETTER_AUTH_URL = publicOrigin
+    const child = launch(port, env)
+
+    try {
+      await waitForHttp(port)
+      const email = `origin-${randomUUID()}@example.invalid`
+      const body = JSON.stringify({
+        email,
+        name: "Origin check fixture",
+        password: `Synthetic-${randomUUID()}!`,
+      })
+      const signupUrl = `http://127.0.0.1:${port}/api/auth/sign-up/email`
+      const headers = { "content-type": "application/json" }
+
+      const foreign = await fetch(signupUrl, {
+        method: "POST",
+        headers: { ...headers, origin: "https://foreign.example.invalid" },
+        body,
+      })
+      expect(foreign.status).toBe(403)
+      expect(foreign.headers.getSetCookie()).toStrictEqual([])
+
+      const crossSite = await fetch(signupUrl, {
+        method: "POST",
+        headers: {
+          ...headers,
+          "sec-fetch-site": "cross-site",
+          "sec-fetch-mode": "navigate",
+          "sec-fetch-dest": "document",
+        },
+        body,
+      })
+      expect(crossSite.status).toBe(403)
+      expect(crossSite.headers.getSetCookie()).toStrictEqual([])
+
+      // Reuse the exact body: a 200 here also proves the rejected requests did
+      // not create the account before the origin/CSRF guard ran.
+      const accepted = await fetch(signupUrl, {
+        method: "POST",
+        headers: { ...headers, origin: publicOrigin },
+        body,
+      })
+      expect(accepted.status).toBe(200)
+      const sessionCookie = accepted.headers
+        .getSetCookie()
+        .find((cookie) => /(?:^|-)better-auth\.session_token=/.test(cookie))
+      expect(sessionCookie).toBeDefined()
+      expect(sessionCookie).toMatch(/;\s*HttpOnly(?:;|$)/i)
+      expect(sessionCookie).toMatch(/;\s*Secure(?:;|$)/i)
+      expect(sessionCookie).toMatch(/;\s*SameSite=Lax(?:;|$)/i)
+
+      const signoutUrl = `http://127.0.0.1:${port}/api/auth/sign-out`
+      const sessionHeader = sessionCookie!.split(";", 1)[0]!
+      const rejectedSignout = await fetch(signoutUrl, {
+        method: "POST",
+        headers: {
+          ...headers,
+          cookie: sessionHeader,
+          origin: "https://foreign.example.invalid",
+        },
+        body: "{}",
+      })
+      expect(rejectedSignout.status).toBe(403)
+
+      const acceptedSignout = await fetch(signoutUrl, {
+        method: "POST",
+        headers: { ...headers, cookie: sessionHeader, origin: publicOrigin },
+        body: "{}",
+      })
+      expect(acceptedSignout.status).toBe(200)
+    } finally {
+      await stop(child)
+    }
+  }, 45_000)
+
   it("keeps customer routes serving when only the sweep token is absent", async () => {
     const port = await unusedPort()
     const env = productionEnvironment(port)
