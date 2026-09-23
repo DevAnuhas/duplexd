@@ -225,9 +225,7 @@ export function Sandbox({ assistant }: SandboxProps) {
   ).length
   const [endedReason, setEndedReason] = useState<string | null>(null)
   const panelPhase = sandboxPanelPhase(state)
-  const confirming =
-    state.mediaPhase === "waiting" &&
-    state.message?.startsWith("Confirming the call") === true
+  const confirming = state.mediaPhase === "waiting" && state.confirming
   // Validation pending is "checking", not "broken": `issues` carries a
   // placeholder entry until the draft validates, and calling that a
   // configuration fault would tell people to fix something that is fine.
@@ -766,12 +764,14 @@ export function Sandbox({ assistant }: SandboxProps) {
                             "Connecting")}
                         {startupLeft !== null &&
                           startupLeft <= 0 &&
+                          state.attempt?.readyAt === null &&
                           " · The assistant did not become ready in time."}
                       </p>
                     )}
                     {!sharedSession &&
                       (panelPhase === "live" ||
-                        panelPhase === "reconnecting") && (
+                        panelPhase === "reconnecting" ||
+                        confirming) && (
                         <p className="text-muted-foreground">
                           {executionLeft === null
                             ? "Practice uses sample data."
@@ -955,7 +955,7 @@ export function Sandbox({ assistant }: SandboxProps) {
                     <p className="text-sm text-muted-foreground">
                       {!state.ownsController
                         ? "This tab can observe or stop this test. Only its original controller can start or join it."
-                        : "Start checks microphone and playback before dispatch. Calls are limited to 10 minutes. Keep this tab visible until the assistant connects; then you can switch tabs. End the call when finished."}
+                        : "Start checks microphone and playback before dispatch. Calls are limited to 10 minutes and normally end after about 5 minutes without speech. Keep this tab visible until the assistant connects; then you can switch tabs. End the call when finished."}
                     </p>
                   )}
                 </>

@@ -128,10 +128,30 @@ const isPresence = (path: string) => path.endsWith("/presence")
 /** Off: presence answers 200 with a renewed lease but no attempt — a server
  * shape the controller must not treat as silence. */
 let presenceCarriesAttempt = true
+/**
+ * A failure the server (or the network) gives instead of its normal answer:
+ * an HTTP status with a body, or `"network"` for a dropped connection. Each
+ * fault answers `times` matching requests (once by default), in order, after
+ * any hold on the request is released.
+ */
+type Fault = {
+  match: (path: string, method: string) => boolean
+  answer: "network" | { status: number; body?: unknown }
+  times?: number
+}
+let faults: Fault[] = []
+function fault(entry: Fault) {
+  faults.push({ times: 1, ...entry })
+}
+const isStatusRead = (path: string, method: string) =>
+  method === "GET" && path.endsWith("/attempts/attempt")
+const isPresenceRenewal = (path: string, method: string) =>
+  method === "POST" && isPresence(path)
 function stubNetwork(network: Network = {}) {
   current = null
   requests = []
   held = []
+  faults = []
   vi.stubGlobal(
     "fetch",
     vi.fn<typeof fetch>(async (url, init) => {
@@ -148,6 +168,16 @@ function stubNetwork(network: Network = {}) {
           fail: () => answer.reject(new TypeError("Failed to fetch")),
         })
         await answer.promise
+      }
+      const failure = faults.find(
+        (f) => (f.times ?? 1) > 0 && f.match(path, method)
+      )
+      if (failure) {
+        failure.times = (failure.times ?? 1) - 1
+        if (failure.answer === "network") throw new TypeError("Failed to fetch")
+        return Response.json(failure.answer.body ?? {}, {
+          status: failure.answer.status,
+        })
       }
       if (path.endsWith("/events"))
         return Response.json({
@@ -386,6 +416,42 @@ async function fireIntervals(ms: number) {
   await act(async () => due.forEach((i) => i.callback()))
   await settle(20)
 }
+/**
+ * Timeouts of a second or more wait until the test fires them; shorter ones
+ * (React's own, `settle()`) stay real. This reaches a controller retry timer
+ * without the test naming its delay, and `clearTimeout` still cancels it, so
+ * firing what is pending shows whether a stale retry was left armed.
+ * Install after render: only timeouts created afterwards are captured.
+ */
+type ManualTimeout = { callback: () => void; ms: number; pending: boolean }
+let timeouts: ManualTimeout[] = []
+function manualTimeouts() {
+  timeouts = []
+  const realSetTimeout = globalThis.setTimeout
+  const realClearTimeout = globalThis.clearTimeout
+  vi.stubGlobal(
+    "setTimeout",
+    (callback: (...args: unknown[]) => void, ms = 0, ...args: unknown[]) => {
+      if (ms < 1_000) return realSetTimeout(callback, ms, ...args)
+      const timeout = { callback: () => callback(...args), ms, pending: true }
+      timeouts.push(timeout)
+      return timeout
+    }
+  )
+  vi.stubGlobal("clearTimeout", (timeout?: unknown) => {
+    const manual = timeouts.find((t) => t === timeout)
+    if (manual) manual.pending = false
+    else realClearTimeout(timeout as ReturnType<typeof setTimeout>)
+  })
+}
+/** Fire every captured timeout still pending. Answers how many fired. */
+async function fireTimeouts() {
+  const due = timeouts.filter((t) => t.pending)
+  due.forEach((t) => (t.pending = false))
+  await act(async () => due.forEach((t) => t.callback()))
+  await settle(20)
+  return due.length
+}
 /** Return to the tab. Answers the index of the first request sent after it. */
 async function returnToTab() {
   const since = requests.length
@@ -439,7 +505,9 @@ afterEach(() => {
   held = []
   current = null
   presenceCarriesAttempt = true
+  faults = []
   intervals = []
+  timeouts = []
   vi.useRealTimers()
   // The overrides are own properties; deleting them restores jsdom's getters.
   delete (document as { hidden?: boolean }).hidden
@@ -707,6 +775,30 @@ it("on return, waits in Waiting for a fresh presence renewal before saying Conne
   expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
   expect(posted("/stop")).toHaveLength(0)
   expectNoStoppedCopy()
+})
+
+it("does not call a previously ready assistant late when confirming after its startup deadline", async () => {
+  manualIntervals()
+  stubNetwork()
+  await readySharedCall()
+
+  // Startup has ended, but the assistant became ready before that deadline.
+  // The fixed startup bound remains visible in state after readiness.
+  current = { ...current!, startupDeadline: iso(-1_000) }
+  await fireIntervals(REFRESH_MS)
+  await fireIntervals(1_000)
+
+  await setHidden(true)
+  hold = isPresence
+  await returnToTab()
+
+  expect(container!.textContent).toContain(
+    "Checking the current call with the server"
+  )
+  expect(container!.textContent).not.toContain(
+    "The assistant did not become ready in time"
+  )
+  expectRevalidating()
 })
 
 it("does not take a renewal already in flight when the tab returns as the confirmation", async () => {
@@ -1157,4 +1249,240 @@ it("after sleep while hidden, only a renewal sent after return confirms the call
   expect(requests.slice(since).filter((r) => isPresence(r.path))).toHaveLength(
     1
   )
+})
+
+/*
+ * #82: an unanswered question is not a "no".
+ *
+ * A dropped connection or a 5xx on a status read or a lease renewal says
+ * nothing about the call: the lease this tab holds is still in force, so the
+ * call keeps its audio, says it is unconfirmed, and asks again within that
+ * lease. A 4xx is the server answering, and it ends the call at once.
+ */
+
+const presenceCount = (since: number) =>
+  requests.slice(since).filter((r) => isPresenceRenewal(r.path, r.method))
+    .length
+/** `state.confirming` as the shell's bar renders it: the controller's own
+ * message in place of the connection label. "Waiting for assistant" is a
+ * different state and does not count. */
+const CONFIRMING = "Confirming the call is still live…"
+function expectConfirming() {
+  expectRevalidating()
+  expect(bar()?.textContent).toContain(CONFIRMING)
+}
+/** The copy for a lease the server refused as `expired`. It names no cause the
+ * tab did not observe — not the hidden tab, not a lost connection. */
+const CALL_ENDED = "The call has ended. Local audio stopped; checking cleanup."
+/** The controller's retry for an unanswered renewal. */
+const RETRY_MS = 2_500
+const pendingRetries = () =>
+  timeouts.filter((t) => t.pending && t.ms === RETRY_MS)
+const UNREACHABLE = [
+  { name: "a dropped connection", answer: "network" as const },
+  {
+    name: "a 503",
+    answer: { status: 503, body: { code: "unavailable" } },
+  },
+]
+
+// The UI already behaved this way before the final #82 fix (the controller
+// fell back to confirmation after marking status unknown); these guard it.
+it.each(UNREACHABLE)(
+  "keeps a visible ready call through a status read that fails with $name, until fresh presence confirms it",
+  async ({ answer }) => {
+    manualIntervals()
+    stubNetwork()
+    await readySharedCall()
+
+    fault({ match: isStatusRead, answer })
+    hold = isPresence
+    const since = requests.length
+    await fireIntervals(REFRESH_MS)
+
+    // Control: the failure really was the status read the refresh made.
+    expect(statusReadsSince(since)).toHaveLength(1)
+    expect(faults[0]!.times).toBe(0)
+    // Not knowing is not "ended": the call stays up, stops claiming
+    // Connected, and asks the one question that proves the lease.
+    expect(presenceSince(since)).toHaveLength(1)
+    expectConfirming()
+    expect(container!.textContent).not.toContain(CALL_ENDED)
+    expect(container!.querySelector('[role="alert"]')).toBeNull()
+    expectNoStoppedCopy()
+
+    hold = null
+    await act(async () => presenceSince(since)[0]!.release())
+    await settle(50)
+
+    expect(bar()?.textContent).toContain("Connected")
+    expect(bar()?.textContent).not.toContain(CONFIRMING)
+    expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
+    expect(posted("/stop")).toHaveLength(0)
+  }
+)
+
+it("stops a visible ready call at once when the status read is refused with a 403", async () => {
+  manualIntervals()
+  stubNetwork()
+  await readySharedCall()
+
+  fault({
+    match: isStatusRead,
+    answer: { status: 403, body: { code: "attempt_not_owned" } },
+  })
+  const since = requests.length
+  await fireIntervals(REFRESH_MS)
+
+  expect(statusReadsSince(since)).toHaveLength(1)
+  // Guard on the fix above: tolerance is for silence, not for a refusal. A
+  // 403 must not be turned into "confirming" and a presence retry loop.
+  expect(presenceCount(since)).toBe(0)
+  expect(container!.textContent).not.toContain(CONFIRMING)
+  expectStoppedNotRevived()
+  expect(posted("/attempts/attempt/stop")).toHaveLength(1)
+})
+
+it.each(UNREACHABLE)(
+  "keeps a hidden ready call when a scheduled renewal fails with $name, and retries after 2.5 s",
+  async ({ answer }) => {
+    manualIntervals()
+    stubNetwork()
+    await readySharedCall()
+    await setHidden(true)
+    manualTimeouts()
+
+    fault({ match: isPresenceRenewal, answer })
+    const since = requests.length
+    await fireIntervals(PRESENCE_MS)
+
+    // Control: the scheduled renewal went out and got the failure.
+    expect(presenceCount(since)).toBe(1)
+    expect(faults[0]!.times).toBe(0)
+    // The lease was renewed for 60 s moments ago and no time has passed, so
+    // it is still in force: audio stays up, the call is shown unconfirmed.
+    expect(fixture.adapters).toHaveLength(1)
+    expectConfirming()
+    expect(container!.textContent).not.toContain(CALL_ENDED)
+    expectNoStoppedCopy()
+
+    // The retry is its own 2.5 s timer, well inside the lease — not the next
+    // scheduled renewal 15 s later. Exactly one is armed.
+    expect(pendingRetries()).toHaveLength(1)
+    const retrySince = requests.length
+    await fireTimeouts()
+    expect(presenceCount(retrySince)).toBe(1)
+    expect(bar()?.textContent).not.toContain(CONFIRMING)
+    expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
+    expect(posted("/stop")).toHaveLength(0)
+
+    // Confirmed means done: no retry left armed sends a second renewal.
+    expect(pendingRetries()).toHaveLength(0)
+    const afterConfirm = requests.length
+    await fireTimeouts()
+    await fireIntervals(TICK_MS)
+    expect(presenceCount(afterConfirm)).toBe(0)
+
+    // Coming back still asks once more, and then the call is Connected.
+    await returnToTab()
+    await settle(50)
+    expect(bar()?.textContent).toContain("Connected")
+    expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
+    expect(posted("/stop")).toHaveLength(0)
+    expect(posted("/start")).toHaveLength(1)
+    expect(fixture.adapters[0]!.join).toHaveBeenCalledOnce()
+  }
+)
+
+it("disarms the pending retry when a scheduled renewal confirms the call first", async () => {
+  manualIntervals()
+  stubNetwork()
+  await readySharedCall()
+  manualTimeouts()
+
+  fault({ match: isPresenceRenewal, answer: "network" })
+  await fireIntervals(PRESENCE_MS)
+  expectConfirming()
+  expect(pendingRetries()).toHaveLength(1)
+
+  // The next scheduled renewal gets there before the retry timer does.
+  const since = requests.length
+  await fireIntervals(PRESENCE_MS)
+  expect(presenceCount(since)).toBe(1)
+  expect(bar()?.textContent).toContain("Connected")
+
+  // The retry it beat must not go out as a redundant second renewal.
+  expect(pendingRetries()).toHaveLength(0)
+  await fireTimeouts()
+  expect(presenceCount(since)).toBe(1)
+  expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
+})
+
+it("still ends a hidden call whose renewals keep failing once its lease runs out", async () => {
+  manualIntervals()
+  stubNetwork()
+  await readySharedCall()
+  await setHidden(true)
+  manualTimeouts()
+
+  // The network never comes back.
+  fault({ match: isPresenceRenewal, answer: "network", times: Infinity })
+  const since = requests.length
+  await fireIntervals(PRESENCE_MS)
+  // Control: tolerated, and retried, while the lease is in force.
+  await fireTimeouts()
+  await fireTimeouts()
+  expect(presenceCount(since)).toBe(3)
+  expect(fixture.adapters[0]!.stop).not.toHaveBeenCalled()
+  expectConfirming()
+
+  // Past the 60 s lease without one successful renewal, "unconfirmed" is no
+  // longer honest: the server will have swept the call.
+  const realNow = performance.now.bind(performance)
+  vi.spyOn(performance, "now").mockImplementation(() => realNow() + 61_000)
+  await fireIntervals(TICK_MS)
+
+  expect(fixture.adapters[0]!.stop).toHaveBeenCalledOnce()
+  expect(container!.textContent).not.toContain("Connected")
+  expect(container!.textContent).not.toContain(CONFIRMING)
+  expect(posted("/attempts/attempt/stop")).toHaveLength(1)
+  // Stopped means no more retries either.
+  const afterStop = requests.length
+  await fireTimeouts()
+  expect(presenceCount(afterStop)).toBe(0)
+})
+
+it("ends a hidden call promptly when a scheduled renewal is refused as expired, and says the call ended", async () => {
+  manualIntervals()
+  stubNetwork()
+  await readySharedCall()
+  await setHidden(true)
+  manualTimeouts()
+
+  // What the real route answers once the call was stopped elsewhere.
+  fault({
+    match: isPresenceRenewal,
+    answer: { status: 409, body: { code: "expired" } },
+  })
+  const since = requests.length
+  await fireIntervals(PRESENCE_MS)
+
+  expect(presenceCount(since)).toBe(1)
+  expect(faults[0]!.times).toBe(0)
+  // Refused, not unreachable: no waiting out the rest of the lease.
+  expect(fixture.adapters[0]!.stop).toHaveBeenCalledOnce()
+  expect(container!.textContent).not.toContain("Connected")
+  expect(container!.textContent).not.toContain(CONFIRMING)
+  // The honest copy is that the call ended. The tab did not see why, and
+  // being hidden is not the reason, so it must not say so.
+  expect(container!.textContent).toContain(CALL_ENDED)
+  expect(container!.textContent).not.toContain("Presence could not be renewed")
+  expectNoStoppedCopy()
+  // And nothing keeps asking a server that already said no.
+  expect(pendingRetries()).toHaveLength(0)
+  await fireTimeouts()
+  expect(presenceCount(since)).toBe(1)
+  expect(posted("/attempts")).toHaveLength(1)
+  expect(posted("/start")).toHaveLength(1)
+  expect(fixture.adapters[0]!.join).toHaveBeenCalledOnce()
 })

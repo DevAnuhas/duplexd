@@ -38,6 +38,8 @@ export type SandboxClientState = {
    * Advisory only — it never ends a call, and it clears itself when output
    * resumes. */
   outputSilent: boolean
+  /** A returned or temporarily unreachable call has not yet been confirmed by a fresh lease renewal. */
+  confirming: boolean
 }
 
 const messages: Record<string, string> = {
@@ -171,6 +173,7 @@ export class SandboxController {
     ownsController: false,
     deadlines: { reservation: 0, startup: 0, execution: 0 },
     outputSilent: false,
+    confirming: false,
   }
   private listeners = new Set<() => void>()
   private busy = false
@@ -295,22 +298,27 @@ export class SandboxController {
       const response = await this.request(path)
       if (epoch !== this.generation) return
       if (!response.ok) {
+        if (
+          this.media &&
+          this.readyOnce &&
+          !(response.status >= 400 && response.status < 500) &&
+          response.data?.code !== "sandbox_execution_disabled"
+        ) {
+          if (this.confirmationAfterSequence === null) {
+            this.needsConfirmation = true
+            this.visibleAgain()
+          }
+          return
+        }
         this.update({
           phase: "error",
           statusKnown: false,
           message: this.message(response.data),
         })
         if (this.media) {
-          if (
-            this.readyOnce &&
-            !(response.status >= 400 && response.status < 500)
-          ) {
-            this.needsConfirmation = true
-            this.visibleAgain()
-          } else
-            void this.end(
-              "Call authorization or status is unavailable. Local audio stopped; checking cleanup."
-            )
+          void this.end(
+            "Call authorization or status is unavailable. Local audio stopped; checking cleanup."
+          )
         }
         return
       }
@@ -340,6 +348,13 @@ export class SandboxController {
       }
     } catch {
       if (epoch !== this.generation) return
+      if (this.media && this.readyOnce) {
+        if (this.confirmationAfterSequence === null) {
+          this.needsConfirmation = true
+          this.visibleAgain()
+        }
+        return
+      }
       this.update({
         phase: "error",
         statusKnown: false,
@@ -347,13 +362,9 @@ export class SandboxController {
           "Test status is unavailable. Your existing test has not been canceled. Refresh status when the connection returns.",
       })
       if (this.media) {
-        if (this.readyOnce) {
-          this.needsConfirmation = true
-          this.visibleAgain()
-        } else
-          void this.end(
-            "Call status is unavailable. Local audio stopped; checking cleanup."
-          )
+        void this.end(
+          "Call status is unavailable. Local audio stopped; checking cleanup."
+        )
       }
     } finally {
       if (epoch === this.generation) {
@@ -627,6 +638,7 @@ export class SandboxController {
       if (isReady) this.readyOnce = true
       this.update({
         mediaPhase: isReady ? "ready" : "waiting",
+        confirming: !confirmed,
         message: confirmed ? null : "Confirming the call is still live…",
       })
     }
@@ -681,11 +693,15 @@ export class SandboxController {
     if (this.confirmationAfterSequence !== null || !this.readyOnce) return
     this.needsConfirmation = false
     this.confirmationAfterSequence = this.presenceSequence
-    if (this.state.mediaPhase === "ready")
-      this.update({
-        mediaPhase: "waiting",
-        message: "Confirming the call is still live…",
-      })
+    this.update({
+      confirming: true,
+      ...(this.state.mediaPhase === "ready"
+        ? { mediaPhase: "waiting" as const }
+        : {}),
+      ...(["ready", "waiting"].includes(this.state.mediaPhase)
+        ? { message: "Confirming the call is still live…" }
+        : {}),
+    })
   }
   canStart() {
     return (
@@ -883,6 +899,9 @@ export class SandboxController {
     this.lastTick = { wall, monotonic: now }
     const sleepGap = wallGap - monotonicGap
     if (sleepGap > 2_000) {
+      // A large forward wall-clock adjustment looks the same as sleep here.
+      // It can stop a valid call early, but cannot leave a stale Connected
+      // state or extend a lease after the server considers it expired.
       for (const key of [
         "reservation",
         "startup",
@@ -945,12 +964,11 @@ export class SandboxController {
   /**
    * `priming` marks the renewal fired the instant audio connects.
    *
-   * The scheduled renewals stay fail-closed: a lease that cannot be renewed is
-   * a lease that will expire, and the honest move is to stop local audio. The
-   * priming one is different — the lease is definitionally still valid at that
-   * moment, and the timer will try again in fifteen seconds — so a transient
-   * failure there must not end a call that was previously given the whole
-   * first interval before anything was asked of it.
+   * A rejected lease is authoritative and ends local audio. A network or 5xx
+   * failure leaves the existing lease in force: show an unconfirmed call and
+   * retry within that lease. The local deadline still stops audio if the
+   * server cannot be reached. The first, priming renewal can use the normal
+   * fifteen-second interval while its fresh lease is still valid.
    */
   private async presence(priming = false) {
     this.detectSleep()
@@ -966,6 +984,8 @@ export class SandboxController {
     const requestSequence = ++this.presenceSequence
     const epoch = this.generation
     let authoritativeFailure = false
+    let failureMessage =
+      "Presence could not be renewed. Local audio stopped; checking cleanup."
     try {
       const response = await this.request(
         `attempts/${encodeURIComponent(owner.attemptId)}/presence`,
@@ -980,7 +1000,12 @@ export class SandboxController {
         typeof server !== "string" ||
         typeof expiry !== "string"
       ) {
-        authoritativeFailure = response.status >= 400 && response.status < 500
+        authoritativeFailure =
+          (response.status >= 400 && response.status < 500) ||
+          response.data?.code === "sandbox_execution_disabled"
+        if (authoritativeFailure && response.data?.code === "expired")
+          failureMessage =
+            "The call has ended. Local audio stopped; checking cleanup."
         throw new Error("presence")
       }
       const remaining = Date.parse(expiry) - Date.parse(server)
@@ -1009,26 +1034,25 @@ export class SandboxController {
           if (this.confirmationTimer) clearTimeout(this.confirmationTimer)
           this.confirmationTimer = null
         }
-        this.update({ attempt, statusKnown: true, phase: "idle" })
+        this.update({
+          attempt,
+          statusKnown: true,
+          phase: "idle",
+          confirming: false,
+        })
         this.observe(attempt, response.startedAt)
       } else {
         this.observePresence(expiry, Date.parse(server), response.startedAt)
       }
     } catch {
       if (epoch === this.generation && !priming) {
-        if (
-          !authoritativeFailure &&
-          this.confirmationAfterSequence !== null &&
-          this.validExecution()
-        ) {
+        if (!authoritativeFailure && this.validExecution()) {
+          this.armConfirmation()
           this.confirmationTimer ??= setTimeout(() => {
             this.confirmationTimer = null
             void this.presence()
           }, 2_500)
-        } else
-          void this.end(
-            "Presence could not be renewed. Local audio stopped; checking cleanup."
-          )
+        } else void this.end(failureMessage)
       }
     } finally {
       this.presenceBusy = false
@@ -1077,7 +1101,8 @@ export class SandboxController {
     this.joined = false
     // The advisory describes a live call's output. It must not outlive the
     // call and reappear over the next one.
-    if (this.state.outputSilent) this.update({ outputSilent: false })
+    if (this.state.outputSilent || this.state.confirming)
+      this.update({ outputSilent: false, confirming: false })
     if (this.deadlineTimer) clearInterval(this.deadlineTimer)
     if (this.presenceTimer) clearInterval(this.presenceTimer)
     this.deadlineTimer = this.presenceTimer = null

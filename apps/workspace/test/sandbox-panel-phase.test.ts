@@ -37,6 +37,7 @@ function state(over: Partial<SandboxClientState> = {}): SandboxClientState {
     ownsController: true,
     deadlines: { reservation: 0, startup: 0, execution: 0 },
     outputSilent: false,
+    confirming: false,
     ...over,
   }
 }
@@ -133,7 +134,10 @@ describe("sandboxPanelPhase", () => {
       sandboxPanelPhase(
         state({
           phase: "error",
-          attempt: attempt({ state: "dispatched", resourceState: "stop_requested" }),
+          attempt: attempt({
+            state: "dispatched",
+            resourceState: "stop_requested",
+          }),
         })
       )
     ).toBe("cleanup")

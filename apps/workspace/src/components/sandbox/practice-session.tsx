@@ -212,7 +212,7 @@ export function PracticeSessionProvider({
             <span className="block truncate text-sm font-semibold">{name}</span>
             <span className="block truncate text-xs text-muted-foreground">
               Practice · sample data ·{" "}
-              {state.message?.startsWith("Confirming the call")
+              {state.confirming && state.mediaPhase === "waiting"
                 ? state.message
                 : connectionLabel(state.mediaPhase)}
             </span>
@@ -252,7 +252,7 @@ export function PracticeSessionProvider({
                 <h2 className="truncate text-sm font-semibold">{name}</h2>
                 <p className="text-xs text-muted-foreground">
                   <span role="status">
-                    {state.message?.startsWith("Confirming the call")
+                    {state.confirming && state.mediaPhase === "waiting"
                       ? state.message
                       : connectionLabel(state.mediaPhase)}
                   </span>
@@ -296,7 +296,11 @@ export function PracticeSessionProvider({
                 type="button"
                 variant="outline"
                 className="h-8 flex-1"
-                disabled={!state.ownsController || state.mediaPhase !== "ready"}
+                disabled={
+                  !state.ownsController ||
+                  (state.mediaPhase !== "ready" &&
+                    !(state.mediaPhase === "waiting" && state.confirming))
+                }
                 aria-pressed={state.muted}
                 onClick={() => controller.mute()}
               >
