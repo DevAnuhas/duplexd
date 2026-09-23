@@ -21,7 +21,8 @@ const browser: Dependencies = {
   },
 }
 
-/** Uses caller-owned input and a gesture-unlocked Web Audio output graph.
+/** Uses caller-owned input, a gesture-unlocked AudioContext, and one media
+ * element per remote speaker.
  * No SDK import, capture, network or audio work occurs in the constructor.
  */
 export class DailySandboxMedia implements SandboxMedia {
@@ -31,8 +32,23 @@ export class DailySandboxMedia implements SandboxMedia {
   private call: DailyCall | null = null
   private outputs = new Map<
     string,
-    { track: MediaStreamTrack; node: MediaStreamAudioSourceNode }
+    {
+      track: MediaStreamTrack
+      sink: HTMLAudioElement
+      /** Last observed `currentTime`. A live MediaStream advances it
+       * continuously while decoding — agent silence still produces samples —
+       * so a frozen value means no audio is being produced at all. */
+      played: number
+      /** Consecutive observations with no advance. */
+      frozen: number
+      /** Has this sink ever advanced? Until it has, this is startup, not a
+       * stall, and the readiness UI already owns that window. */
+      started: boolean
+    }
   >()
+  private released = new WeakSet<HTMLAudioElement>()
+  private watchdog: ReturnType<typeof setInterval> | null = null
+  private silent = false
   private interrupted = new Set<string>()
   private joined = false
   private joining = false
@@ -120,7 +136,7 @@ export class DailySandboxMedia implements SandboxMedia {
     }
   }
   private connectOutputs() {
-    if (!this.call || !this.context || this.stopped) return
+    if (!this.call || this.stopped) return
     const tracks = new Map<string, MediaStreamTrack>()
     for (const participant of Object.values(this.call.participants())) {
       if (participant.local) continue
@@ -130,18 +146,98 @@ export class DailySandboxMedia implements SandboxMedia {
     }
     for (const [id, output] of this.outputs) {
       if (tracks.get(id) !== output.track) {
-        output.node.disconnect()
+        this.release(output.sink)
         this.outputs.delete(id)
       }
     }
     for (const [id, track] of tracks) {
       if (this.outputs.has(id)) continue
-      const node = this.context.createMediaStreamSource(
-        new MediaStream([track])
-      )
-      node.connect(this.context.destination)
-      this.outputs.set(id, { track, node })
+      this.outputs.set(id, {
+        track,
+        sink: this.attach(track),
+        played: 0,
+        frozen: 0,
+        started: false,
+      })
     }
+    if (this.outputs.size === 0) this.stopWatching()
+    else if (this.watchdog === null)
+      this.watchdog = setInterval(this.observeOutput, 1_000)
+  }
+  /** How many consecutive frozen seconds before saying anything. One stalled
+   * tick during renegotiation is normal; three in a row is not. */
+  private static readonly STALL_TICKS = 3
+  /**
+   * Notices the failure mode that cost two calls: audio arriving and nothing
+   * coming out, with every other signal reporting success.
+   *
+   * Deliberately advisory. It reports and it withdraws; it never ends a call.
+   * The owner has already lost attempts to things that stopped a call without
+   * explaining why, and a false positive here would be one more.
+   */
+  private observeOutput = () => {
+    if (this.stopped) return
+    let advancing = false
+    let stalled = false
+    for (const output of this.outputs.values()) {
+      const played = output.sink.currentTime
+      if (played > output.played) {
+        output.played = played
+        output.frozen = 0
+        output.started = true
+        advancing = true
+      } else if (output.started) {
+        output.frozen += 1
+        if (output.frozen >= DailySandboxMedia.STALL_TICKS) stalled = true
+      }
+    }
+    if (!this.silent && stalled && !advancing) {
+      this.silent = true
+      this.report({ type: "silent" })
+    } else if (this.silent && advancing) {
+      this.silent = false
+      this.report({ type: "audible" })
+    }
+  }
+  private stopWatching() {
+    if (this.watchdog !== null) clearInterval(this.watchdog)
+    this.watchdog = null
+    this.silent = false
+  }
+  /** Remote audio needs a media element, not a Web Audio node.
+   *
+   * Chromium does not run the decoder for a remote WebRTC track that is only
+   * consumed by a MediaStreamAudioSourceNode. Measured on a loopback peer
+   * connection against this exact graph: 1224 packets and 98 KB arrived,
+   * `totalSamplesReceived` stayed at 0, and the analyser read a peak RMS of
+   * 0.000 — while the same graph fed by a *local* track read 0.355, so the
+   * measurement was sound. Attaching an element to the same stream moved it to
+   * 158,400 samples and 0.357. That is the whole of the outage on 2026-09-22:
+   * every layer reported success and nobody could hear the agent.
+   *
+   * So the element is the sink and the remote Web Audio path is gone rather
+   * than kept alongside — two sinks on one stream would play the agent twice.
+   */
+  private attach(track: MediaStreamTrack) {
+    const sink = document.createElement("audio")
+    sink.autoplay = true
+    sink.srcObject = new MediaStream([track])
+    // Held by the document so the element cannot be collected mid-call.
+    document.body.append(sink)
+    // `play()` returns nothing under jsdom, and a promise in a browser.
+    void Promise.resolve(sink.play()).catch(() => {
+      // Tearing a sink down while its `play()` is still pending rejects that
+      // promise with AbortError. That is an ordinary release, not a refusal.
+      // A genuine refusal is silence, and silence must not read as success.
+      if (!this.released.has(sink)) this.failed()
+    })
+    return sink
+  }
+  private release(sink: HTMLAudioElement) {
+    this.released.add(sink)
+    sink.pause()
+    sink.srcObject = null
+    sink.remove()
   }
   async join(join: SandboxJoin) {
     if (!this.call || this.stopped || this.joined || this.joining)
@@ -177,7 +273,8 @@ export class DailySandboxMedia implements SandboxMedia {
       track.stop()
     })
     this.stream = null
-    this.outputs.forEach(({ node }) => node.disconnect())
+    this.stopWatching()
+    this.outputs.forEach(({ sink }) => this.release(sink))
     this.outputs.clear()
     const context = this.context
     this.context = null

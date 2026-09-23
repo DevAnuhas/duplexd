@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 
 /**
@@ -50,6 +50,28 @@ const TEST_ONLY_DEFAULTS: Readonly<Record<string, string>> = {
  * reproduces a fresh clone's skip path on a machine that does have a
  * `.env.local`.
  */
+/**
+ * `DATABASE_URL` as written in `.env.local`, read from the file rather than the
+ * environment.
+ *
+ * The distinction is the whole point. After {@link loadTestEnvironment}, an
+ * unset `DATABASE_URL` has already been filled in from this file — so the
+ * process environment cannot tell "I chose this database" from "I forgot to
+ * choose one and got the app's". Reading the file separately is what lets the
+ * destructive-run guard compare the two.
+ */
+export function envLocalDatabaseUrl(): string | undefined {
+  for (const envLocal of [
+    `${workspaceRoot}.env.local`,
+    `${repositoryRoot}.env.local`,
+  ]) {
+    if (!existsSync(envLocal)) continue
+    const line = readFileSync(envLocal, "utf8").match(/^DATABASE_URL=(.*)$/m)
+    if (line?.[1] !== undefined) return line[1].trim().replace(/^["']|["']$/g, "")
+  }
+  return undefined
+}
+
 export function loadTestEnvironment(): void {
   // Next's conventional location is the package directory. The root fallback
   // preserves older worktrees. `loadEnvFile` never overwrites an existing
@@ -69,7 +91,33 @@ export function loadTestEnvironment(): void {
       process.env[name] = value
     }
   }
+
+  for (const name of SANDBOX_PROVIDER_VARIABLES) {
+    delete process.env[name]
+  }
 }
+
+/**
+ * The variables that decide whether Sandbox execution exists, cleared above so
+ * the suite always starts from "not configured".
+ *
+ * Unlike `DATABASE_URL`, these do not select *where* a test runs — they change
+ * *what the code does*, and a developer who has configured a real provider in
+ * `.env.local` to place a live call would otherwise run a different suite from
+ * CI: Start offered instead of refused, dispatch attempted instead of 503. The
+ * two would disagree about which behaviour is correct and the disagreement
+ * would surface as a flaky-looking failure on someone else's machine.
+ *
+ * A test that wants the configured path says so with `vi.stubEnv`, which is
+ * also the only way to assert both halves in one file.
+ */
+const SANDBOX_PROVIDER_VARIABLES = [
+  "PIPECAT_PRIVATE_API_KEY",
+  "PIPECAT_ORGANIZATION_ID",
+  "PIPECAT_SERVICE_ID",
+  "PIPECAT_DEPLOYMENT_ID",
+  "SANDBOX_AGENT_API_BASE",
+] as const
 
 /**
  * Just the variables these predicates read.

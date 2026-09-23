@@ -9,9 +9,15 @@ from typing import Any
 import httpx
 import pytest
 
+from duplexd_agent.bot import STARTUP_ENVELOPE_SECS
 from duplexd_agent.config import RunnerInput, SandboxAck, SandboxControl, SandboxOwner
 from duplexd_agent.errors import PlatformRequestError, RunnerInputError
-from duplexd_agent.platform import PlatformClient, encode_json
+from duplexd_agent.platform import (
+    CONTROL_POLL_TIMEOUT_SECS,
+    STARTUP_REQUEST_TIMEOUT_SECS,
+    PlatformClient,
+    encode_json,
+)
 from duplexd_agent.reporting import EventReporter
 from duplexd_agent.runtime import SandboxWatchdog
 
@@ -466,3 +472,53 @@ async def test_blocked_event_delivery_does_not_block_control_stop() -> None:
         flush.cancel()
         await asyncio.gather(flush, return_exceptions=True)
         await watchdog.close()
+
+
+async def test_startup_requests_outlast_a_slow_platform_while_control_stays_short(
+    runner_body: dict[str, str], config_payload: dict[str, Any]
+) -> None:
+    """The first real call died on a claim that answered at 4.8 s.
+
+    Negotiation, registration and the one-shot claim each wait out a platform
+    that is paying its own cold start; the control poll, which repeats every
+    three seconds, deliberately does not.
+    """
+    owner = SandboxOwner(sessionId="synthetic-session", bootId="synthetic-boot")
+    timeouts: dict[str, float] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        suffix = request.url.path.rsplit("/", 1)[1]
+        timeouts[suffix] = request.extensions["timeout"]["read"]
+        if suffix == "protocol":
+            return httpx.Response(200, json={"protocol": "sandbox-v1"})
+        if suffix == "register":
+            return httpx.Response(200, json={"protocol": "sandbox-v1", "registered": True})
+        if suffix == "control":
+            return httpx.Response(
+                200, json={"protocol": "sandbox-v1", "control": control().model_dump()}
+            )
+        return httpx.Response(
+            200,
+            json={
+                "protocol": "sandbox-v1",
+                "owner": owner.model_dump(),
+                "config": config_payload,
+                "control": control().model_dump(),
+            },
+        )
+
+    async with PlatformClient(
+        RunnerInput.from_body(runner_body), transport=httpx.MockTransport(handler)
+    ) as platform:
+        assert await platform.negotiate() == "sandbox-v1"
+        await platform.register(owner)
+        await platform.claim_sandbox()
+        await platform.poll_control()
+
+    assert timeouts["protocol"] == STARTUP_REQUEST_TIMEOUT_SECS
+    assert timeouts["register"] == STARTUP_REQUEST_TIMEOUT_SECS
+    assert timeouts["config"] == STARTUP_REQUEST_TIMEOUT_SECS
+    assert timeouts["control"] == CONTROL_POLL_TIMEOUT_SECS
+    # The envelope must be able to hold three of them, or widening the request
+    # budget only moves the failure into the outer bound.
+    assert STARTUP_ENVELOPE_SECS > 3 * STARTUP_REQUEST_TIMEOUT_SECS

@@ -4,6 +4,8 @@ import { drizzle } from "drizzle-orm/node-postgres"
 import { migrate } from "drizzle-orm/node-postgres/migrator"
 import pg from "pg"
 
+import { assertDestructiveAllowed } from "./destructive-guard.ts"
+
 import { requireDatabaseUrl } from "@/db/env"
 
 /**
@@ -81,12 +83,20 @@ export async function withTestPool<T>(
  * Safe to run repeatedly, and it only ever touches the database named by
  * `DATABASE_URL`.
  */
-export async function resetAndMigrate(): Promise<void> {
+export async function dropAllSchemas(): Promise<void> {
+  // The single place this repository destroys a database. Everything that
+  // wipes a schema goes through here, so there is exactly one thing to guard.
+  assertDestructiveAllowed()
   await withTestPool(async (pool) => {
     await pool.query("DROP SCHEMA IF EXISTS drizzle CASCADE")
     await pool.query("DROP SCHEMA IF EXISTS public CASCADE")
     await pool.query("CREATE SCHEMA public")
+  })
+}
 
+export async function resetAndMigrate(): Promise<void> {
+  await dropAllSchemas()
+  await withTestPool(async (pool) => {
     await migrate(drizzle(pool), { migrationsFolder })
   })
 }

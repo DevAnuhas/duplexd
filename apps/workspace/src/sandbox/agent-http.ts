@@ -1,9 +1,9 @@
 import { requireAgentToken } from "@/control/agent-http"
-import { requireAuthUrl } from "@/db/env"
+import { resolveSandboxAgentApiBase } from "@/db/env"
 import { noStoreJson } from "@/lib/workspace-mutation"
 
 import { readBoundedJsonObject, sandboxProblem } from "./http"
-import { sandboxLifecycle } from "./lifecycle"
+import { sandboxLifecycle } from "./provider"
 import {
   SANDBOX_BOOT_HEADER,
   SANDBOX_PROTOCOL,
@@ -62,10 +62,10 @@ export async function handleSandboxAgentRequest(
   }
   const result =
     operation === "register"
-      ? await sandboxLifecycle.register(input)
+      ? await sandboxLifecycle().register(input)
       : operation === "config"
-        ? await sandboxLifecycle.claim(input, requireAuthUrl())
-        : await sandboxLifecycle.control(input)
+        ? await sandboxLifecycle().claim(input, resolveSandboxAgentApiBase())
+        : await sandboxLifecycle().control(input)
   if (result.kind === "ok") {
     if ("config" in result) return noStoreJson(result.config)
     if ("control" in result)

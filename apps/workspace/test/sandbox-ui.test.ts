@@ -114,6 +114,21 @@ function button(text: string) {
   if (!found) throw new Error(`Missing button: ${text}`)
   return found
 }
+/**
+ * "This action does not apply right now" is absence, not a disabled control.
+ *
+ * The panel used to render every control in every phase and disable the ones
+ * that did not apply, which is how a live call came to offer Prepare, Cancel,
+ * Refresh, Mute, End and Start at once. `panel-phase.ts` replaced that with one
+ * action per phase, so these assertions check that the control is gone — and,
+ * where a swap is the point, that the action which replaced it is present.
+ * Asserting only absence would also pass if the panel failed to render at all.
+ */
+function absent(text: string) {
+  return Array.from(container!.querySelectorAll("button")).every(
+    (item) => item.textContent !== text
+  )
+}
 afterEach(() => {
   act(() => root?.unmount())
   container?.remove()
@@ -121,7 +136,7 @@ afterEach(() => {
 })
 
 describe("Sandbox workspace UI", () => {
-  it("mounts in StrictMode without a mutation or media request and exposes the execution gate", async () => {
+  it("mounts in StrictMode without a mutation or media request and claims nothing about voice before the server answers", async () => {
     const calls = stubFetch()
     const microphone = vi.fn()
     vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: microphone } })
@@ -129,8 +144,20 @@ describe("Sandbox workspace UI", () => {
     expect(calls.length).toBeGreaterThan(0)
     expect(calls.every((call) => call.options?.method === "GET")).toBe(true)
     expect(microphone).not.toHaveBeenCalled()
-    expect(button("Start voice call").disabled).toBe(true)
-    expect(container!.textContent).toContain("Preparation starts no agent")
+    // No attempt yet, so the panel is in `idle`: it offers Prepare and does not
+    // render Start at all. Both halves matter — the second alone would pass on
+    // an empty panel.
+    expect(absent("Start voice call")).toBe(true)
+    expect(button("Prepare test").disabled).toBe(false)
+    // The execution gate is a report of what the server said, so it waits for
+    // the server to say it. The condition used to be
+    // `state.attempt?.execution !== "enabled"`, which is also true when there
+    // is no attempt — so a fresh page announced that voice calls were disabled
+    // before it had asked. The gate's presence is covered below, once an
+    // attempt exists.
+    expect(container!.textContent).not.toContain(
+      "Voice calls are not available yet"
+    )
     expect(container!.querySelector('[aria-current="page"]')?.textContent).toBe(
       "Sandbox"
     )
@@ -158,14 +185,28 @@ describe("Sandbox workspace UI", () => {
     expect(container!.textContent).toContain(
       "Test prepared · voice not started"
     )
-    expect(button("Prepare test").disabled).toBe(true)
+    // Prepared: Start replaces Prepare in the primary slot rather than sitting
+    // beside it disabled.
+    expect(absent("Prepare test")).toBe(true)
+    expect(button("Start voice call")).toBeDefined()
+    // The other half of the gate: the attempt reports `execution: "disabled"`,
+    // so now — and only now — the panel says so.
+    expect(container!.textContent).toContain("Voice calls are not available yet")
+    expect(container!.textContent).toContain("Preparation starts no agent")
     expect(
       container!.querySelector<HTMLFieldSetElement>("fieldset")?.disabled
     ).toBe(true)
     expect(container!.querySelector('a[href="/calls/call-a"]')).not.toBeNull()
     await click(button("Cancel preparation"))
+    // Canceling releases the attempt's resources, so the panel lands in
+    // `finished` rather than back at `idle` — and the headline says which of
+    // the three routes into `finished` this was, instead of reporting that
+    // resources were released.
     expect(container!.textContent).toContain("Preparation canceled")
-    expect(button("Prepare test").disabled).toBe(false)
+    // Re-preparing is still offered, under the label that fits having just
+    // finished one.
+    expect(absent("Prepare test")).toBe(true)
+    expect(button("Prepare another test").disabled).toBe(false)
     expect(
       calls.some((call) => /\/(start|join|presence)$/.test(call.path))
     ).toBe(false)

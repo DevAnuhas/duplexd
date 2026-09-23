@@ -13,6 +13,8 @@ import {
   requireEncryptionKey,
   requirePipecatApiKey,
   readCallSweepToken,
+  resolveSandboxAgentApiBase,
+  sandboxExecutionConfigured,
 } from "@/db/env"
 
 /**
@@ -48,7 +50,20 @@ const VARIABLES = [
  * no `require…()` guard, and it is asserted rather than asserted about — see
  * the absent-safe test below.
  */
-const OPTIONAL_VARIABLES = ["ALLOW_LOOPBACK_SERVER_URL"] as const
+const OPTIONAL_VARIABLES = [
+  "ALLOW_LOOPBACK_SERVER_URL",
+  // The Sandbox provider binding. Absent, `readSandboxProviderEnvironment()`
+  // returns null and `sandboxExecutionConfigured()` is false — so a deployment
+  // missing any of them does not dispatch calls at all. Absence costs a
+  // feature, never a call placed against a half-configured provider.
+  "PIPECAT_PRIVATE_API_KEY",
+  "PIPECAT_ORGANIZATION_ID",
+  "PIPECAT_SERVICE_ID",
+  "PIPECAT_DEPLOYMENT_ID",
+  // Absent, the agent callback origin is the workspace's own `BETTER_AUTH_URL`,
+  // which is correct everywhere except a local tunnel. Absence is production.
+  "SANDBOX_AGENT_API_BASE",
+] as const
 
 /**
  * Injected by Vercel, never by us, and deliberately **not** in `VARIABLES`.
@@ -656,6 +671,121 @@ describe("declared-optional variables are absent-safe", () => {
 
   /** Every optional variable is covered above; this fails if one is added. */
   it("has an absent-safe assertion for every declared-optional variable", () => {
-    expect([...OPTIONAL_VARIABLES]).toStrictEqual(["ALLOW_LOOPBACK_SERVER_URL"])
+    expect([...OPTIONAL_VARIABLES]).toStrictEqual([
+      "ALLOW_LOOPBACK_SERVER_URL",
+      "PIPECAT_PRIVATE_API_KEY",
+      "PIPECAT_ORGANIZATION_ID",
+      "PIPECAT_SERVICE_ID",
+      "PIPECAT_DEPLOYMENT_ID",
+      "SANDBOX_AGENT_API_BASE",
+    ])
+  })
+})
+
+/**
+ * The Sandbox provider binding, and why its absence is the safe outcome.
+ *
+ * `readSandboxProviderEnvironment()` returns null unless the whole binding is
+ * present and well-formed, and `sandboxExecutionConfigured()` is that predicate.
+ * So a deployment missing any one of these does not dispatch a call with a
+ * partial binding — it reports Sandbox execution as unavailable and starts
+ * nothing. Absence costs the feature; it never costs a session that has already
+ * begun billing.
+ *
+ * The CONTROL below is load-bearing. Every case here asserts that something
+ * becomes **false**, and false is also what a predicate that always returns
+ * false produces — so without a case proving the value can be true with the
+ * binding intact, the whole block would pass against a broken predicate.
+ */
+describe("the Sandbox provider binding is absent-safe", () => {
+  // A complete, well-formed synthetic binding. The three ids must satisfy the
+  // UUID shape the reader enforces, and the two keys must differ — the same
+  // value in both means one was pasted into the wrong variable.
+  const BINDING = {
+    PIPECAT_API_KEY: "synthetic-public-key",
+    PIPECAT_PRIVATE_API_KEY: "synthetic-private-key",
+    PIPECAT_ORGANIZATION_ID: "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+    PIPECAT_SERVICE_ID: "3f2504e0-4f89-41d3-9a0c-0305e82c3302",
+    PIPECAT_DEPLOYMENT_ID: "3f2504e0-4f89-41d3-9a0c-0305e82c3303",
+  } as const
+  const TOUCHED = [
+    ...Object.keys(BINDING),
+    "SANDBOX_AGENT_API_BASE",
+    "BETTER_AUTH_URL",
+  ]
+  const saved = new Map<string, string | undefined>()
+
+  beforeEach(() => {
+    for (const name of TOUCHED) saved.set(name, process.env[name])
+    for (const [name, value] of Object.entries(BINDING))
+      process.env[name] = value
+    process.env.BETTER_AUTH_URL = "https://workspace.example.test"
+    delete process.env.SANDBOX_AGENT_API_BASE
+  })
+  afterEach(() => {
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+    saved.clear()
+  })
+
+  /**
+   * Do not delete this for looking redundant among eight `false` assertions.
+   *
+   * It is the only case here that expects `true`, and that is the point: the
+   * other eight would all pass against a `sandboxExecutionConfigured()` that
+   * always returned `false`. Without this, the block would be decorative and
+   * would stay decorative until someone shipped a reader that never reports a
+   * configured provider. Verified by mutation — forcing the predicate to
+   * `false` fails this test and no other.
+   */
+  it("CONTROL: reports execution configured while the whole binding is present", () => {
+    expect(
+      sandboxExecutionConfigured(),
+      "the control failed, so every absence assertion below is vacuous"
+    ).toBe(true)
+  })
+
+  it.each(
+    [
+      "PIPECAT_PRIVATE_API_KEY",
+      "PIPECAT_ORGANIZATION_ID",
+      "PIPECAT_SERVICE_ID",
+      "PIPECAT_DEPLOYMENT_ID",
+    ].flatMap((name) => [
+      [name, "unset", undefined] as const,
+      [name, "the empty string", ""] as const,
+    ])
+  )(
+    "reports execution unavailable when %s is %s",
+    (name, _label, value) => {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+
+      expect(
+        sandboxExecutionConfigured(),
+        `${name} absent still reported a dispatchable provider`
+      ).toBe(false)
+    }
+  )
+
+  it.each([
+    ["unset", undefined],
+    ["the empty string", ""],
+  ])(
+    "falls back to the workspace origin when SANDBOX_AGENT_API_BASE is %s",
+    (_label, value) => {
+      if (value === undefined) delete process.env.SANDBOX_AGENT_API_BASE
+      else process.env.SANDBOX_AGENT_API_BASE = value
+
+      expect(resolveSandboxAgentApiBase()).toBe(requireAuthUrl())
+    }
+  )
+
+  it("prefers the override when it is set, so the fallback is not the only path", () => {
+    process.env.SANDBOX_AGENT_API_BASE = "https://tunnel.example.test"
+
+    expect(resolveSandboxAgentApiBase()).toBe("https://tunnel.example.test")
   })
 })

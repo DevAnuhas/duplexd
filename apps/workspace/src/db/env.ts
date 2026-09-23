@@ -234,6 +234,118 @@ export function requirePipecatApiKey(): string {
   return key.trim()
 }
 
+/**
+ * The origin the **agent** calls back on: `/v1/agent/*` and `/v1/practice/*`.
+ *
+ * Normally identical to {@link requireAuthUrl}, and on Vercel it always is —
+ * which is why this is a single optional override rather than a second
+ * required variable.
+ *
+ * It exists for local development, where the two origins genuinely differ. The
+ * browser reaches the workspace at `http://localhost:3000`, and
+ * `BETTER_AUTH_URL` has to stay that, because it decides the cookie domain and
+ * the `__Secure-` prefix. The agent runs on Pipecat Cloud and reaches the same
+ * workspace through an HTTPS tunnel; it cannot resolve `localhost`, and the
+ * transport refuses a non-HTTPS `apiBase` outright. Pointing `BETTER_AUTH_URL`
+ * at the tunnel instead would fix the agent and break sign-in.
+ *
+ * Set it to the tunnel origin for a local run; leave it unset everywhere else.
+ */
+export function resolveSandboxAgentApiBase(): string {
+  return trimmed("SANDBOX_AGENT_API_BASE") ?? requireAuthUrl()
+}
+
+/**
+ * The five values that let this deployment dispatch a real Sandbox call.
+ *
+ * Structural rather than importing `SandboxBinding`, for the same reason
+ * {@link DynamicAuthBaseUrl} is structural: this module stays a leaf that reads
+ * the environment and nothing else. `sandbox/provider.ts` maps it onto the
+ * transport's binding.
+ */
+export type SandboxProviderEnvironment = {
+  publicApiKey: string
+  privateApiKey: string
+  organizationId: string
+  serviceId: string
+  deploymentId: string
+}
+
+const PIPECAT_BINDING_UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+function trimmed(name: string): string | null {
+  const value = process.env[name]?.trim()
+
+  return value === undefined || value === "" ? null : value
+}
+
+/**
+ * The Sandbox provider configuration, or `null` when this deployment has none.
+ *
+ * **This is the switch that decides whether Sandbox execution exists.** ADR 015
+ * replaced the compile-time refusal of ADR 013/014 with server configuration:
+ * a deployment that has not been given all five values still answers 503 from
+ * every execution-bearing route, exactly as before, because the composed
+ * lifecycle has no transport to dispatch through.
+ *
+ * All-or-nothing on purpose. A partially configured deployment is a mistake,
+ * not a half-enabled feature, and the failure it would otherwise produce — a
+ * start that reaches the provider and then cannot verify which session it
+ * owns — is the expensive kind: it leaves a running agent nobody is tracking.
+ *
+ * `PIPECAT_ORGANIZATION` is deliberately **not** read here. That variable holds
+ * the Pipecat namespace (`duplexd`), and the transport compares provider
+ * responses against UUIDs; a namespace in a UUID field would fail every
+ * comparison and read as "someone else's session".
+ *
+ * The two keys must differ. They are different credentials with different
+ * authority — the public one starts sessions, the private one reads and
+ * terminates them — and the same value in both fields means one of them was
+ * pasted into the wrong variable.
+ */
+export function readSandboxProviderEnvironment(): SandboxProviderEnvironment | null {
+  const publicApiKey = trimmed("PIPECAT_API_KEY")
+  const privateApiKey = trimmed("PIPECAT_PRIVATE_API_KEY")
+  const organizationId = trimmed("PIPECAT_ORGANIZATION_ID")
+  const serviceId = trimmed("PIPECAT_SERVICE_ID")
+  const deploymentId = trimmed("PIPECAT_DEPLOYMENT_ID")
+
+  if (
+    publicApiKey === null ||
+    privateApiKey === null ||
+    publicApiKey === privateApiKey ||
+    organizationId === null ||
+    serviceId === null ||
+    deploymentId === null ||
+    ![organizationId, serviceId, deploymentId].every((value) =>
+      PIPECAT_BINDING_UUID.test(value)
+    )
+  ) {
+    return null
+  }
+
+  return {
+    publicApiKey,
+    privateApiKey,
+    organizationId,
+    serviceId,
+    deploymentId,
+  }
+}
+
+/**
+ * Whether Sandbox execution is configured on this deployment.
+ *
+ * One definition, read both by the attempt projection the browser sees and by
+ * the lifecycle composition that does the dispatching. Two predicates would
+ * drift, and the drift would be invisible: a browser offering a Start button
+ * that the server answers with 503, or the reverse.
+ */
+export function sandboxExecutionConfigured(): boolean {
+  return readSandboxProviderEnvironment() !== null
+}
+
 /** High-entropy bearer credential protecting the external sweep endpoint. */
 export function readCallSweepToken(): string | null {
   const token = process.env.CALL_SWEEP_TOKEN

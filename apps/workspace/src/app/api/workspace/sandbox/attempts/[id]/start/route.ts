@@ -1,59 +1,39 @@
-import { noStoreJson, requireWorkspaceMutation } from "@/lib/workspace-mutation"
+import { noStoreJson } from "@/lib/workspace-mutation"
+import { getSandboxAttemptForAccount } from "@/sandbox/admission"
 import {
-  refuseDisabledSandboxExecution,
-  SANDBOX_EXECUTION_DISABLED_CODE,
-} from "@/sandbox/admission"
-import {
-  controllerProofHashFromRequest,
-  requireEmptyJsonBody,
+  requireSandboxBrowserOwner,
+  sandboxExecutionProblem,
   sandboxProblem,
 } from "@/sandbox/http"
+import { sandboxLifecycle } from "@/sandbox/provider"
 
+/**
+ * Dispatches a prepared attempt to the provider.
+ *
+ * The response is the attempt, re-read after dispatch settles rather than
+ * returned from inside it. Dispatch's own result says only whether it ran; the
+ * outcome lives in the row — `starting` with a session, or `start_unknown`
+ * with a stop already requested — and the browser has to see the second thing,
+ * because "the request was processed" and "a call is running" are not the same
+ * claim and only one of them is safe to act on.
+ */
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ): Promise<Response> {
-  const session = await requireWorkspaceMutation(request)
-  if (!session.ok) return session.response
-  const controller = controllerProofHashFromRequest(request)
-  if (!controller.ok) return controller.response
-  const body = await requireEmptyJsonBody(request)
-  if (!body.ok) return body.response
-  const { id } = await params
-  const result = await refuseDisabledSandboxExecution({
-    accountId: session.account.accountId,
-    userId: session.account.userId,
-    attemptId: id,
-    controllerProofHash: controller.hash,
+  const browser = await requireSandboxBrowserOwner(request, params)
+  if (!browser.ok) return browser.response
+
+  const result = await sandboxLifecycle().dispatch(browser.owner)
+  if (result.kind !== "processed")
+    return sandboxExecutionProblem(result, "start")
+
+  const attempt = await getSandboxAttemptForAccount({
+    accountId: browser.owner.accountId,
+    attemptId: browser.owner.attemptId,
   })
-  if (result.kind === "not_found") {
-    return sandboxProblem(
-      404,
-      "attempt_not_found",
-      "The attempt was not found."
-    )
-  }
-  if (result.kind === "not_owner") {
-    return sandboxProblem(
-      403,
-      "attempt_not_owned",
-      "Only the initiating user can start this attempt."
-    )
-  }
-  if (result.kind === "invalid_controller") {
-    return sandboxProblem(
-      403,
-      "invalid_controller_proof",
-      "The Sandbox tab controller proof is invalid."
-    )
-  }
-  return noStoreJson(
-    {
-      code: SANDBOX_EXECUTION_DISABLED_CODE,
-      detail:
-        "Sandbox execution remains disabled until the provider and runtime safety gates pass.",
-      attempt: result.attempt,
-    },
-    503
-  )
+
+  return attempt === null
+    ? sandboxProblem(404, "attempt_not_found", "The attempt was not found.")
+    : noStoreJson({ attempt })
 }

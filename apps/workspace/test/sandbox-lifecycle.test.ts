@@ -23,7 +23,8 @@ import {
   hashSandboxControllerProof,
   prepareSandboxAttempt,
 } from "@/sandbox/admission"
-import { createSandboxLifecycle, sandboxLifecycle } from "@/sandbox/lifecycle"
+import { createSandboxLifecycle } from "@/sandbox/lifecycle"
+import { sandboxLifecycle } from "@/sandbox/provider"
 import { createPipecatSandboxTransport } from "@/sandbox/pipecat-transport"
 import { sandboxResourcesReleased } from "@/sandbox/browser-contract"
 import {
@@ -1014,15 +1015,16 @@ describeDatabase(
       })
     })
 
-    it("keeps the production singleton disabled with no tokens or providers", async () => {
+    it("keeps an unconfigured deployment disabled with no tokens or providers", async () => {
       const f = await fixture()
       vi.mocked(mintAgentToken).mockClear()
       provider.start.mockClear()
       provider.stop.mockClear()
+      const composed = sandboxLifecycle()
       for (const operation of [
-        sandboxLifecycle.dispatch,
-        sandboxLifecycle.join,
-        sandboxLifecycle.presence,
+        composed.dispatch,
+        composed.join,
+        composed.presence,
       ])
         expect(await operation(f.browser)).toMatchObject({ kind: "disabled" })
       expect((await f.rows()).call.agentTokenHash).toBeNull()

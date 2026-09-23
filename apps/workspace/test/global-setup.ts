@@ -61,6 +61,7 @@ export const DATABASE_BACKED_FILES = [
   "sandbox-foundation",
   "sandbox-lifecycle",
   "sandbox-evidence",
+  "sandbox-execution-routes",
   // Riley demo seed.
   "riley-seed-database",
 ] as const

@@ -46,6 +46,10 @@ function harness() {
   let ready = false
   let startFails = false
   let presenceFails = false
+  // A lease that never moves, for the tests whose whole subject is what
+  // happens when a renewal does not actually buy more time.
+  let frozenPresence: { serverTime: string; presenceExpiresAt: string } | null =
+    null
   let joinPending: (() => void) | null = null
   const requests: Array<{ url: string; init?: RequestInit }> = []
   const fetcher = vi.fn<typeof fetch>(async (url, init) => {
@@ -80,6 +84,7 @@ function harness() {
           { code: "workspace_session_required" },
           { status: 401 }
         )
+      if (frozenPresence) return Response.json(frozenPresence)
       return Response.json({
         serverTime: iso(now),
         presenceExpiresAt: iso(now + 60_000),
@@ -127,6 +132,9 @@ function harness() {
     },
     failPresence: () => {
       presenceFails = true
+    },
+    freezePresence: (presenceExpiresAt: string) => {
+      frozenPresence = { serverTime: iso(0), presenceExpiresAt }
     },
     setCurrent: (a: SandboxBrowserAttempt) => {
       current = a
@@ -524,6 +532,9 @@ describe("gesture-owned Sandbox media controller", () => {
         presenceExpiresAt: iso(60000),
         [field]: iso(10000),
       })
+      // The priming renewal on join is a real renewal; freeze it so the
+      // subject of this test stays the latency, not a moving lease.
+      h.freezePresence(lease.presenceExpiresAt!)
       h.fetcher.mockResolvedValueOnce(Response.json({ attempt: lease }))
       await h.controller.start(h.factory)
       h.setCurrent(lease)
@@ -618,6 +629,7 @@ describe("gesture-owned Sandbox media controller", () => {
         executionDeadline: iso(600000),
         presenceExpiresAt: iso(20000),
       })
+      h.freezePresence(iso(20000))
       h.fetcher.mockResolvedValueOnce(Response.json({ attempt: lease }))
       await h.controller.start(h.factory)
       let reply!: (r: Response) => void
@@ -653,6 +665,7 @@ describe("gesture-owned Sandbox media controller", () => {
       executionDeadline: iso(600000),
       presenceExpiresAt: iso(20000),
     })
+    h.freezePresence(iso(20000))
     h.fetcher.mockResolvedValueOnce(Response.json({ attempt: lease }))
     await h.controller.start(h.factory)
     h.fetcher.mockResolvedValueOnce(
@@ -683,5 +696,36 @@ describe("gesture-owned Sandbox media controller", () => {
         attempt({ state: "expired", resourceState: "not_dispatched" })
       )
     ).toBe(true)
+  })
+  it("renews the lease as soon as audio connects, not one interval later", async () => {
+    vi.useFakeTimers()
+    const h = harness()
+    await h.controller.prepare(input)
+    await h.controller.start(h.factory)
+
+    // The lease clock starts at dispatch, and the browser only reaches this
+    // point after the start request and the media join. Waiting the full
+    // fifteen-second interval before the first renewal is what ended real
+    // calls seconds after they became ready.
+    expect(h.requests.filter((r) => r.url.endsWith("/presence"))).toHaveLength(
+      1
+    )
+  })
+  it("does not end the call when only the joining renewal fails", async () => {
+    vi.useFakeTimers()
+    const h = harness()
+    await h.controller.prepare(input)
+    h.failPresence()
+    await h.controller.start(h.factory)
+
+    // That renewal is a head start, not a gate: the lease is still valid at
+    // the instant it fires, and the interval will try again.
+    expect(h.media.stop).not.toHaveBeenCalled()
+    expect(h.controller.getSnapshot().mediaPhase).not.toBe("finishing")
+
+    // The scheduled renewals stay fail-closed.
+    await h.advance(15_000)
+    expect(h.media.stop).toHaveBeenCalledOnce()
+    expect(h.controller.getSnapshot().mediaPhase).toBe("finishing")
   })
 })

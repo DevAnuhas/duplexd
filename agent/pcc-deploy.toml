@@ -4,4 +4,4 @@ agent_profile = "agent-1x"
 
 [scaling]
 min_agents = 0
-max_agents = 3
+max_agents = 1

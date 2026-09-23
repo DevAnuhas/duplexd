@@ -3,7 +3,7 @@ import { json, problem } from "@/control/http"
 import { sweepStaleCalls } from "@/data/calls"
 import { readCallSweepToken } from "@/db/env"
 import { expireSandboxReservations } from "@/sandbox/admission"
-import { sandboxLifecycle } from "@/sandbox/lifecycle"
+import { sandboxLifecycle } from "@/sandbox/provider"
 
 export async function handleSweepRequest(
   request: Request,
@@ -26,7 +26,7 @@ export async function handleSweepRequest(
   try {
     const calls = await sweepStaleCalls(now)
     const expiredSandboxReservations = await expireSandboxReservations(now)
-    await sandboxLifecycle.sweep()
+    await sandboxLifecycle().sweep()
     return json({ ...calls, expiredSandboxReservations })
   } catch {
     console.error("[sweep] failed")

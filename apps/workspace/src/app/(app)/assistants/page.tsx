@@ -1,6 +1,7 @@
 import { ArrowUpRight, Plus } from "@phosphor-icons/react/ssr"
 import Link from "next/link"
 
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Empty,
@@ -18,6 +19,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { listAssistantsForAccount } from "@/data/assistants"
+import { validateRunnableAssistant } from "@/practice/configuration"
 import { requireShell } from "../shell-data"
 import { ArchiveButton } from "./archive-button"
 
@@ -124,6 +126,12 @@ function AssistantList({
                     >
                       {assistant.name}
                     </Link>
+                    {validateRunnableAssistant(assistant, "practice").length >
+                      0 && (
+                      <Badge variant="outline" className="mt-2 font-normal">
+                        Needs setup before testing
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell className="max-w-44 break-words whitespace-normal text-muted-foreground">
                     {assistant.voice || "Not configured"}

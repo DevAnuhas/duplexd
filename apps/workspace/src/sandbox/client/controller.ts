@@ -2,7 +2,7 @@ import {
   sandboxResourcesReleased,
   type SandboxBrowserAttempt,
 } from "@/sandbox/browser-contract"
-import type { SandboxJoin } from "@/sandbox/protocol"
+import { SANDBOX_LIMITS, type SandboxJoin } from "@/sandbox/protocol"
 import type { SandboxMedia, SandboxMediaFactory } from "./media"
 
 import type { SandboxPrepareInput } from "@/sandbox/admission"
@@ -25,6 +25,19 @@ export type SandboxClientState = {
     | "finishing"
   muted: boolean
   ownsController: boolean
+  /** Bounds already enforced by this controller, republished on the *client*
+   * clock so the panel can count down to them without trusting the laptop's
+   * clock or hardcoding a duration. `0` means "does not apply yet".
+   *
+   * These are the same skew-corrected, monotonically clamped values the
+   * controller acts on — not a second estimate that could disagree with the
+   * deadline that actually fires. A countdown that disagreed with the thing it
+   * counts down to would be worse than no countdown. */
+  deadlines: { reservation: number; startup: number; execution: number }
+  /** The agent's audio is arriving and nothing is coming out of the speakers.
+   * Advisory only — it never ends a call, and it clears itself when output
+   * resumes. */
+  outputSilent: boolean
 }
 
 const messages: Record<string, string> = {
@@ -116,6 +129,30 @@ function attemptFrom(value: unknown): SandboxBrowserAttempt | null {
   }
 }
 
+/**
+ * Every Sandbox request but one. Long enough for a database round trip on a
+ * cold connection, short enough that a hung request does not strand the tab.
+ */
+const REQUEST_TIMEOUT_MS = 15_000
+
+/**
+ * Start is the exception, and it has to be.
+ *
+ * The server is allowed to spend its whole `dispatchMs` budget on the provider
+ * call — a cold agent really does take that long — and only then commits the
+ * settlement transaction and reconciles before it can answer. A client that
+ * gave up at `dispatchMs` could therefore never see a slow success: it would
+ * abandon a dispatch that had already created a paid session, report a failure
+ * the user can do nothing about, and leave the cleanup to the sweeper. That is
+ * exactly what happened on the first real call.
+ *
+ * So the browser waits for the settlement it asked for. The ceiling above this
+ * one is `tick()`, which abandons a start still unanswered 35 seconds after the
+ * gesture; this stays below it, so the honest "dispatch outcome is unknown"
+ * path is still reachable when the server truly never answers.
+ */
+const START_TIMEOUT_MS = SANDBOX_LIMITS.dispatchMs + 15_000
+
 /** Resource confirmation, not call outcome, releases editor/admission ownership. */
 export const sandboxReleased = sandboxResourcesReleased
 
@@ -132,6 +169,8 @@ export class SandboxController {
     mediaPhase: "off",
     muted: false,
     ownsController: false,
+    deadlines: { reservation: 0, startup: 0, execution: 0 },
+    outputSilent: false,
   }
   private listeners = new Set<() => void>()
   private busy = false
@@ -182,13 +221,18 @@ export class SandboxController {
     this.state = { ...this.state, ...patch }
     this.listeners.forEach((listener) => listener())
   }
-  private async request(path: string, body?: unknown, proof?: string) {
+  private async request(
+    path: string,
+    body?: unknown,
+    proof?: string,
+    timeoutMs = REQUEST_TIMEOUT_MS
+  ) {
     const startedAt = this.now()
     if (body !== undefined && this.csrf === null) {
       const response = await this.fetcher("/api/workspace/sandbox/csrf", {
         cache: "no-store",
         credentials: "same-origin",
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       })
       const data = record(await response.json())
       if (!response.ok || typeof data?.token !== "string") {
@@ -200,7 +244,7 @@ export class SandboxController {
       method: body === undefined ? "GET" : "POST",
       cache: "no-store",
       credentials: "same-origin",
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(timeoutMs),
       ...(body === undefined
         ? {}
         : {
@@ -433,7 +477,12 @@ export class SandboxController {
     startedAt: number
   ) {
     this.ownership = { attemptId: attempt.attemptId, proof, started: false }
-    this.update({ ownsController: true, mediaPhase: "off", muted: false })
+    this.update({
+      ownsController: true,
+      mediaPhase: "off",
+      muted: false,
+      outputSilent: false,
+    })
     this.observe(attempt, startedAt)
   }
   private observe(attempt: SandboxBrowserAttempt, startedAt: number) {
@@ -471,6 +520,13 @@ export class SandboxController {
       600_000
     )
     this.observePresence(attempt.presenceExpiresAt, server, startedAt)
+    this.update({
+      deadlines: {
+        reservation: this.expires.reservation,
+        startup: this.expires.startup,
+        execution: this.expires.execution,
+      },
+    })
     if (sandboxReleased(attempt)) {
       this.releaseMedia()
       this.ownership = null
@@ -591,6 +647,14 @@ export class SandboxController {
           )
           return
         }
+        // Before the reconnect branches, and explicitly rather than by
+        // falling through: the `else if` below treats any other event as
+        // "connected" and would clear a reconnecting state on a report that
+        // says nothing about the connection.
+        if (event.type === "silent" || event.type === "audible") {
+          this.update({ outputSilent: event.type === "silent" })
+          return
+        }
         if (event.type === "interrupted") {
           this.interrupted = true
           if (this.state.mediaPhase !== "reconnecting") {
@@ -628,7 +692,8 @@ export class SandboxController {
         this.request(
           `attempts/${encodeURIComponent(owner.attemptId)}/start`,
           {},
-          owner.proof
+          owner.proof,
+          START_TIMEOUT_MS
         )
       )
       if (epoch !== this.generation) return
@@ -687,6 +752,23 @@ export class SandboxController {
         message: "Audio connected. Waiting for persisted agent readiness.",
       })
       this.checkReadiness()
+      // Renew before waiting out the first interval, not after it.
+      //
+      // The lease starts running at dispatch, and the browser only gets here
+      // once the start request has returned and the media adapter has joined.
+      // On a cold agent that is twenty seconds, and the lease deliberately
+      // charges network latency against itself, so by the time audio is
+      // connected a sixty-second lease can have well under half of it left.
+      // Waiting another fifteen seconds before the first renewal is what
+      // killed real calls moments after they went ready.
+      //
+      // Joining is itself proof the tab is here, so there is nothing to wait
+      // for. This also carries the attempt back early, which is how readiness
+      // first reaches the browser.
+      // Awaited, so the lease is renewed before the deadline ticker can judge
+      // it and before anything else observes this controller mid-flight.
+      await this.presence(true)
+      if (epoch !== this.generation) return
       this.presenceTimer = setInterval(() => {
         void this.presence()
       }, 15_000)
@@ -724,7 +806,17 @@ export class SandboxController {
       )
     }
   }
-  private async presence() {
+  /**
+   * `priming` marks the renewal fired the instant audio connects.
+   *
+   * The scheduled renewals stay fail-closed: a lease that cannot be renewed is
+   * a lease that will expire, and the honest move is to stop local audio. The
+   * priming one is different — the lease is definitionally still valid at that
+   * moment, and the timer will try again in fifteen seconds — so a transient
+   * failure there must not end a call that was previously given the whole
+   * first interval before anything was asked of it.
+   */
+  private async presence(priming = false) {
     const owner = this.ownership
     if (
       this.presenceBusy ||
@@ -753,9 +845,20 @@ export class SandboxController {
       const remaining = Date.parse(expiry) - Date.parse(server)
       if (!Number.isFinite(remaining) || remaining <= 0)
         throw new Error("lease")
-      this.observePresence(expiry, Date.parse(server), response.startedAt)
+      // The renewal carries the attempt, which is the only thing that observes
+      // readiness once audio is connected: nothing else polls while a call is
+      // running, and a call whose `readyAt` is never seen here is torn down by
+      // `validExecution` at the startup deadline. `observe` renews the lease on
+      // the way through, so this is the renewal, not an extra step after it.
+      const attempt = attemptFrom(response.data?.attempt)
+      if (attempt !== null && attempt.attemptId === owner.attemptId) {
+        this.update({ attempt, statusKnown: true })
+        this.observe(attempt, response.startedAt)
+      } else {
+        this.observePresence(expiry, Date.parse(server), response.startedAt)
+      }
     } catch {
-      if (epoch === this.generation)
+      if (epoch === this.generation && !priming)
         void this.end(
           "Presence could not be renewed. Local audio stopped; checking cleanup."
         )
@@ -789,6 +892,9 @@ export class SandboxController {
     }
     this.media = null
     this.joined = false
+    // The advisory describes a live call's output. It must not outlive the
+    // call and reappear over the next one.
+    if (this.state.outputSilent) this.update({ outputSilent: false })
     if (this.deadlineTimer) clearInterval(this.deadlineTimer)
     if (this.presenceTimer) clearInterval(this.presenceTimer)
     this.deadlineTimer = this.presenceTimer = null
