@@ -143,7 +143,7 @@ beforeEach(async () => {
   requests = []
   Object.defineProperty(window, "navigation", {
     configurable: true,
-    value: new EventTarget(),
+    value: Object.assign(new EventTarget(), { traverseTo: vi.fn() }),
   })
   vi.clearAllMocks()
   vi.spyOn(window, "confirm").mockReturnValue(true)
@@ -478,17 +478,40 @@ describe("shared Configure and Sandbox drafts", () => {
     expect(store.getSnapshot().saving).toBe(false)
   })
 
-  it("does not interrupt in-app history traversal with a browser confirm", async () => {
+  it("confirms a history exit without a browser confirm", async () => {
     await typeInto(field('[name="instructions"]'), "Keep across history")
     vi.mocked(window.confirm).mockReturnValue(false)
+    const within = Object.assign(new Event("navigate", { cancelable: true }), {
+      navigationType: "traverse",
+      destination: { url: "http://localhost/assistants/assistant-a/sandbox" },
+    })
+    await act(async () => {
+      window.navigation.dispatchEvent(within)
+    })
+    expect(within.defaultPrevented).toBe(false)
     const event = Object.assign(new Event("navigate", { cancelable: true }), {
       navigationType: "traverse",
-      destination: { url: "http://localhost/calls" },
+      destination: { url: "http://localhost/calls", key: "older-entry" },
     })
-    window.navigation.dispatchEvent(event)
-    expect(event.defaultPrevented).toBe(false)
+    await act(async () => {
+      window.navigation.dispatchEvent(event)
+    })
+    expect(event.defaultPrevented).toBe(true)
     expect(window.confirm).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain("Leave with unsaved changes?")
+    await click(dialogButton("Keep editing"))
     expect(store.getSnapshot().fields.instructions).toBe("Keep across history")
+    await act(async () => {
+      window.navigation.dispatchEvent(
+        Object.assign(new Event("navigate", { cancelable: true }), {
+          navigationType: "traverse",
+          destination: { url: "http://localhost/calls", key: "older-entry" },
+        })
+      )
+    })
+    await click(dialogButton("Discard and leave"))
+    expect(window.navigation.traverseTo).toHaveBeenCalledWith("older-entry")
+    expect(router.push).not.toHaveBeenCalled()
   })
 
   it("keeps assistant tabs prompt-free and confirms only when leaving with edits", async () => {
@@ -513,6 +536,9 @@ describe("shared Configure and Sandbox drafts", () => {
     expect(event.defaultPrevented).toBe(true)
     expect(window.confirm).not.toHaveBeenCalled()
     expect(document.body.textContent).toContain("Leave with unsaved changes?")
+    const closingDirty = new Event("beforeunload", { cancelable: true })
+    window.dispatchEvent(closingDirty)
+    expect(closingDirty.defaultPrevented).toBe(true)
     await click(dialogButton("Keep editing"))
     expect(router.push).not.toHaveBeenCalled()
     await act(async () => {

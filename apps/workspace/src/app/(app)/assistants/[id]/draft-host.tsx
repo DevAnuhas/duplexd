@@ -39,6 +39,7 @@ type EditorDraftFields = Pick<
   AssistantFormInput,
   "name" | "serverUrl" | "serverSecret" | "clearServerSecret"
 >
+type LeavingTarget = { href: string; entryKey?: string }
 
 const DraftContext = createContext<{
   store: AssistantDraftStore
@@ -104,7 +105,7 @@ export function AssistantDraftProvider({
   }, [])
   const session = useOptionalPracticeSession()
   const router = useRouter()
-  const [leavingHref, setLeavingHref] = useState<string | null>(null)
+  const [leavingTarget, setLeavingTarget] = useState<LeavingTarget | null>(null)
   const [localController] = useState(() => new SandboxController())
   const controller = session?.controller ?? localController
   useEffect(() => {
@@ -126,6 +127,10 @@ export function AssistantDraftProvider({
   }, [controller, session])
   useEffect(() => {
     const assistantPath = `/assistants/${encodeURIComponent(seed.assistantId)}`
+    const outsideAssistant = (destination: URL) =>
+      destination.origin === window.location.origin &&
+      destination.pathname !== assistantPath &&
+      !destination.pathname.startsWith(`${assistantPath}/`)
     const leavingAssistant = (event: MouseEvent) => {
       if (
         event.defaultPrevented ||
@@ -140,21 +145,38 @@ export function AssistantDraftProvider({
       const link = event.target.closest<HTMLAnchorElement>("a[href]")
       if (!link || link.target || link.hasAttribute("download")) return
       const destination = new URL(link.href, window.location.href)
-      if (
-        destination.origin !== window.location.origin ||
-        destination.pathname === assistantPath ||
-        destination.pathname.startsWith(`${assistantPath}/`) ||
-        !draftDirty(store.getSnapshot())
-      )
+      if (!outsideAssistant(destination) || !draftDirty(store.getSnapshot()))
         return
       event.preventDefault()
       event.stopPropagation()
-      setLeavingHref(
-        `${destination.pathname}${destination.search}${destination.hash}`
-      )
+      setLeavingTarget({
+        href: `${destination.pathname}${destination.search}${destination.hash}`,
+      })
+    }
+    const onTraverse = (event: NavigateEvent) => {
+      if (event.navigationType !== "traverse" || !event.cancelable) return
+      const destination = new URL(event.destination.url)
+      if (!outsideAssistant(destination) || !draftDirty(store.getSnapshot()))
+        return
+      event.preventDefault()
+      setLeavingTarget({
+        href: `${destination.pathname}${destination.search}${destination.hash}`,
+        entryKey: event.destination.key,
+      })
+    }
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!draftDirty(store.getSnapshot())) return
+      event.preventDefault()
+      event.returnValue = ""
     }
     document.addEventListener("click", leavingAssistant, true)
-    return () => document.removeEventListener("click", leavingAssistant, true)
+    window.navigation?.addEventListener("navigate", onTraverse)
+    window.addEventListener("beforeunload", beforeUnload)
+    return () => {
+      document.removeEventListener("click", leavingAssistant, true)
+      window.navigation?.removeEventListener("navigate", onTraverse)
+      window.removeEventListener("beforeunload", beforeUnload)
+    }
   }, [seed.assistantId, store])
   return (
     <DraftContext.Provider
@@ -170,9 +192,9 @@ export function AssistantDraftProvider({
       <DraftStatus />
       {children}
       <AlertDialog
-        open={leavingHref !== null}
+        open={leavingTarget !== null}
         onOpenChange={(open) => {
-          if (!open) setLeavingHref(null)
+          if (!open) setLeavingTarget(null)
         }}
       >
         <AlertDialogContent>
@@ -186,11 +208,16 @@ export function AssistantDraftProvider({
             <AlertDialogCancel>Keep editing</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                if (leavingHref === null) return
+                if (leavingTarget === null) return
                 clearEditorDraft()
                 store.discard()
-                router.push(leavingHref)
-                setLeavingHref(null)
+                if (
+                  leavingTarget.entryKey !== undefined &&
+                  typeof window.navigation?.traverseTo === "function"
+                )
+                  void window.navigation.traverseTo(leavingTarget.entryKey)
+                else router.push(leavingTarget.href)
+                setLeavingTarget(null)
               }}
             >
               Discard and leave
