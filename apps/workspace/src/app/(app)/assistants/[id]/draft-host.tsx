@@ -115,9 +115,13 @@ export function AssistantDraftProvider({
     if (session !== null) return
     void controller.refresh()
     const refresh = () => {
-      void controller.refresh()
+      if (controller.getSnapshot().mediaPhase === "off")
+        void controller.refresh()
+      else controller.visibleAgain()
     }
-    const interval = setInterval(refresh, 5_000)
+    const interval = setInterval(() => {
+      if (!document.hidden) void controller.refresh()
+    }, 5_000)
     window.addEventListener("focus", refresh)
     return () => {
       clearInterval(interval)

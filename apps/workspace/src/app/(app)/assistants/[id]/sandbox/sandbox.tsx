@@ -274,7 +274,9 @@ export function Sandbox({ assistant }: SandboxProps) {
     const leaving = () => release(null)
     const visibility = () => {
       if (document.hidden) {
-        const continues = controller.hidden()
+        const continues = sharedSession
+          ? controller.canContinueHidden()
+          : controller.hidden()
         release(
           continues
             ? null

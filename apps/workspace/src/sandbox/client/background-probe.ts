@@ -1,7 +1,10 @@
 /** Temporary, opt-in timing trace for the #82 Chrome preview experiment. */
 const KEY = "duplexd-practice-background-probe-v1"
 const SEQUENCE_KEY = "duplexd-practice-background-probe-sequence-v1"
+const OPT_IN_KEY = "duplexd-practice-background-probe-opt-in-v1"
 const MAX_EVENTS = 256
+const PROBE_HOST =
+  "duplexd-git-feat-82-practice-background-796959-anuhas-projects.vercel.app"
 
 type ProbeEvent = {
   at: string
@@ -11,14 +14,25 @@ type ProbeEvent = {
   details: Record<string, string | number | boolean | null>
 }
 
-export function practiceProbeEnabled() {
+export function practiceProbeAllowed(hostname: string, search: string) {
+  // Vercel truncates long branch aliases and appends a stable hash. This is
+  // the exact alias assigned to #82; deployment URLs and production stay off.
   return (
-    typeof window !== "undefined" &&
-    window.location.hostname.startsWith(
-      "duplexd-git-feat-82-practice-background-continuity-"
-    ) &&
-    new URLSearchParams(window.location.search).has("practiceProbe")
+    hostname === PROBE_HOST && new URLSearchParams(search).has("practiceProbe")
   )
+}
+
+export function practiceProbeEnabled() {
+  if (typeof window === "undefined") return false
+  const hostname = window.location.hostname
+  const selected = practiceProbeAllowed(hostname, window.location.search)
+  if (hostname !== PROBE_HOST) return false
+  try {
+    if (selected) sessionStorage.setItem(OPT_IN_KEY, "true")
+    return sessionStorage.getItem(OPT_IN_KEY) === "true"
+  } catch {
+    return selected
+  }
 }
 
 export function nextPracticeProbeSequence() {

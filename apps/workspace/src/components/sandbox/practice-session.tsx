@@ -160,15 +160,14 @@ export function PracticeSessionProvider({
   }, [controller])
 
   useEffect(() => {
-    if (hasMedia) return
     const interval = setInterval(
       () => {
-        void controller.refresh()
+        if (!document.hidden) void controller.refresh()
       },
       showBar ? 5_000 : 30_000
     )
     return () => clearInterval(interval)
-  }, [controller, hasMedia, showBar])
+  }, [controller, showBar])
 
   useEffect(() => {
     if (!showBar) return

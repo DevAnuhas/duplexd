@@ -201,6 +201,7 @@ export class SandboxController {
   private confirmationRecheck = false
   private confirmationTimer: ReturnType<typeof setTimeout> | null = null
   private readyOnce = false
+  private needsConfirmation = false
   private lastTick = { wall: Date.now(), monotonic: 0 }
   private expires = { reservation: 0, startup: 0, execution: 0, presence: 0 }
   private timingAttempt: string | null = null
@@ -304,10 +305,18 @@ export class SandboxController {
           statusKnown: false,
           message: this.message(response.data),
         })
-        if (this.media)
-          void this.end(
-            "Call authorization or status is unavailable. Local audio stopped; checking cleanup."
-          )
+        if (this.media) {
+          if (
+            this.readyOnce &&
+            !(response.status >= 400 && response.status < 500)
+          ) {
+            this.needsConfirmation = true
+            this.visibleAgain()
+          } else
+            void this.end(
+              "Call authorization or status is unavailable. Local audio stopped; checking cleanup."
+            )
+        }
         return
       }
       const attempt = attemptFrom(response.data?.attempt)
@@ -342,10 +351,15 @@ export class SandboxController {
         message:
           "Test status is unavailable. Your existing test has not been canceled. Refresh status when the connection returns.",
       })
-      if (this.media)
-        void this.end(
-          "Call status is unavailable. Local audio stopped; checking cleanup."
-        )
+      if (this.media) {
+        if (this.readyOnce) {
+          this.needsConfirmation = true
+          this.visibleAgain()
+        } else
+          void this.end(
+            "Call status is unavailable. Local audio stopped; checking cleanup."
+          )
+      }
     } finally {
       if (epoch === this.generation) {
         this.busy = false
@@ -623,13 +637,22 @@ export class SandboxController {
     }
   }
   /** Keep a call hidden only after the agent has reached ready once. */
+  canContinueHidden() {
+    return !!(
+      this.media &&
+      this.readyOnce &&
+      this.state.mediaPhase !== "finishing"
+    )
+  }
   hidden() {
     recordPracticeProbe("hidden", {
       attemptId: this.state.attempt?.attemptId ?? null,
       phase: this.state.mediaPhase,
     })
-    if (this.media && this.readyOnce && this.state.mediaPhase !== "finishing")
+    if (this.canContinueHidden()) {
+      this.needsConfirmation = true
       return true
+    }
     this.leave(
       "Practice stopped before the call connected because this tab was hidden. Checking cleanup."
     )
@@ -638,20 +661,26 @@ export class SandboxController {
 
   /** A returned tab must obtain a new server observation before saying ready. */
   visibleAgain() {
+    this.detectSleep()
     if (!this.media || !this.readyOnce || this.state.mediaPhase === "finishing")
       return
+    if (!this.needsConfirmation || this.confirmationAfter !== null) return
     recordPracticeProbe("visible-again", {
       attemptId: this.state.attempt?.attemptId ?? null,
     })
-    if (this.confirmationAfter !== null) return
+    this.armConfirmation()
+    if (this.presenceBusy) this.confirmationRecheck = true
+    else void this.presence()
+  }
+  private armConfirmation() {
+    if (this.confirmationAfter !== null || !this.readyOnce) return
+    this.needsConfirmation = false
     this.confirmationAfter = this.now()
     if (this.state.mediaPhase === "ready")
       this.update({
         mediaPhase: "waiting",
         message: "Confirming the call is still live…",
       })
-    if (this.presenceBusy) this.confirmationRecheck = true
-    else void this.presence()
   }
   canStart() {
     return (
@@ -840,8 +869,7 @@ export class SandboxController {
       }
     }
   }
-  private tick() {
-    if (!this.media) return
+  private detectSleep() {
     const now = this.now()
     const wall = Date.now()
     const wallGap = wall - this.lastTick.wall
@@ -869,8 +897,22 @@ export class SandboxController {
           execution: this.expires.execution,
         },
       })
-      if (this.readyOnce && this.validExecution()) this.visibleAgain()
+      if (this.readyOnce) {
+        this.needsConfirmation = true
+        if (!this.validExecution())
+          void this.end(
+            "Call lease expired while this computer was asleep. Local audio stopped; checking cleanup."
+          )
+      }
     }
+    return sleepGap
+  }
+  private tick() {
+    if (!this.media) return
+    const sleepGap = this.detectSleep()
+    if (!this.media) return
+    if (sleepGap > 2_000 && this.readyOnce) this.visibleAgain()
+    const now = this.now()
     if (this.state.mediaPhase === "checking") {
       if (now >= Math.min(this.mediaDeadline, this.expires.reservation))
         void this.end("Audio readiness timed out. No agent was started.")
@@ -901,6 +943,8 @@ export class SandboxController {
    * first interval before anything was asked of it.
    */
   private async presence(priming = false) {
+    this.detectSleep()
+    if (this.needsConfirmation) this.armConfirmation()
     const owner = this.ownership
     if (!this.media || !owner?.started || !this.validExecution()) return
     if (this.presenceBusy) {
@@ -910,6 +954,7 @@ export class SandboxController {
     this.presenceBusy = true
     const epoch = this.generation
     let authoritativeFailure = false
+    let failureKind: string | null = null
     const previousExpiry = this.presenceExpiry
     const probeSequence = nextPracticeProbeSequence()
     recordPracticeProbe("presence-sent", {
@@ -949,17 +994,29 @@ export class SandboxController {
         typeof expiry !== "string"
       ) {
         authoritativeFailure = response.status >= 400 && response.status < 500
+        failureKind = authoritativeFailure ? "refused" : "server-or-protocol"
         throw new Error("presence")
       }
       const remaining = Date.parse(expiry) - Date.parse(server)
-      if (!Number.isFinite(remaining) || remaining <= 0)
+      if (!Number.isFinite(remaining) || remaining <= 0) {
+        failureKind = "invalid-lease"
         throw new Error("lease")
+      }
       // The renewal carries the attempt, which is the only thing that observes
       // readiness once audio is connected: nothing else polls while a call is
       // running, and a call whose `readyAt` is never seen here is torn down by
       // `validExecution` at the startup deadline. `observe` renews the lease on
       // the way through, so this is the renewal, not an extra step after it.
       const attempt = attemptFrom(response.data?.attempt)
+      if (
+        this.confirmationAfter !== null &&
+        response.startedAt >= this.confirmationAfter &&
+        attempt?.attemptId !== owner.attemptId
+      ) {
+        authoritativeFailure = true
+        failureKind = "missing-attempt"
+        throw new Error("missing attempt")
+      }
       if (attempt !== null && attempt.attemptId === owner.attemptId) {
         if (
           this.confirmationAfter !== null &&
@@ -969,16 +1026,27 @@ export class SandboxController {
           if (this.confirmationTimer) clearTimeout(this.confirmationTimer)
           this.confirmationTimer = null
         }
-        this.update({ attempt, statusKnown: true })
+        this.update({ attempt, statusKnown: true, phase: "idle" })
         this.observe(attempt, response.startedAt)
       } else {
         this.observePresence(expiry, Date.parse(server), response.startedAt)
       }
-    } catch {
+    } catch (error) {
+      const errorName =
+        error !== null && typeof error === "object" && "name" in error
+          ? String(error.name)
+          : ""
       recordPracticeProbe("presence-failed", {
         attemptId: owner.attemptId,
         priming,
         sequence: probeSequence,
+        error:
+          failureKind ??
+          (errorName === "TimeoutError"
+            ? "timeout"
+            : errorName === "SyntaxError"
+              ? "parse"
+              : "network"),
       })
       if (epoch === this.generation && !priming) {
         if (
@@ -1025,6 +1093,7 @@ export class SandboxController {
     this.confirmationAfter = null
     this.confirmationRecheck = false
     this.readyOnce = false
+    this.needsConfirmation = false
     if (this.confirmationTimer) clearTimeout(this.confirmationTimer)
     this.confirmationTimer = null
     if (this.cancelMedia) this.busy = false

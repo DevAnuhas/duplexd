@@ -647,8 +647,9 @@ export function createSandboxLifecycle(provider?: {
           at: at.toISOString(),
           previousExpiry: row.attempt.presenceExpiresAt?.toISOString() ?? null,
           marginMs:
-            (row.attempt.presenceExpiresAt?.getTime() ?? at.getTime()) -
-            at.getTime(),
+            row.attempt.presenceExpiresAt === null
+              ? null
+              : row.attempt.presenceExpiresAt.getTime() - at.getTime(),
         },
       }
     })
