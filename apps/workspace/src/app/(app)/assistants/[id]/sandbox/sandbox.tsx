@@ -385,24 +385,21 @@ export function Sandbox({ assistant }: SandboxProps) {
   }
 
   return (
-    <div className="flex min-w-0 flex-col gap-6">
-      <header className="flex flex-wrap items-start justify-between gap-4 border-b pb-5">
+    <div className="flex min-w-0 flex-col gap-4">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
         <div className="min-w-0 flex-1">
           <Link
             href="/assistants"
-            className="inline-flex min-h-11 items-center text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+            className="inline-flex items-center text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
           >
             Assistants
           </Link>
-          <h1 className="text-3xl font-semibold tracking-tight break-words">
+          <h1 className="text-xl font-semibold tracking-tight break-words">
             {assistant.name}
           </h1>
-          <p className="mt-2 text-muted-foreground">
-            Practice a conversation with sample tool data.
-          </p>
         </div>
-        <Badge variant="secondary" className="mt-3">
-          Practice · sample data
+        <Badge variant="secondary" className="text-xs">
+          Sample data
         </Badge>
       </header>
       <AssistantNavigation assistantId={assistant.id} active="practice" />
@@ -430,12 +427,12 @@ export function Sandbox({ assistant }: SandboxProps) {
         </section>
       )}
 
-      <div className="flex min-w-0 flex-col gap-6">
-        <details className="order-2 min-w-0 rounded-lg border p-4">
-          <summary className="cursor-pointer font-semibold">
-            Test settings and sample responses
+      <div className="flex min-w-0 flex-col gap-4">
+        <details className="order-2 min-w-0 rounded-lg border p-3">
+          <summary className="cursor-pointer text-sm font-medium">
+            Practice settings and sample responses
           </summary>
-          <div className="mt-5 flex min-w-0 flex-col gap-6">
+          <div className="mt-4 flex min-w-0 flex-col gap-4">
             <Card className="rounded-lg shadow-none">
               <CardHeader>
                 <CardTitle>
@@ -638,21 +635,21 @@ export function Sandbox({ assistant }: SandboxProps) {
             <SampleEditor />
           </div>
         </details>
-        <div className="order-1 grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)]">
-          <Card className="order-2 rounded-lg shadow-none">
-            <CardHeader>
+        <div className="order-1 grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)]">
+          <Card className="order-2 gap-3 rounded-lg py-4 shadow-none">
+            <CardHeader className="px-4">
               <CardTitle>
-                <h2>Check your audio</h2>
+                <h2 className="text-sm">Audio check</h2>
               </CardTitle>
-              <CardDescription>
+              <CardDescription className="text-xs">
                 Local checks only. These never place a call.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-3 px-4">
               <div className="flex flex-wrap gap-2">
                 <Button
                   variant="outline"
-                  className="min-h-11"
+                  className="h-8"
                   onClick={() => {
                     void audio.microphone()
                   }}
@@ -663,7 +660,7 @@ export function Sandbox({ assistant }: SandboxProps) {
                 </Button>
                 <Button
                   variant="outline"
-                  className="min-h-11"
+                  className="h-8"
                   onClick={() => {
                     void audio.sound()
                   }}
@@ -675,7 +672,7 @@ export function Sandbox({ assistant }: SandboxProps) {
                 {listening && (
                   <Button
                     variant="secondary"
-                    className="min-h-11"
+                    className="h-8"
                     onClick={() => {
                       audio.stop()
                       setAudioState({
@@ -706,18 +703,18 @@ export function Sandbox({ assistant }: SandboxProps) {
               )}
             </CardContent>
           </Card>
-          <Card className="order-1 rounded-lg shadow-none">
-            <CardHeader>
+          <Card className="order-1 gap-3 rounded-lg py-4 shadow-none">
+            <CardHeader className="px-4">
               <CardTitle>
-                <h2>Practice call</h2>
+                <h2 className="text-sm">Talk to {assistant.name}</h2>
               </CardTitle>
-              <CardDescription>
+              <CardDescription className="text-xs">
                 {foreignAttempt
                   ? `A Practice call with ${foreignName} is active.`
-                  : `Talk with ${assistant.name} using sample tool responses.`}
+                  : "Try a conversation with sample responses from your tools."}
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-3 px-4">
               {foreignAttempt && state.attempt ? (
                 <div className="space-y-4" role="status">
                   <p className="font-medium">
