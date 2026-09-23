@@ -197,11 +197,14 @@ export class SandboxController {
   private deadlineTimer: ReturnType<typeof setInterval> | null = null
   private presenceTimer: ReturnType<typeof setInterval> | null = null
   private presenceBusy = false
-  private confirmationAfter: number | null = null
+  /** Presence requests sent before this serial cannot confirm a returned tab. */
+  private confirmationAfterSequence: number | null = null
+  private presenceSequence = 0
   private confirmationRecheck = false
   private confirmationTimer: ReturnType<typeof setTimeout> | null = null
   private readyOnce = false
   private needsConfirmation = false
+  private returnPending = false
   private lastTick = { wall: Date.now(), monotonic: 0 }
   private expires = { reservation: 0, startup: 0, execution: 0, presence: 0 }
   private timingAttempt: string | null = null
@@ -627,12 +630,12 @@ export class SandboxController {
     if (!this.media || this.state.mediaPhase === "finishing") return
     if (this.joined && this.validExecution() && !this.interrupted) {
       const ready = this.state.attempt?.readyAt
-      const confirmed = this.confirmationAfter === null
+      const confirmed = this.confirmationAfterSequence === null
       const isReady = ready && Number.isFinite(Date.parse(ready)) && confirmed
       if (isReady) this.readyOnce = true
       this.update({
         mediaPhase: isReady ? "ready" : "waiting",
-        ...(confirmed ? { message: null } : {}),
+        message: confirmed ? null : "Confirming the call is still live…",
       })
     }
   }
@@ -650,7 +653,7 @@ export class SandboxController {
       phase: this.state.mediaPhase,
     })
     if (this.canContinueHidden()) {
-      this.needsConfirmation = true
+      this.returnPending = true
       return true
     }
     this.leave(
@@ -662,20 +665,37 @@ export class SandboxController {
   /** A returned tab must obtain a new server observation before saying ready. */
   visibleAgain() {
     this.detectSleep()
+    if (typeof document !== "undefined" && document.hidden) return
     if (!this.media || !this.readyOnce || this.state.mediaPhase === "finishing")
       return
-    if (!this.needsConfirmation || this.confirmationAfter !== null) return
+    if (!this.needsConfirmation && !this.returnPending) return
     recordPracticeProbe("visible-again", {
       attemptId: this.state.attempt?.attemptId ?? null,
     })
+    const fromHidden = this.returnPending
+    this.returnPending = false
+    if (this.confirmationAfterSequence !== null) {
+      // A check started while hidden cannot confirm the returned tab. Queue a
+      // second request behind it, or send one now when that slot is idle.
+      if (fromHidden) {
+        this.confirmationAfterSequence = this.presenceSequence
+        if (this.presenceBusy) this.confirmationRecheck = true
+        else {
+          if (this.confirmationTimer) clearTimeout(this.confirmationTimer)
+          this.confirmationTimer = null
+          void this.presence()
+        }
+      }
+      return
+    }
     this.armConfirmation()
     if (this.presenceBusy) this.confirmationRecheck = true
     else void this.presence()
   }
   private armConfirmation() {
-    if (this.confirmationAfter !== null || !this.readyOnce) return
+    if (this.confirmationAfterSequence !== null || !this.readyOnce) return
     this.needsConfirmation = false
-    this.confirmationAfter = this.now()
+    this.confirmationAfterSequence = this.presenceSequence
     if (this.state.mediaPhase === "ready")
       this.update({
         mediaPhase: "waiting",
@@ -870,6 +890,7 @@ export class SandboxController {
     }
   }
   private detectSleep() {
+    if (!this.media) return 0
     const now = this.now()
     const wall = Date.now()
     const wallGap = wall - this.lastTick.wall
@@ -901,7 +922,7 @@ export class SandboxController {
         this.needsConfirmation = true
         if (!this.validExecution())
           void this.end(
-            "Call lease expired while this computer was asleep. Local audio stopped; checking cleanup."
+            "Call lease expired. Local audio stopped; checking cleanup."
           )
       }
     }
@@ -911,7 +932,12 @@ export class SandboxController {
     if (!this.media) return
     const sleepGap = this.detectSleep()
     if (!this.media) return
-    if (sleepGap > 2_000 && this.readyOnce) this.visibleAgain()
+    if (
+      sleepGap > 2_000 &&
+      this.readyOnce &&
+      (typeof document === "undefined" || !document.hidden)
+    )
+      this.visibleAgain()
     const now = this.now()
     if (this.state.mediaPhase === "checking") {
       if (now >= Math.min(this.mediaDeadline, this.expires.reservation))
@@ -927,7 +953,7 @@ export class SandboxController {
     ) {
       void this.end(
         sleepGap > 2_000
-          ? "Call lease expired while this computer was asleep. Local audio stopped; checking cleanup."
+          ? "Call lease expired. Local audio stopped; checking cleanup."
           : "Call lease or connection recovery expired. Local audio stopped; checking cleanup."
       )
     }
@@ -948,10 +974,12 @@ export class SandboxController {
     const owner = this.ownership
     if (!this.media || !owner?.started || !this.validExecution()) return
     if (this.presenceBusy) {
-      if (this.confirmationAfter !== null) this.confirmationRecheck = true
+      if (this.confirmationAfterSequence !== null)
+        this.confirmationRecheck = true
       return
     }
     this.presenceBusy = true
+    const requestSequence = ++this.presenceSequence
     const epoch = this.generation
     let authoritativeFailure = false
     let failureKind: string | null = null
@@ -1009,8 +1037,8 @@ export class SandboxController {
       // the way through, so this is the renewal, not an extra step after it.
       const attempt = attemptFrom(response.data?.attempt)
       if (
-        this.confirmationAfter !== null &&
-        response.startedAt >= this.confirmationAfter &&
+        this.confirmationAfterSequence !== null &&
+        requestSequence > this.confirmationAfterSequence &&
         attempt?.attemptId !== owner.attemptId
       ) {
         authoritativeFailure = true
@@ -1019,10 +1047,10 @@ export class SandboxController {
       }
       if (attempt !== null && attempt.attemptId === owner.attemptId) {
         if (
-          this.confirmationAfter !== null &&
-          response.startedAt >= this.confirmationAfter
+          this.confirmationAfterSequence !== null &&
+          requestSequence > this.confirmationAfterSequence
         ) {
-          this.confirmationAfter = null
+          this.confirmationAfterSequence = null
           if (this.confirmationTimer) clearTimeout(this.confirmationTimer)
           this.confirmationTimer = null
         }
@@ -1051,7 +1079,7 @@ export class SandboxController {
       if (epoch === this.generation && !priming) {
         if (
           !authoritativeFailure &&
-          this.confirmationAfter !== null &&
+          this.confirmationAfterSequence !== null &&
           this.validExecution()
         ) {
           this.confirmationTimer ??= setTimeout(() => {
@@ -1090,10 +1118,11 @@ export class SandboxController {
       attemptId: this.state.attempt?.attemptId ?? null,
     })
     this.generation++
-    this.confirmationAfter = null
+    this.confirmationAfterSequence = null
     this.confirmationRecheck = false
     this.readyOnce = false
     this.needsConfirmation = false
+    this.returnPending = false
     if (this.confirmationTimer) clearTimeout(this.confirmationTimer)
     this.confirmationTimer = null
     if (this.cancelMedia) this.busy = false

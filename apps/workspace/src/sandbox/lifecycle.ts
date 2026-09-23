@@ -673,7 +673,9 @@ export function createSandboxLifecycle(provider?: {
         })
       )
     }
-    return result
+    return result.kind === "ok"
+      ? { kind: "ok" as const, presenceExpiresAt: result.presenceExpiresAt }
+      : result
   }
 
   async function stop(input: Omit<BrowserOwner, "controllerProofHash">) {
