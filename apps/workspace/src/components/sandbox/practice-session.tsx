@@ -21,6 +21,11 @@ import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { LiveSandboxTimeline } from "@/components/sandbox/timeline"
 import { SandboxController, sandboxReleased } from "@/sandbox/client/controller"
+import {
+  practiceProbeExport,
+  practiceProbeEnabled,
+  recordPracticeProbe,
+} from "@/sandbox/client/background-probe"
 import { SANDBOX_LIMITS } from "@/sandbox/protocol"
 
 const PracticeSessionContext = createContext<{
@@ -78,6 +83,8 @@ export function PracticeSessionProvider({
   }, [])
   const [expanded, setExpanded] = useState(false)
   const [hiddenNotice, setHiddenNotice] = useState(false)
+  const [probeText, setProbeText] = useState<string | null>(null)
+  const [probeOn, setProbeOn] = useState(false)
   const wasShowing = useRef(false)
   const closePanel = useRef<HTMLButtonElement>(null)
   const [now, setNow] = useState(() => performance.now())
@@ -103,31 +110,57 @@ export function PracticeSessionProvider({
     state.deadlines.execution > 0 && state.deadlines.execution - now <= 60_000
 
   useEffect(() => {
+    setProbeOn(practiceProbeEnabled())
     void controller.refresh()
     const refresh = () => {
-      void controller.refresh()
+      if (controller.getSnapshot().mediaPhase === "off")
+        void controller.refresh()
+      else controller.visibleAgain()
     }
-    const hidden = () => {
+    const visibility = () => {
+      recordPracticeProbe("visibilitychange")
       if (document.hidden) {
-        if (controller.getSnapshot().mediaPhase !== "off") setHiddenNotice(true)
-        controller.leave(
-          "Practice stopped because this tab was hidden. Checking cleanup."
+        if (
+          controller.getSnapshot().mediaPhase !== "off" &&
+          !controller.hidden()
         )
-      }
+          setHiddenNotice(true)
+      } else controller.visibleAgain()
     }
-    const leaving = () => controller.leave()
+    const leaving = (event: PageTransitionEvent) => {
+      recordPracticeProbe("pagehide", { persisted: event.persisted })
+      controller.leave()
+    }
+    const freeze = () => recordPracticeProbe("freeze")
+    const resume = () => recordPracticeProbe("resume")
+    const online = () => recordPracticeProbe("online")
+    const offline = () => recordPracticeProbe("offline")
+    recordPracticeProbe("page-open", {
+      wasDiscarded:
+        (document as Document & { wasDiscarded?: boolean }).wasDiscarded ??
+        false,
+    })
     window.addEventListener("focus", refresh)
     window.addEventListener("pagehide", leaving)
-    document.addEventListener("visibilitychange", hidden)
+    window.addEventListener("online", online)
+    window.addEventListener("offline", offline)
+    document.addEventListener("visibilitychange", visibility)
+    document.addEventListener("freeze", freeze)
+    document.addEventListener("resume", resume)
     return () => {
       window.removeEventListener("focus", refresh)
       window.removeEventListener("pagehide", leaving)
-      document.removeEventListener("visibilitychange", hidden)
+      window.removeEventListener("online", online)
+      window.removeEventListener("offline", offline)
+      document.removeEventListener("visibilitychange", visibility)
+      document.removeEventListener("freeze", freeze)
+      document.removeEventListener("resume", resume)
       controller.leave()
     }
   }, [controller])
 
   useEffect(() => {
+    if (hasMedia) return
     const interval = setInterval(
       () => {
         void controller.refresh()
@@ -135,7 +168,7 @@ export function PracticeSessionProvider({
       showBar ? 5_000 : 30_000
     )
     return () => clearInterval(interval)
-  }, [controller, showBar])
+  }, [controller, hasMedia, showBar])
 
   useEffect(() => {
     if (!showBar) return
@@ -176,8 +209,8 @@ export function PracticeSessionProvider({
           className="fixed inset-x-3 bottom-3 z-40 mx-auto flex max-w-2xl items-center gap-3 rounded-xl border border-amber-500/50 bg-background p-4 shadow-xl sm:inset-x-6"
         >
           <p className="flex-1 text-sm">
-            Practice stopped because this tab was hidden. Keep it visible while
-            calling.
+            Practice stopped before the call connected because this tab was
+            hidden. Start a new call when you are ready.
           </p>
           <Button
             type="button"
@@ -209,7 +242,7 @@ export function PracticeSessionProvider({
             <span className="block truncate text-sm font-semibold">{name}</span>
             <span className="block truncate text-xs text-muted-foreground">
               Practice · sample data ·{" "}
-              {hiddenNotice && state.message
+              {state.message?.startsWith("Confirming the call")
                 ? state.message
                 : connectionLabel(state.mediaPhase)}
             </span>
@@ -248,7 +281,11 @@ export function PracticeSessionProvider({
               <div className="min-w-0 flex-1">
                 <h2 className="truncate text-sm font-semibold">{name}</h2>
                 <p className="text-xs text-muted-foreground">
-                  <span role="status">{connectionLabel(state.mediaPhase)}</span>
+                  <span role="status">
+                    {state.message?.startsWith("Confirming the call")
+                      ? state.message
+                      : connectionLabel(state.mediaPhase)}
+                  </span>
                   <span aria-hidden="true"> · {elapsed}</span>
                   <span> · Practice sample data</span>
                 </p>
@@ -283,6 +320,30 @@ export function PracticeSessionProvider({
                 You may not be able to hear the assistant. Check your output
                 device and volume.
               </p>
+            )}
+            {probeOn && (
+              <div className="mt-2 text-xs">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const data = practiceProbeExport()
+                    setProbeText(data)
+                    void navigator.clipboard?.writeText(data).catch(() => {})
+                  }}
+                >
+                  Copy call timing log
+                </Button>
+                {probeText !== null && (
+                  <details className="mt-2">
+                    <summary>Call timing log</summary>
+                    <pre className="max-h-40 overflow-auto break-all whitespace-pre-wrap">
+                      {probeText}
+                    </pre>
+                  </details>
+                )}
+              </div>
             )}
             <div className="mt-3 flex items-center gap-2">
               <Button

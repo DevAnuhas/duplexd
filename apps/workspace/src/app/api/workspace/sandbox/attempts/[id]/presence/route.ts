@@ -8,7 +8,8 @@ import {
 import { sandboxLifecycle } from "@/sandbox/provider"
 
 /**
- * Renews the presence lease that proves a human is still in the tab.
+ * Renews the presence lease that proves the browser controller is still alive.
+ * A ready Practice call may continue while the tab is hidden.
  *
  * **The attempt travels with the renewal, and that is load-bearing.** Nothing
  * else polls it once audio is connected, and the browser holds the call open
@@ -30,8 +31,32 @@ export async function POST(
   const browser = await requireSandboxBrowserOwner(request, params)
   if (!browser.ok) return browser.response
 
-  const result = await sandboxLifecycle().presence(browser.owner)
-  if (result.kind !== "ok") return sandboxExecutionProblem(result, "renew")
+  const probe =
+    process.env.VERCEL_ENV === "preview" &&
+    process.env.VERCEL_GIT_COMMIT_REF ===
+      "feat/82-practice-background-continuity"
+  const rawSequence = request.headers.get("x-duplexd-practice-probe-seq")
+  const sequence = probe && rawSequence !== null ? Number(rawSequence) : null
+  const safeSequence =
+    sequence !== null && Number.isSafeInteger(sequence) && sequence > 0
+      ? sequence
+      : null
+  const result = await sandboxLifecycle().presence({
+    ...browser.owner,
+    probeSequence: safeSequence,
+  })
+  if (result.kind !== "ok") {
+    if (probe)
+      console.info(
+        "[practice-background-probe]",
+        JSON.stringify({
+          attemptId: browser.owner.attemptId,
+          sequence: safeSequence,
+          outcome: result.kind,
+        })
+      )
+    return sandboxExecutionProblem(result, "renew")
+  }
 
   const attempt = await getSandboxAttemptForAccount({
     accountId: browser.owner.accountId,

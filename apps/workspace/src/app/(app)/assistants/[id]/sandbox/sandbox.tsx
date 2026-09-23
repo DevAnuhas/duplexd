@@ -259,33 +259,29 @@ export function Sandbox({ assistant }: SandboxProps) {
 
   useEffect(() => {
     mounted.current = true
-    const release = (reason: string | null) => {
+    const release = (reason: string | null, keepCall = false) => {
       audio.stop()
       pendingMedia.current?.stop()
       pendingMedia.current = null
-      if (!sharedSession) controller.leave()
+      if (!sharedSession && !keepCall) controller.leave()
       if (reason !== null) setEndedReason(reason)
       setAudioState({
         kind: "stopped",
-        message: "Local audio stopped. No voice call is connected.",
+        message: "Local audio check stopped.",
         level: 0,
       })
     }
     const leaving = () => release(null)
-    /**
-     * Say that the tab being hidden is what did it.
-     *
-     * This is not only tab-switching: the browser reports a tab as hidden when
-     * another window covers it, so a call can end because a different
-     * application was brought to the front. Without naming the cause it is
-     * indistinguishable on screen from the agent failing, which is how an
-     * attempt was lost and blamed on the product.
-     */
     const visibility = () => {
-      if (document.hidden)
+      if (document.hidden) {
+        const continues = controller.hidden()
         release(
-          "This test stopped because the browser reported this tab as hidden. Switching tabs, minimising, or another window covering this one will all do it — keep this window visible and in front for the whole call."
+          continues
+            ? null
+            : "Practice stopped before the call connected because this tab was hidden. Start a new call when you are ready.",
+          continues
         )
+      }
     }
     window.addEventListener("pagehide", leaving)
     document.addEventListener("visibilitychange", visibility)

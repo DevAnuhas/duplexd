@@ -2,6 +2,10 @@ import {
   sandboxResourcesReleased,
   type SandboxBrowserAttempt,
 } from "@/sandbox/browser-contract"
+import {
+  nextPracticeProbeSequence,
+  recordPracticeProbe,
+} from "@/sandbox/client/background-probe"
 import { SANDBOX_LIMITS, type SandboxJoin } from "@/sandbox/protocol"
 import type { SandboxMedia, SandboxMediaFactory } from "./media"
 
@@ -193,6 +197,11 @@ export class SandboxController {
   private deadlineTimer: ReturnType<typeof setInterval> | null = null
   private presenceTimer: ReturnType<typeof setInterval> | null = null
   private presenceBusy = false
+  private confirmationAfter: number | null = null
+  private confirmationRecheck = false
+  private confirmationTimer: ReturnType<typeof setTimeout> | null = null
+  private readyOnce = false
+  private lastTick = { wall: Date.now(), monotonic: 0 }
   private expires = { reservation: 0, startup: 0, execution: 0, presence: 0 }
   private timingAttempt: string | null = null
   private fixedBounds: Partial<
@@ -209,7 +218,9 @@ export class SandboxController {
     private readonly fetcher: typeof fetch = (input, init) =>
       globalThis.fetch(input, init),
     private readonly now: () => number = () => performance.now()
-  ) {}
+  ) {
+    this.lastTick.monotonic = this.now()
+  }
   getSnapshot = () => this.state
   subscribe = (listener: () => void) => {
     this.listeners.add(listener)
@@ -218,6 +229,8 @@ export class SandboxController {
     }
   }
   private update(patch: Partial<SandboxClientState>) {
+    if (patch.mediaPhase && patch.mediaPhase !== this.state.mediaPhase)
+      recordPracticeProbe("media-phase", { phase: patch.mediaPhase })
     this.state = { ...this.state, ...patch }
     this.listeners.forEach((listener) => listener())
   }
@@ -225,7 +238,8 @@ export class SandboxController {
     path: string,
     body?: unknown,
     proof?: string,
-    timeoutMs = REQUEST_TIMEOUT_MS
+    timeoutMs = REQUEST_TIMEOUT_MS,
+    extraHeaders: Record<string, string> = {}
   ) {
     const startedAt = this.now()
     if (body !== undefined && this.csrf === null) {
@@ -251,6 +265,7 @@ export class SandboxController {
             headers: {
               "content-type": "application/json",
               "x-duplexd-csrf": this.csrf!,
+              ...extraHeaders,
               ...(proof === undefined
                 ? {}
                 : { "x-duplexd-controller-proof": proof }),
@@ -598,11 +613,45 @@ export class SandboxController {
     if (!this.media || this.state.mediaPhase === "finishing") return
     if (this.joined && this.validExecution() && !this.interrupted) {
       const ready = this.state.attempt?.readyAt
+      const confirmed = this.confirmationAfter === null
+      const isReady = ready && Number.isFinite(Date.parse(ready)) && confirmed
+      if (isReady) this.readyOnce = true
       this.update({
-        mediaPhase:
-          ready && Number.isFinite(Date.parse(ready)) ? "ready" : "waiting",
+        mediaPhase: isReady ? "ready" : "waiting",
+        ...(confirmed ? { message: null } : {}),
       })
     }
+  }
+  /** Keep a call hidden only after the agent has reached ready once. */
+  hidden() {
+    recordPracticeProbe("hidden", {
+      attemptId: this.state.attempt?.attemptId ?? null,
+      phase: this.state.mediaPhase,
+    })
+    if (this.media && this.readyOnce && this.state.mediaPhase !== "finishing")
+      return true
+    this.leave(
+      "Practice stopped before the call connected because this tab was hidden. Checking cleanup."
+    )
+    return false
+  }
+
+  /** A returned tab must obtain a new server observation before saying ready. */
+  visibleAgain() {
+    if (!this.media || !this.readyOnce || this.state.mediaPhase === "finishing")
+      return
+    recordPracticeProbe("visible-again", {
+      attemptId: this.state.attempt?.attemptId ?? null,
+    })
+    if (this.confirmationAfter !== null) return
+    this.confirmationAfter = this.now()
+    if (this.state.mediaPhase === "ready")
+      this.update({
+        mediaPhase: "waiting",
+        message: "Confirming the call is still live…",
+      })
+    if (this.presenceBusy) this.confirmationRecheck = true
+    else void this.presence()
   }
   canStart() {
     return (
@@ -622,6 +671,9 @@ export class SandboxController {
   async start(factory: SandboxMediaFactory, preflighted = false) {
     if (!this.canStart()) return
     const owner = this.ownership!
+    // A controller can outlive a laptop sleep before its first call. The
+    // sleep detector must compare clocks only across an active call.
+    this.lastTick = { wall: Date.now(), monotonic: this.now() }
     const epoch = ++this.generation
     this.busy = true
     this.joined = false
@@ -791,6 +843,34 @@ export class SandboxController {
   private tick() {
     if (!this.media) return
     const now = this.now()
+    const wall = Date.now()
+    const wallGap = wall - this.lastTick.wall
+    const monotonicGap = now - this.lastTick.monotonic
+    this.lastTick = { wall, monotonic: now }
+    const sleepGap = wallGap - monotonicGap
+    if (sleepGap > 2_000) {
+      recordPracticeProbe("clock-gap", { milliseconds: Math.round(sleepGap) })
+      for (const key of [
+        "reservation",
+        "startup",
+        "execution",
+        "presence",
+      ] as const)
+        if (this.expires[key]) this.expires[key] -= sleepGap
+      for (const key of ["reservation", "startup", "execution"] as const)
+        if (this.fixedBounds[key]) this.fixedBounds[key] -= sleepGap
+      if (this.mediaDeadline) this.mediaDeadline -= sleepGap
+      if (this.reconnectDeadline) this.reconnectDeadline -= sleepGap
+      this.serverClock.local -= sleepGap
+      this.update({
+        deadlines: {
+          reservation: this.expires.reservation,
+          startup: this.expires.startup,
+          execution: this.expires.execution,
+        },
+      })
+      if (this.readyOnce && this.validExecution()) this.visibleAgain()
+    }
     if (this.state.mediaPhase === "checking") {
       if (now >= Math.min(this.mediaDeadline, this.expires.reservation))
         void this.end("Audio readiness timed out. No agent was started.")
@@ -804,7 +884,9 @@ export class SandboxController {
       (this.reconnectDeadline && now >= this.reconnectDeadline)
     ) {
       void this.end(
-        "Call lease or connection recovery expired. Local audio stopped; checking cleanup."
+        sleepGap > 2_000
+          ? "Call lease expired while this computer was asleep. Local audio stopped; checking cleanup."
+          : "Call lease or connection recovery expired. Local audio stopped; checking cleanup."
       )
     }
   }
@@ -820,30 +902,55 @@ export class SandboxController {
    */
   private async presence(priming = false) {
     const owner = this.ownership
-    if (
-      this.presenceBusy ||
-      !this.media ||
-      !owner?.started ||
-      !this.validExecution()
-    )
+    if (!this.media || !owner?.started || !this.validExecution()) return
+    if (this.presenceBusy) {
+      if (this.confirmationAfter !== null) this.confirmationRecheck = true
       return
+    }
     this.presenceBusy = true
     const epoch = this.generation
+    let authoritativeFailure = false
+    const previousExpiry = this.presenceExpiry
+    const probeSequence = nextPracticeProbeSequence()
+    recordPracticeProbe("presence-sent", {
+      attemptId: owner.attemptId,
+      priming,
+      sequence: probeSequence,
+      previousExpiry:
+        previousExpiry > 0 ? new Date(previousExpiry).toISOString() : null,
+    })
     try {
       const response = await this.request(
         `attempts/${encodeURIComponent(owner.attemptId)}/presence`,
         {},
-        owner.proof
+        owner.proof,
+        REQUEST_TIMEOUT_MS,
+        probeSequence === null
+          ? {}
+          : { "x-duplexd-practice-probe-seq": String(probeSequence) }
       )
       if (epoch !== this.generation) return
       const server = response.data?.serverTime
       const expiry = response.data?.presenceExpiresAt
+      recordPracticeProbe("presence-received", {
+        attemptId: owner.attemptId,
+        status: response.status,
+        sequence: probeSequence,
+        serverTime: typeof server === "string" ? server : null,
+        nextExpiry: typeof expiry === "string" ? expiry : null,
+        previousMarginMs:
+          previousExpiry > 0 && typeof server === "string"
+            ? previousExpiry - Date.parse(server)
+            : null,
+      })
       if (
         !response.ok ||
         typeof server !== "string" ||
         typeof expiry !== "string"
-      )
+      ) {
+        authoritativeFailure = response.status >= 400 && response.status < 500
         throw new Error("presence")
+      }
       const remaining = Date.parse(expiry) - Date.parse(server)
       if (!Number.isFinite(remaining) || remaining <= 0)
         throw new Error("lease")
@@ -854,18 +961,46 @@ export class SandboxController {
       // the way through, so this is the renewal, not an extra step after it.
       const attempt = attemptFrom(response.data?.attempt)
       if (attempt !== null && attempt.attemptId === owner.attemptId) {
+        if (
+          this.confirmationAfter !== null &&
+          response.startedAt >= this.confirmationAfter
+        ) {
+          this.confirmationAfter = null
+          if (this.confirmationTimer) clearTimeout(this.confirmationTimer)
+          this.confirmationTimer = null
+        }
         this.update({ attempt, statusKnown: true })
         this.observe(attempt, response.startedAt)
       } else {
         this.observePresence(expiry, Date.parse(server), response.startedAt)
       }
     } catch {
-      if (epoch === this.generation && !priming)
-        void this.end(
-          "Presence could not be renewed. Local audio stopped; checking cleanup."
-        )
+      recordPracticeProbe("presence-failed", {
+        attemptId: owner.attemptId,
+        priming,
+        sequence: probeSequence,
+      })
+      if (epoch === this.generation && !priming) {
+        if (
+          !authoritativeFailure &&
+          this.confirmationAfter !== null &&
+          this.validExecution()
+        ) {
+          this.confirmationTimer ??= setTimeout(() => {
+            this.confirmationTimer = null
+            void this.presence()
+          }, 2_500)
+        } else
+          void this.end(
+            "Presence could not be renewed. Local audio stopped; checking cleanup."
+          )
+      }
     } finally {
       this.presenceBusy = false
+      if (this.confirmationRecheck && epoch === this.generation) {
+        this.confirmationRecheck = false
+        void this.presence()
+      }
     }
   }
   mute() {
@@ -883,7 +1018,15 @@ export class SandboxController {
     }
   }
   private releaseMedia() {
+    recordPracticeProbe("media-released", {
+      attemptId: this.state.attempt?.attemptId ?? null,
+    })
     this.generation++
+    this.confirmationAfter = null
+    this.confirmationRecheck = false
+    this.readyOnce = false
+    if (this.confirmationTimer) clearTimeout(this.confirmationTimer)
+    this.confirmationTimer = null
     if (this.cancelMedia) this.busy = false
     this.cancelMedia?.()
     this.cancelMedia = null
