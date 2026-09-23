@@ -305,6 +305,7 @@ describeDatabase("standalone startup validation", () => {
       expect(sessionCookie).toMatch(/;\s*SameSite=Lax(?:;|$)/i)
 
       const signoutUrl = `http://127.0.0.1:${port}/api/auth/sign-out`
+      const sessionUrl = `http://127.0.0.1:${port}/api/auth/get-session`
       const sessionHeader = sessionCookie!.split(";", 1)[0]!
       const rejectedSignout = await fetch(signoutUrl, {
         method: "POST",
@@ -316,6 +317,10 @@ describeDatabase("standalone startup validation", () => {
         body: "{}",
       })
       expect(rejectedSignout.status).toBe(403)
+      const stillSignedIn = await fetch(sessionUrl, {
+        headers: { cookie: sessionHeader },
+      })
+      expect(await stillSignedIn.json()).toMatchObject({ user: { email } })
 
       const acceptedSignout = await fetch(signoutUrl, {
         method: "POST",
@@ -323,6 +328,10 @@ describeDatabase("standalone startup validation", () => {
         body: "{}",
       })
       expect(acceptedSignout.status).toBe(200)
+      const signedOut = await fetch(sessionUrl, {
+        headers: { cookie: sessionHeader },
+      })
+      expect(await signedOut.json()).toBeNull()
     } finally {
       await stop(child)
     }
