@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 const mocks = vi.hoisted(() => ({ validate: vi.fn(), refresh: vi.fn() }))
-const router = { refresh: mocks.refresh, replace: vi.fn() }
+const router = { refresh: mocks.refresh, replace: vi.fn(), push: vi.fn() }
 vi.mock("next/navigation", () => ({ useRouter: () => router }))
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 vi.mock("@/app/(app)/assistants/draft-actions", () => ({
@@ -125,6 +125,13 @@ function button(label: string) {
   if (found === undefined) throw new Error(`Missing button ${label}`)
   return found
 }
+function dialogButton(label: string) {
+  const found = Array.from(document.body.querySelectorAll("button")).find(
+    (item) => item.textContent === label
+  )
+  if (found === undefined) throw new Error(`Missing dialog button ${label}`)
+  return found
+}
 function field(selector: string) {
   const found = container.querySelector<HTMLInputElement | HTMLTextAreaElement>(
     selector
@@ -136,7 +143,7 @@ beforeEach(async () => {
   requests = []
   Object.defineProperty(window, "navigation", {
     configurable: true,
-    value: new EventTarget(),
+    value: Object.assign(new EventTarget(), { traverseTo: vi.fn() }),
   })
   vi.clearAllMocks()
   vi.spyOn(window, "confirm").mockReturnValue(true)
@@ -214,6 +221,7 @@ afterEach(() => {
 describe("shared Configure and Sandbox drafts", () => {
   it("preserves unsaved conversation edits across navigation and prepares without saving or including connection fields", async () => {
     await typeInto(field('[name="instructions"]'), "Local preview instructions")
+    await typeInto(field('[name="name"]'), "Local assistant name")
     await typeInto(
       field('[name="serverSecret"]'),
       "synthetic-secret-must-not-cross"
@@ -268,7 +276,12 @@ describe("shared Configure and Sandbox drafts", () => {
     expect(field('[name="instructions"]').value).toBe(
       "Local preview instructions"
     )
+    expect(field('[name="name"]').value).toBe("Local assistant name")
+    expect(field('[name="serverUrl"]').value).toBe(
+      "https://synthetic.invalid/private"
+    )
     expect(field('[name="serverSecret"]').value).toBe("")
+    expect(window.confirm).not.toHaveBeenCalled()
     expect(
       container.querySelector<HTMLFieldSetElement>("fieldset")?.disabled
     ).toBe(true)
@@ -307,11 +320,16 @@ describe("shared Configure and Sandbox drafts", () => {
       expect(saveAssistant).not.toHaveBeenCalled()
       expect(window.confirm).not.toHaveBeenCalled()
       if (resolution === "discard") {
-        await click(button("Discard draft / reload saved"))
+        await click(button("Discard edits"))
+        await click(
+          Array.from(document.body.querySelectorAll("button")).find(
+            (item) => item.textContent === "Discard"
+          )!
+        )
         expect(field('[name="name"]').value).toBe(remote.name)
         expect(field('[name="serverUrl"]').value).toBe(remote.serverUrl)
       } else {
-        await click(button("Rebase my draft"))
+        await click(button("Keep my edits"))
         expect(field('[name="name"]').value).toBe(local.name)
         expect(field('[name="serverUrl"]').value).toBe(local.url)
         expect(field('[name="serverSecret"]').value).toBe(local.secret)
@@ -357,9 +375,9 @@ describe("shared Configure and Sandbox drafts", () => {
     expect(field('[name="instructions"]').value).toBe("Local draft survives")
     expect(store.getSnapshot().baseRevision).toBe(3)
     await click(button("Switch screen"))
-    expect(container.textContent).toContain("Your local draft has been kept")
+    expect(container.textContent).toContain("Your edits are still here")
     expect(button("Prepare without calling").disabled).toBe(true)
-    await click(button("Rebase my draft"))
+    await click(button("Keep my edits"))
     expect(store.getSnapshot().baseRevision).toBe(4)
     await click(button("Switch screen"))
     expect(field('[name="instructions"]').value).toBe("Local draft survives")
@@ -413,7 +431,7 @@ describe("shared Configure and Sandbox drafts", () => {
     expect(store.getSnapshot().sampleConflict).toBe(3)
     expect(button("Save sample mappings").disabled).toBe(true)
     await render({ ...initial, sampleRevision: 3 })
-    await click(button("Rebase my draft"))
+    await click(button("Keep my edits"))
     await validated()
     sampleReply = () =>
       Response.json({
@@ -460,32 +478,81 @@ describe("shared Configure and Sandbox drafts", () => {
     expect(store.getSnapshot().saving).toBe(false)
   })
 
-  it("cancels supported same-document Back/Forward traversal before discarding edits", async () => {
+  it("confirms a history exit without a browser confirm", async () => {
     await typeInto(field('[name="instructions"]'), "Keep across history")
     vi.mocked(window.confirm).mockReturnValue(false)
+    const within = Object.assign(new Event("navigate", { cancelable: true }), {
+      navigationType: "traverse",
+      destination: { url: "http://localhost/assistants/assistant-a/sandbox" },
+    })
+    await act(async () => {
+      window.navigation.dispatchEvent(within)
+    })
+    expect(within.defaultPrevented).toBe(false)
     const event = Object.assign(new Event("navigate", { cancelable: true }), {
       navigationType: "traverse",
-      destination: { url: "http://localhost/calls" },
+      destination: { url: "http://localhost/calls", key: "older-entry" },
     })
-    window.navigation.dispatchEvent(event)
+    await act(async () => {
+      window.navigation.dispatchEvent(event)
+    })
     expect(event.defaultPrevented).toBe(true)
-    expect(window.confirm).toHaveBeenCalledOnce()
+    expect(window.confirm).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain("Leave with unsaved changes?")
+    await click(dialogButton("Keep editing"))
     expect(store.getSnapshot().fields.instructions).toBe("Keep across history")
+    await act(async () => {
+      window.navigation.dispatchEvent(
+        Object.assign(new Event("navigate", { cancelable: true }), {
+          navigationType: "traverse",
+          destination: { url: "http://localhost/calls", key: "older-entry" },
+        })
+      )
+    })
+    await click(dialogButton("Discard and leave"))
+    expect(window.navigation.traverseTo).toHaveBeenCalledWith("older-entry")
+    expect(router.push).not.toHaveBeenCalled()
   })
 
-  it("warns before link navigation or closing with an unsaved draft", async () => {
+  it("keeps assistant tabs prompt-free and confirms only when leaving with edits", async () => {
     await typeInto(field('[name="instructions"]'), "Unsaved")
     vi.mocked(window.confirm).mockReturnValue(false)
+    const talk = container.querySelector(
+      'a[href="/assistants/assistant-a/sandbox"]'
+    )!
+    const within = new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+    })
+    await act(async () => {
+      talk.dispatchEvent(within)
+    })
+    expect(within.defaultPrevented).toBe(false)
     const anchor = container.querySelector('a[href="/assistants"]')!
     const event = new MouseEvent("click", { bubbles: true, cancelable: true })
     await act(async () => {
       anchor.dispatchEvent(event)
     })
     expect(event.defaultPrevented).toBe(true)
-    expect(window.confirm).toHaveBeenCalledOnce()
+    expect(window.confirm).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain("Leave with unsaved changes?")
+    const closingDirty = new Event("beforeunload", { cancelable: true })
+    window.dispatchEvent(closingDirty)
+    expect(closingDirty.defaultPrevented).toBe(true)
+    await click(dialogButton("Keep editing"))
+    expect(router.push).not.toHaveBeenCalled()
+    await act(async () => {
+      anchor.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true })
+      )
+    })
+    await click(dialogButton("Discard and leave"))
+    expect(router.push).toHaveBeenCalledWith("/assistants")
     const closing = new Event("beforeunload", { cancelable: true })
     window.dispatchEvent(closing)
-    expect(closing.defaultPrevented).toBe(true)
-    expect(store.getSnapshot().fields.instructions).toBe("Unsaved")
+    expect(closing.defaultPrevented).toBe(false)
+    expect(store.getSnapshot().fields.instructions).toBe(
+      initial.fields.instructions
+    )
   })
 })

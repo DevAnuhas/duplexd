@@ -2,14 +2,28 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react"
 import { useRouter } from "next/navigation"
 
 import { Button } from "@/components/ui/button"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
+import type { AssistantFormInput } from "@/lib/assistant-schema"
 import { useOptionalPracticeSession } from "@/components/sandbox/practice-session"
 import {
   AssistantDraftStore,
@@ -21,10 +35,19 @@ import {
 import { SandboxController, sandboxReleased } from "@/sandbox/client/controller"
 import { validateAssistantDraft } from "../draft-actions"
 
+type EditorDraftFields = Pick<
+  AssistantFormInput,
+  "name" | "serverUrl" | "serverSecret" | "clearServerSecret"
+>
+type LeavingTarget = { href: string; entryKey?: string }
+
 const DraftContext = createContext<{
   store: AssistantDraftStore
   controller: SandboxController
   assistantId: string
+  getEditorDraft: () => EditorDraftFields | null
+  setEditorDraft: (input: AssistantFormInput) => void
+  clearEditorDraft: () => void
 } | null>(null)
 
 export function useAssistantDraft() {
@@ -66,7 +89,23 @@ export function AssistantDraftProvider({
   children: React.ReactNode
 }) {
   const [store] = useState(() => new AssistantDraftStore(seed))
+  const editorDraft = useRef<EditorDraftFields | null>(null)
+  const getEditorDraft = useCallback(() => editorDraft.current, [])
+  const setEditorDraft = useCallback((input: AssistantFormInput) => {
+    // A newly typed secret is deliberately not carried into another route.
+    editorDraft.current = {
+      name: input.name,
+      serverUrl: input.serverUrl,
+      serverSecret: "",
+      clearServerSecret: false,
+    }
+  }, [])
+  const clearEditorDraft = useCallback(() => {
+    editorDraft.current = null
+  }, [])
   const session = useOptionalPracticeSession()
+  const router = useRouter()
+  const [leavingTarget, setLeavingTarget] = useState<LeavingTarget | null>(null)
   const [localController] = useState(() => new SandboxController())
   const controller = session?.controller ?? localController
   useEffect(() => {
@@ -87,92 +126,112 @@ export function AssistantDraftProvider({
     }
   }, [controller, session])
   useEffect(() => {
-    const base = `/assistants/${encodeURIComponent(seed.assistantId)}`
-    const warn = () => {
-      const state = store.getSnapshot()
-      return (
-        draftDirty(state) &&
-        !window.confirm(
-          "Discard unsaved assistant and sample changes? They are kept only in this tab."
-        )
-      )
-    }
-    const beforeUnload = (event: BeforeUnloadEvent) => {
-      if (draftDirty(store.getSnapshot())) {
-        event.preventDefault()
-        event.returnValue = ""
-      }
-    }
-    const shouldStay = (url: URL) => {
-      if (
-        url.origin === window.location.origin &&
-        (url.pathname === base || url.pathname === `${base}/sandbox`)
-      ) {
-        return (
-          url.pathname !== window.location.pathname &&
-          store.getSnapshot().editorOnlyDirty &&
-          !window.confirm(
-            "Unsaved name or connection fields cannot move to Practice and will be discarded. Your conversation draft is kept. Continue?"
-          )
-        )
-      }
-      return warn()
-    }
-    const onClick = (event: MouseEvent) => {
+    const assistantPath = `/assistants/${encodeURIComponent(seed.assistantId)}`
+    const outsideAssistant = (destination: URL) =>
+      destination.origin === window.location.origin &&
+      destination.pathname !== assistantPath &&
+      !destination.pathname.startsWith(`${assistantPath}/`)
+    const leavingAssistant = (event: MouseEvent) => {
       if (
         event.defaultPrevented ||
         event.button !== 0 ||
         event.metaKey ||
         event.ctrlKey ||
         event.shiftKey ||
-        event.altKey
+        event.altKey ||
+        !(event.target instanceof Element)
       )
         return
-      const anchor =
-        event.target instanceof Element ? event.target.closest("a[href]") : null
-      if (
-        !(anchor instanceof HTMLAnchorElement) ||
-        anchor.target === "_blank" ||
-        anchor.hasAttribute("download")
-      )
+      const link = event.target.closest<HTMLAnchorElement>("a[href]")
+      if (!link || link.target || link.hasAttribute("download")) return
+      const destination = new URL(link.href, window.location.href)
+      if (!outsideAssistant(destination) || !draftDirty(store.getSnapshot()))
         return
-      const url = new URL(anchor.href, window.location.href)
-      if (shouldStay(url)) {
-        event.preventDefault()
-        event.stopPropagation()
-      }
+      event.preventDefault()
+      event.stopPropagation()
+      setLeavingTarget({
+        href: `${destination.pathname}${destination.search}${destination.hash}`,
+      })
     }
-    // App Router Back/Forward is same-document navigation: beforeunload does
-    // not run. Modern browsers expose a cancelable traversal here.
     const onTraverse = (event: NavigateEvent) => {
-      if (
-        event.navigationType === "traverse" &&
-        event.cancelable &&
-        shouldStay(new URL(event.destination.url))
-      )
-        event.preventDefault()
+      if (event.navigationType !== "traverse" || !event.cancelable) return
+      const destination = new URL(event.destination.url)
+      if (!outsideAssistant(destination) || !draftDirty(store.getSnapshot()))
+        return
+      event.preventDefault()
+      setLeavingTarget({
+        href: `${destination.pathname}${destination.search}${destination.hash}`,
+        entryKey: event.destination.key,
+      })
     }
-    window.addEventListener("beforeunload", beforeUnload)
-    document.addEventListener("click", onClick, true)
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!draftDirty(store.getSnapshot())) return
+      event.preventDefault()
+      event.returnValue = ""
+    }
+    document.addEventListener("click", leavingAssistant, true)
     window.navigation?.addEventListener("navigate", onTraverse)
+    window.addEventListener("beforeunload", beforeUnload)
     return () => {
-      window.removeEventListener("beforeunload", beforeUnload)
-      document.removeEventListener("click", onClick, true)
+      document.removeEventListener("click", leavingAssistant, true)
       window.navigation?.removeEventListener("navigate", onTraverse)
+      window.removeEventListener("beforeunload", beforeUnload)
     }
-  }, [store, seed.assistantId])
+  }, [seed.assistantId, store])
   return (
     <DraftContext.Provider
-      value={{ store, controller, assistantId: seed.assistantId }}
+      value={{
+        store,
+        controller,
+        assistantId: seed.assistantId,
+        getEditorDraft,
+        setEditorDraft,
+        clearEditorDraft,
+      }}
     >
       <DraftStatus />
       {children}
+      <AlertDialog
+        open={leavingTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setLeavingTarget(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Leave with unsaved changes?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your assistant and sample edits will be discarded.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep editing</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (leavingTarget === null) return
+                clearEditorDraft()
+                store.discard()
+                if (
+                  leavingTarget.entryKey !== undefined &&
+                  typeof window.navigation?.traverseTo === "function"
+                )
+                  void window.navigation.traverseTo(leavingTarget.entryKey)
+                else router.push(leavingTarget.href)
+                setLeavingTarget(null)
+              }}
+            >
+              Discard and leave
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </DraftContext.Provider>
   )
 }
 
 function DraftStatus() {
-  const { store, state, controller, attempt, locked } = useAssistantDraft()
+  const { store, state, controller, attempt, locked, clearEditorDraft } =
+    useAssistantDraft()
   const router = useRouter()
   const conflict =
     state.assistantConflict !== null || state.sampleConflict !== null
@@ -239,106 +298,84 @@ function DraftStatus() {
       router.refresh()
     }
   }, [attempt.conflict, store, router])
-  if (!conflict && !locked && !draftDirty(state)) return null
+  if (!conflict && (!locked || attempt.mediaPhase !== "off")) return null
   return (
     <section
       aria-label="Draft status"
-      className="mb-6 space-y-3 rounded-lg border bg-muted/30 p-4"
+      className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm"
     >
-      <p role="status" className="text-sm">
-        {state.saving
-          ? "Saving explicit changes…"
-          : locked
-            ? "Editing is locked while a test is being checked, prepared or remains unresolved. Its snapshot will not change."
-            : conflict
-              ? "Saved configuration or samples changed. Your local draft has been kept."
-              : "Unsaved conversation or sample changes are kept in this tab across Configure and Practice. Refreshing or leaving can discard them."}
+      <p role="status">
+        {conflict
+          ? "A newer version was saved elsewhere. Your edits are still here."
+          : "Checking the current call before editing."}
       </p>
-      <div className="flex flex-wrap gap-2">
-        {locked && !state.saving && (
-          <>
-            <Button
-              variant="outline"
-              type="button"
-              className="min-h-11"
-              disabled={["preparing", "canceling"].includes(attempt.phase)}
-              onClick={() => {
-                void controller.refresh()
-              }}
-            >
-              Refresh test status
-            </Button>
-            {attempt.attempt !== null && !sandboxReleased(attempt.attempt) && (
-              <Button
-                variant="outline"
-                type="button"
-                className="min-h-11"
-                disabled={attempt.phase === "canceling"}
-                onClick={() => {
-                  void controller.cancel()
-                }}
-              >
-                {attempt.mediaPhase === "off"
-                  ? "Cancel active preparation"
-                  : "End active call"}
-              </Button>
-            )}
-          </>
+      <div className="flex flex-wrap gap-1">
+        {locked && !conflict && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => void controller.refresh()}
+          >
+            Refresh
+          </Button>
         )}
         {conflict && !locked && (
           <>
             <Button
-              variant="outline"
               type="button"
-              className="min-h-11"
+              variant="ghost"
+              size="sm"
               onClick={() => router.refresh()}
             >
-              Fetch latest saved version
+              Fetch latest
             </Button>
             <Button
-              variant="outline"
               type="button"
-              className="min-h-11"
+              variant="outline"
+              size="sm"
               disabled={state.latest === null || !store.canResolveConflict()}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    "Rebase your local edits on the latest saved revision? Changed local fields and sample mappings are kept. This does not save them."
-                  )
-                )
-                  store.rebase()
-              }}
+              onClick={() => store.rebase()}
             >
-              Rebase my draft
+              Keep my edits
             </Button>
           </>
         )}
         {!locked && (
-          <Button
-            type="button"
-            variant="ghost"
-            className="min-h-11"
-            disabled={!store.canResolveConflict()}
-            onClick={() => {
-              if (
-                window.confirm(
-                  "Discard local assistant and sample changes and reload the latest fetched saved values?"
-                )
-              )
-                store.discard()
-            }}
-          >
-            Discard draft / reload saved
-          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={!store.canResolveConflict()}
+              >
+                Discard edits
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent size="sm">
+              <AlertDialogHeader>
+                <AlertDialogTitle>Discard unsaved edits?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This restores the last saved assistant and sample responses.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Keep editing</AlertDialogCancel>
+                <AlertDialogAction
+                  variant="destructive"
+                  onClick={() => {
+                    clearEditorDraft()
+                    store.discard()
+                  }}
+                >
+                  Discard
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         )}
       </div>
-      {conflict && (
-        <p className="text-sm text-muted-foreground">
-          Rebase keeps your edited fields; newer saved values fill untouched
-          fields. Locally edited sample mappings are kept as a whole. Saving
-          remains a separate action.
-        </p>
-      )}
     </section>
   )
 }

@@ -76,10 +76,9 @@ export type AssistantFormValues = {
 }
 
 const sections = [
-  ["identity", "Identity"],
-  ["conversation", "Conversation"],
-  ["waiting", "While waiting"],
-  ["backend", "Backend & connection"],
+  ["essentials", "Essentials"],
+  ["instructions", "Instructions"],
+  ["backend", "Connection"],
   ["tool-settings", "Tools"],
 ] as const
 
@@ -111,10 +110,10 @@ function AssistantTextField({
       control={control}
       name={name}
       render={({ field, fieldState }) => (
-        <Field data-invalid={fieldState.invalid}>
+        <Field data-invalid={fieldState.invalid} className="gap-1.5">
           <FieldLabel htmlFor={field.name}>{label}</FieldLabel>
           {description && (
-            <FieldDescription id={`${field.name}-help`}>
+            <FieldDescription id={`${field.name}-help`} className="text-xs">
               {description}
             </FieldDescription>
           )}
@@ -125,7 +124,7 @@ function AssistantTextField({
               type={type}
               placeholder={placeholder}
               autoComplete={type === "password" ? "new-password" : undefined}
-              className="min-h-11"
+              className="h-9"
               aria-invalid={fieldState.invalid}
               aria-describedby={
                 [
@@ -144,8 +143,8 @@ function AssistantTextField({
               placeholder={placeholder}
               className={
                 rows >= 6
-                  ? "min-h-40 leading-relaxed"
-                  : "min-h-24 leading-relaxed"
+                  ? "min-h-36 leading-relaxed"
+                  : "min-h-20 leading-relaxed"
               }
               aria-invalid={fieldState.invalid}
               aria-describedby={
@@ -198,6 +197,7 @@ function AssistantFormEditor({
   const [hasSecret, setHasSecret] = useState(values.hasServerSecret === true)
   const [revision, setRevision] = useState(values.revision)
   const [toolsOpen, setToolsOpen] = useState(false)
+  const [connectionOpen, setConnectionOpen] = useState(values.id === undefined)
   const form = useForm<AssistantFormInput>({
     resolver: zodResolver(assistantSchema),
     defaultValues: {
@@ -213,6 +213,7 @@ function AssistantFormEditor({
       clearServerSecret: false,
       tools: JSON.stringify(values.tools ?? [], null, 2),
       ...draft?.state.fields,
+      ...(draft?.getEditorDraft() ?? {}),
     },
     shouldFocusError: false,
   })
@@ -225,31 +226,47 @@ function AssistantFormEditor({
   const resetFromHost = useRef(false)
   const epoch = draft?.state.formEpoch
   const store = draft?.store
+  const getEditorDraft = draft?.getEditorDraft
+  const setEditorDraft = draft?.setEditorDraft
+  const clearEditorDraft = draft?.clearEditorDraft
+  const editorBaseline = useRef({
+    name: values.name ?? "",
+    serverUrl: values.serverUrl ?? "",
+  })
+  editorBaseline.current = {
+    name: values.name ?? "",
+    serverUrl: values.serverUrl ?? "",
+  }
   useEffect(() => {
     if (store === undefined) return
     const state = store.getSnapshot()
+    const cached = getEditorDraft?.()
     resetFromHost.current = true
     form.reset({
       ...form.getValues(),
       ...state.fields,
-      ...(state.editorOnlyDirty
-        ? {}
-        : {
-            name: values.name ?? "",
-            serverUrl: values.serverUrl ?? "",
-            serverSecret: "",
-            clearServerSecret: false,
-          }),
+      name: values.name ?? "",
+      serverUrl: values.serverUrl ?? "",
+      serverSecret: "",
+      clearServerSecret: false,
+      ...cached,
+      ...(cached
+        ? {
+            serverSecret: form.getValues("serverSecret"),
+            clearServerSecret: form.getValues("clearServerSecret"),
+          }
+        : {}),
     })
     resetFromHost.current = false
     setToolsSummary(summarizeTools(state.fields.tools))
-  }, [epoch, store, form, values.name, values.serverUrl])
+  }, [epoch, store, form, values.name, values.serverUrl, getEditorDraft])
   useEffect(() => {
     if (store === undefined) return
     const subscription = form.watch(() => {
       if (resetFromHost.current) return
       const input = form.getValues()
       store.edit(input)
+      setEditorDraft?.(input)
       store.setEditorOnlyDirty(
         input.name !== (values.name ?? "") ||
           input.serverUrl !== (values.serverUrl ?? "") ||
@@ -260,10 +277,18 @@ function AssistantFormEditor({
     return () => {
       subscription.unsubscribe()
     }
-  }, [store, form, values.name, values.serverUrl])
-  // Replacing the watcher after a server refresh is not leaving Configure.
-  // Only the form's actual lifetime owns clearing its editor-local dirty flag.
-  useEffect(() => () => store?.setEditorOnlyDirty(false), [store])
+  }, [store, form, values.name, values.serverUrl, setEditorDraft])
+  useEffect(
+    () => () => {
+      const cached = getEditorDraft?.()
+      if (cached && store)
+        store.setEditorOnlyDirty(
+          cached.name !== editorBaseline.current.name ||
+            cached.serverUrl !== editorBaseline.current.serverUrl
+        )
+    },
+    [getEditorDraft, store]
+  )
   const changes =
     isDirty ||
     (draft !== undefined &&
@@ -345,6 +370,7 @@ function AssistantFormEditor({
           if (result.revision !== undefined) {
             setRevision(result.revision)
             store?.savedAssistant(previewFields(input), result.revision)
+            clearEditorDraft?.()
           }
           // The explicit save already established the new baseline. Do not
           // compare this reset with stale server props in the form watcher.
@@ -383,27 +409,29 @@ function AssistantFormEditor({
     <form
       noValidate
       onSubmit={form.handleSubmit(submit, invalid)}
-      className="flex min-w-0 flex-col gap-6"
+      className="flex min-w-0 flex-col gap-4"
     >
-      <header className="flex min-w-0 flex-wrap items-start justify-between gap-4">
-        <div className="flex min-w-0 flex-1 flex-col gap-2">
+      <header className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-b pb-4">
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
           <Link
             href="/assistants"
-            className="inline-flex min-h-11 w-fit items-center rounded-sm text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+            className="inline-flex w-fit items-center rounded-sm text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
           >
             Assistants
           </Link>
-          <h1 className="text-3xl font-semibold tracking-tight break-words">
+          <h1 className="text-xl font-semibold tracking-tight break-words">
             {title}
           </h1>
           {values.id !== undefined ? (
-            <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-muted-foreground">
-              <span className="break-all tabular-nums">{values.id}</span>
+            <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+              <span className="max-w-48 truncate tabular-nums">
+                {values.id}
+              </span>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="size-11"
+                className="size-7"
                 onClick={copyId}
                 aria-label="Copy assistant ID"
               >
@@ -411,19 +439,19 @@ function AssistantFormEditor({
               </Button>
             </div>
           ) : (
-            <p className="text-muted-foreground">
-              Give your assistant a voice and connect it to your backend.
+            <p className="text-xs text-muted-foreground">
+              Set up a voice assistant.
             </p>
           )}
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <span role="status" className="text-sm text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-2">
+          <span role="status" className="text-xs text-muted-foreground">
             {isSubmitting ? "Saving…" : changes ? "Unsaved changes" : ""}
           </span>
           <Button
             type="submit"
             disabled={isSubmitting || locked || conflict}
-            className="min-h-11"
+            className="h-9 px-4"
           >
             {isSubmitting && (
               <SpinnerGap
@@ -439,219 +467,232 @@ function AssistantFormEditor({
       </header>
 
       {values.id !== undefined && (
-        <AssistantNavigation
-          assistantId={values.id}
-          active="configure"
-          hasUnsavedChanges={draft === undefined && (isDirty || isSubmitting)}
-        />
+        <AssistantNavigation assistantId={values.id} active="configure" />
       )}
 
       <nav
         aria-label="Assistant sections"
-        className="sticky top-0 z-10 flex min-w-0 flex-wrap gap-1 border-b bg-background/95 py-3 backdrop-blur-sm"
+        className="flex min-w-0 flex-wrap gap-1 border-b pb-2"
       >
         {sections.map(([id, label]) => (
-          <Button key={id} asChild variant="ghost" className="min-h-11">
-            <a href={`#${id}`}>{label}</a>
-          </Button>
+          <a
+            key={id}
+            href={`#${id}`}
+            className="rounded-sm px-2 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+          >
+            {label}
+          </a>
         ))}
       </nav>
 
-      <FieldSet disabled={isSubmitting || locked} className="min-w-0">
+      <FieldSet disabled={isSubmitting || locked} className="min-w-0 gap-4">
         <FieldLegend className="sr-only">Assistant configuration</FieldLegend>
-        <Card id="identity" className="scroll-mt-40 rounded-lg shadow-none">
-          <CardHeader>
+        <Card
+          id="essentials"
+          className="scroll-mt-24 gap-3 rounded-lg py-4 shadow-none"
+        >
+          <CardHeader className="px-4">
             <CardTitle>
-              <h2>Identity</h2>
+              <h2 className="text-sm">Assistant</h2>
             </CardTitle>
-            <CardDescription>
-              A name you can recognize in your call history.
+            <CardDescription className="text-xs">
+              The settings that shape every call.
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="grid gap-4 px-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
             <AssistantTextField
               control={form.control}
               name="name"
-              label="Assistant name"
+              label="Name"
               placeholder="Support line"
             />
-          </CardContent>
-        </Card>
-        <Card id="conversation" className="scroll-mt-40 rounded-lg shadow-none">
-          <CardHeader>
-            <CardTitle>
-              <h2>Conversation</h2>
-            </CardTitle>
-            <CardDescription>
-              Shape how the assistant speaks with callers.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <FieldGroup>
-              <AssistantTextField
-                control={form.control}
-                name="instructions"
-                label="Conversation instructions"
-                placeholder="You are a support assistant. Ask what the caller needs and answer clearly."
-                description="Describe the assistant's role, what it should help with, and any limits. These guide the spoken conversation."
-                rows={8}
-              />
-              <FieldGroup className="grid gap-6 sm:grid-cols-2">
-                <AssistantTextField
-                  control={form.control}
-                  name="voice"
-                  label="Voice"
-                  placeholder="marin"
-                  description="Enter a provider voice ID, such as marin. Describe tone and accent in the next field."
-                />
-                <AssistantTextField
-                  control={form.control}
-                  name="accentStyle"
-                  label="Accent & speaking style"
-                  placeholder="Calm, concise, friendly; US English"
-                  description="Describe the accent, tone, and pace."
-                />
-              </FieldGroup>
-            </FieldGroup>
-          </CardContent>
-        </Card>
-        <Card id="waiting" className="scroll-mt-40 rounded-lg shadow-none">
-          <CardHeader>
-            <CardTitle>
-              <h2>While waiting</h2>
-            </CardTitle>
-            <CardDescription>
-              What should it say while waiting for an answer?
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
             <AssistantTextField
               control={form.control}
-              name="waitingBehavior"
-              label="Waiting behavior"
-              placeholder="One moment while I check that."
-              description="Give a brief phrase or instruction for pauses while your backend handles a request."
-              rows={3}
+              name="backendModel"
+              label="Backend model"
+              placeholder="gpt-5.6-luna"
+              description="OpenAI model ID. Practice currently supports gpt-5.6-luna."
             />
-          </CardContent>
-        </Card>
-        <Card id="backend" className="scroll-mt-40 rounded-lg shadow-none">
-          <CardHeader>
-            <CardTitle>
-              <h2>Backend & connection</h2>
-            </CardTitle>
-            <CardDescription>
-              Connect the assistant to the actions your backend provides.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <FieldGroup>
-              <AssistantTextField
-                control={form.control}
-                name="backendModel"
-                label="Backend model"
-                placeholder="gpt-5.6-luna"
-                description="The model ID for choosing tools and processing their results, separate from the speaking voice."
-              />
-              <AssistantTextField
-                control={form.control}
-                name="backendInstructions"
-                label="Backend instructions"
-                placeholder="Pick the tool that matches the caller's request. Report only confirmed results."
-                rows={6}
-                description="Guide how tools are chosen. Your backend still controls permissions and confirms actions."
-              />
-              <AssistantTextField
-                control={form.control}
-                name="serverUrl"
-                label="Server URL"
-                placeholder="https://api.yourcompany.com/voice"
-                description="The HTTPS webhook endpoint on your backend that receives signed tool requests."
-              />
-              <Separator />
-              <FieldSet className="gap-4">
-                <FieldLegend className="mb-0 flex w-full flex-wrap items-center justify-between gap-2">
-                  Webhook secret{" "}
-                  <Badge variant="outline">
-                    {hasSecret ? "Configured" : "Not configured"}
-                  </Badge>
-                </FieldLegend>
-                <FieldDescription data-testid="secret-state">
-                  {hasSecret
-                    ? "A secret is set. It can't be shown — enter a new one to replace it."
-                    : "No secret is set."}
-                </FieldDescription>
-                <AssistantTextField
-                  control={form.control}
-                  name="serverSecret"
-                  label={hasSecret ? "Replace secret" : "New secret"}
-                  type="password"
-                  placeholder="Enter a new webhook signing secret"
-                  description="Your backend uses this shared secret to verify tool requests. Leave blank to keep the current secret."
-                />
-                {hasSecret && (
-                  <Controller
-                    control={form.control}
-                    name="clearServerSecret"
-                    render={({ field, fieldState }) => (
-                      <Field
-                        orientation="horizontal"
-                        data-invalid={fieldState.invalid}
-                      >
-                        <Checkbox
-                          ref={field.ref}
-                          id={field.name}
-                          name={field.name}
-                          value="on"
-                          checked={field.value}
-                          onCheckedChange={(checked) =>
-                            field.onChange(checked === true)
-                          }
-                          onBlur={field.onBlur}
-                          aria-invalid={fieldState.invalid}
-                          aria-describedby="clearServerSecret-help clearServerSecret-error"
-                          className="size-11"
-                        />
-                        <div className="flex min-w-0 flex-col gap-1">
-                          <FieldLabel htmlFor={field.name}>
-                            Remove the stored secret when saving
-                          </FieldLabel>
-                          <FieldDescription id="clearServerSecret-help">
-                            This takes effect only after a successful save.
-                          </FieldDescription>
-                          <FieldError
-                            id="clearServerSecret-error"
-                            errors={[fieldState.error]}
-                          />
-                        </div>
-                      </Field>
-                    )}
-                  />
-                )}
-              </FieldSet>
-            </FieldGroup>
+            <AssistantTextField
+              control={form.control}
+              name="voice"
+              label="Voice"
+              placeholder="marin"
+              description="Provider voice ID."
+            />
+            <AssistantTextField
+              control={form.control}
+              name="accentStyle"
+              label="Speaking style"
+              placeholder="Calm, concise, friendly; US English"
+              description="Tone, accent, and pace."
+            />
           </CardContent>
         </Card>
         <Card
-          id="tool-settings"
-          className="min-w-0 scroll-mt-40 rounded-lg shadow-none"
+          id="instructions"
+          className="scroll-mt-24 gap-3 rounded-lg py-4 shadow-none"
         >
-          <CardHeader>
+          <CardHeader className="px-4">
             <CardTitle>
-              <h2>Tools</h2>
+              <h2 className="text-sm">Instructions</h2>
             </CardTitle>
-            <CardDescription>
-              Actions available through your backend. Changes take effect when
-              you save.
+            <CardDescription className="text-xs">
+              What the assistant says and how it handles requests.
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex min-w-0 flex-col gap-5">
+          <CardContent className="grid gap-4 px-4">
+            <AssistantTextField
+              control={form.control}
+              name="instructions"
+              label="Conversation instructions"
+              placeholder="You are a support assistant. Ask what the caller needs and answer clearly."
+              rows={8}
+            />
+            <div className="grid gap-4 lg:grid-cols-2">
+              <AssistantTextField
+                control={form.control}
+                name="backendInstructions"
+                label="Tool choice instructions"
+                placeholder="Choose the tool that matches the caller's request. Only report confirmed results."
+                rows={4}
+              />
+              <AssistantTextField
+                control={form.control}
+                name="waitingBehavior"
+                label="While waiting"
+                placeholder="One moment while I check that."
+                rows={4}
+              />
+            </div>
+          </CardContent>
+        </Card>
+        <Collapsible open={connectionOpen} onOpenChange={setConnectionOpen}>
+          <Card
+            id="backend"
+            className="scroll-mt-24 gap-3 rounded-lg py-4 shadow-none"
+          >
+            <CardHeader className="px-4">
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-3 text-left focus-visible:outline-2 focus-visible:outline-ring"
+                >
+                  <span>
+                    <span className="block text-sm font-semibold">
+                      Connection
+                    </span>
+                    <span className="block text-xs text-muted-foreground">
+                      Webhook and credentials
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <Badge variant="outline" className="text-xs">
+                      {hasSecret ? "Secret set" : "No secret"}
+                    </Badge>
+                    <CaretDown
+                      className={`size-4 text-muted-foreground ${connectionOpen ? "rotate-180" : ""}`}
+                      aria-hidden="true"
+                    />
+                  </span>
+                </button>
+              </CollapsibleTrigger>
+            </CardHeader>
+            <CollapsibleContent
+              forceMount
+              className="data-[state=closed]:hidden"
+            >
+              <CardContent className="px-4">
+                <FieldGroup className="gap-4">
+                  <AssistantTextField
+                    control={form.control}
+                    name="serverUrl"
+                    label="Server URL"
+                    placeholder="https://api.yourcompany.com/voice"
+                    description="The HTTPS webhook endpoint on your backend that receives signed tool requests."
+                  />
+                  <Separator />
+                  <FieldSet className="gap-4">
+                    <FieldLegend className="mb-0 flex w-full flex-wrap items-center justify-between gap-2">
+                      Webhook secret{" "}
+                      <Badge variant="outline">
+                        {hasSecret ? "Configured" : "Not configured"}
+                      </Badge>
+                    </FieldLegend>
+                    <FieldDescription data-testid="secret-state">
+                      {hasSecret
+                        ? "A secret is set. It can't be shown — enter a new one to replace it."
+                        : "No secret is set."}
+                    </FieldDescription>
+                    <AssistantTextField
+                      control={form.control}
+                      name="serverSecret"
+                      label={hasSecret ? "Replace secret" : "New secret"}
+                      type="password"
+                      placeholder="Enter a new webhook signing secret"
+                      description="Save after entering a new secret. It clears when you leave this page."
+                    />
+                    {hasSecret && (
+                      <Controller
+                        control={form.control}
+                        name="clearServerSecret"
+                        render={({ field, fieldState }) => (
+                          <Field
+                            orientation="horizontal"
+                            data-invalid={fieldState.invalid}
+                          >
+                            <Checkbox
+                              ref={field.ref}
+                              id={field.name}
+                              name={field.name}
+                              value="on"
+                              checked={field.value}
+                              onCheckedChange={(checked) =>
+                                field.onChange(checked === true)
+                              }
+                              onBlur={field.onBlur}
+                              aria-invalid={fieldState.invalid}
+                              aria-describedby="clearServerSecret-help clearServerSecret-error"
+                              className="size-11"
+                            />
+                            <div className="flex min-w-0 flex-col gap-1">
+                              <FieldLabel htmlFor={field.name}>
+                                Remove the stored secret when saving
+                              </FieldLabel>
+                              <FieldDescription id="clearServerSecret-help">
+                                This takes effect only after a successful save.
+                              </FieldDescription>
+                              <FieldError
+                                id="clearServerSecret-error"
+                                errors={[fieldState.error]}
+                              />
+                            </div>
+                          </Field>
+                        )}
+                      />
+                    )}
+                  </FieldSet>
+                </FieldGroup>
+              </CardContent>
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
+        <Card
+          id="tool-settings"
+          className="min-w-0 scroll-mt-24 gap-3 rounded-lg py-4 shadow-none"
+        >
+          <CardHeader className="px-4">
+            <CardTitle>
+              <h2 className="text-sm">Tools</h2>
+            </CardTitle>
+            <CardDescription className="text-xs">
+              Actions your backend can perform.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex min-w-0 flex-col gap-3 px-4">
             {toolsSummary.ok ? (
               toolsSummary.rows.length === 0 ? (
-                <FieldDescription>
-                  No tools configured. Open the JSON editor to add your
-                  backend's tool definitions.
-                </FieldDescription>
+                <FieldDescription>No tools yet.</FieldDescription>
               ) : (
                 <Table>
                   <TableHeader>
@@ -688,9 +729,9 @@ function AssistantFormEditor({
                 <Button
                   type="button"
                   variant="outline"
-                  className="group min-h-11"
+                  className="group h-9 w-fit"
                 >
-                  Edit as JSON{" "}
+                  {toolsOpen ? "Close JSON editor" : "Edit tools as JSON"}{" "}
                   <CaretDown
                     weight="regular"
                     data-icon="inline-end"
@@ -712,16 +753,8 @@ function AssistantFormEditor({
                         Tool definitions
                       </FieldLabel>
                       <FieldDescription id="tools-help">
-                        A JSON array of tools. Each entry has a name,
-                        description, and parameters schema. Keep [] if no tools
-                        are needed. Example tool:
-                        <span className="mt-1 block break-words">
-                          {
-                            '{"name":"check_status","description":"Check a request status","parameters":{"type":"object","properties":{"reference":{"type":"string"}}}}'
-                          }
-                        </span>
-                        Place tool objects inside the array; JSON cannot contain
-                        comments.
+                        Add a JSON array with each tool's name, description, and
+                        parameters schema. Use [] for no tools.
                       </FieldDescription>
                       <Textarea
                         {...field}

@@ -29,25 +29,6 @@ const PracticeSessionContext = createContext<{
   names: Record<string, string>
 } | null>(null)
 
-const connectionStages = [
-  {
-    phase: "checking",
-    current: "Checking microphone",
-    done: "Microphone ready",
-  },
-  {
-    phase: "starting",
-    current: "Starting assistant",
-    done: "Assistant started",
-  },
-  { phase: "joining", current: "Connecting audio", done: "Audio connected" },
-  {
-    phase: "waiting",
-    current: "Waiting for assistant",
-    done: "Assistant ready",
-  },
-] as const
-
 export function useOptionalPracticeSession() {
   return useContext(PracticeSessionContext)
 }
@@ -120,9 +101,6 @@ export function PracticeSessionProvider({
       : "—"
   const nearLimit =
     state.deadlines.execution > 0 && state.deadlines.execution - now <= 60_000
-  const stageIndex = connectionStages.findIndex(
-    (stage) => stage.phase === state.mediaPhase
-  )
 
   useEffect(() => {
     void controller.refresh()
@@ -213,12 +191,12 @@ export function PracticeSessionProvider({
       )}
       {showBar && (
         <div
-          className="fixed inset-x-3 bottom-3 z-40 mx-auto flex max-w-2xl items-center gap-3 rounded-xl border border-primary/40 bg-background p-3 shadow-xl sm:inset-x-6"
+          className="fixed inset-x-3 bottom-3 z-40 mx-auto flex max-w-lg items-center gap-2 rounded-lg border bg-background p-2 shadow-lg sm:inset-x-6"
           role="region"
           aria-label="Active practice call"
         >
-          <Avatar size="lg" aria-hidden="true">
-            <AvatarFallback className="bg-primary/10 font-semibold text-primary">
+          <Avatar className="size-8" aria-hidden="true">
+            <AvatarFallback className="bg-primary/10 text-xs font-semibold text-primary">
               {name.slice(0, 1).toUpperCase()}
             </AvatarFallback>
           </Avatar>
@@ -246,7 +224,7 @@ export function PracticeSessionProvider({
             type="button"
             variant="destructive"
             size="sm"
-            className="min-h-10"
+            className="h-8"
             onClick={() => {
               void controller.end()
             }}
@@ -257,27 +235,25 @@ export function PracticeSessionProvider({
       )}
       {expanded && showBar && (
         <aside
-          className="fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l bg-background shadow-2xl sm:w-[390px]"
+          className="fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l bg-background shadow-xl sm:w-[360px]"
           aria-label="Practice call panel"
         >
-          <header className="shrink-0 border-b p-5">
-            <div className="flex items-start justify-between gap-3">
-              <Avatar size="lg" className="mt-1 size-12" aria-hidden="true">
-                <AvatarFallback className="bg-primary/10 text-lg font-semibold text-primary">
+          <header className="shrink-0 border-b p-3">
+            <div className="flex items-center justify-between gap-2">
+              <Avatar className="size-8" aria-hidden="true">
+                <AvatarFallback className="bg-primary/10 text-xs font-semibold text-primary">
                   {name.slice(0, 1).toUpperCase()}
                 </AvatarFallback>
               </Avatar>
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium tracking-wide text-primary uppercase">
-                  Practice · sample data
-                </p>
-                <h2 className="mt-1 truncate text-xl font-semibold">{name}</h2>
-                <p className="mt-1 text-sm text-muted-foreground">
+                <h2 className="truncate text-sm font-semibold">{name}</h2>
+                <p className="text-xs text-muted-foreground">
                   <span role="status">{connectionLabel(state.mediaPhase)}</span>
                   <span aria-hidden="true"> · {elapsed}</span>
+                  <span> · Practice sample data</span>
                 </p>
                 {hiddenNotice && state.message && (
-                  <p role="status" className="mt-2 text-sm">
+                  <p role="status" className="mt-1 text-xs">
                     {state.message}
                   </p>
                 )}
@@ -287,80 +263,57 @@ export function PracticeSessionProvider({
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="size-10"
+                className="size-8"
                 onClick={() => setExpanded(false)}
                 aria-label="Collapse call panel"
               >
-                <X className="size-5" />
+                <X className="size-4" />
               </Button>
             </div>
             {nearLimit && (
               <p
                 role="status"
-                className="mt-3 text-sm text-amber-600 dark:text-amber-400"
+                className="mt-2 text-xs text-amber-600 dark:text-amber-400"
               >
                 Call ends after 10 minutes.
               </p>
             )}
             {state.outputSilent && (
-              <p className="mt-3 text-sm">
+              <p className="mt-2 text-xs">
                 You may not be able to hear the assistant. Check your output
                 device and volume.
               </p>
             )}
-            {stageIndex >= 0 && (
-              <ol
-                className="mt-5 grid grid-cols-2 gap-2"
-                aria-label="Connection progress"
-              >
-                {connectionStages.map((stage, index) => (
-                  <li
-                    key={stage.phase}
-                    aria-current={index === stageIndex ? "step" : undefined}
-                    className={`rounded-md border px-3 py-2 text-xs ${index === stageIndex ? "border-primary/50 bg-primary/10 font-semibold" : index < stageIndex ? "text-foreground" : "text-muted-foreground"}`}
-                  >
-                    <span className="mr-2" aria-hidden="true">
-                      {index < stageIndex
-                        ? "✓"
-                        : index === stageIndex
-                          ? "●"
-                          : "○"}
-                    </span>
-                    {index < stageIndex ? stage.done : stage.current}
-                  </li>
-                ))}
-              </ol>
-            )}
-            <div className="mt-5 flex items-center gap-3">
+            <div className="mt-3 flex items-center gap-2">
               <Button
                 type="button"
                 variant="outline"
-                className="min-h-11 flex-1"
+                className="h-8 flex-1"
                 disabled={!state.ownsController || state.mediaPhase !== "ready"}
                 aria-pressed={state.muted}
                 onClick={() => controller.mute()}
               >
                 {state.muted ? (
-                  <MicrophoneSlash className="size-5" aria-hidden="true" />
+                  <MicrophoneSlash className="size-4" aria-hidden="true" />
                 ) : (
-                  <Microphone className="size-5" aria-hidden="true" />
+                  <Microphone className="size-4" aria-hidden="true" />
                 )}
                 {state.muted ? "Unmute" : "Mute"}
               </Button>
               <Button
                 type="button"
                 variant="destructive"
-                className="min-h-11 flex-1"
+                className="h-8 flex-1"
                 onClick={() => {
                   void controller.end()
                 }}
               >
-                <PhoneDisconnect className="size-5" aria-hidden="true" /> End
+                <PhoneDisconnect className="size-4" aria-hidden="true" /> End
                 call
               </Button>
             </div>
           </header>
-          <div className="min-h-0 flex-1 overflow-auto p-4">
+          <div className="min-h-0 flex-1 overflow-auto p-3">
             {attempt ? (
               <LiveSandboxTimeline
                 key={attempt.callId}

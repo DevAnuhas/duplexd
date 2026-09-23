@@ -1,76 +1,30 @@
 import Link from "next/link"
 
-import { Button } from "@/components/ui/button"
+const tabs = [
+  { id: "configure", label: "Assistant", suffix: "" },
+  { id: "practice", label: "Talk", suffix: "/sandbox" },
+  { id: "calls", label: "Calls", suffix: "/calls" },
+] as const
 
 export function AssistantNavigation({
   assistantId,
   active,
-  hasUnsavedChanges = false,
 }: {
   assistantId: string
   active: "configure" | "practice" | "calls"
-  hasUnsavedChanges?: boolean
 }) {
   return (
-    <div>
-      <nav
-        aria-label="Assistant navigation"
-        className="flex gap-1 overflow-x-auto border-b"
-      >
-        <Button
-          asChild
-          variant="ghost"
-          className={`min-h-11 shrink-0 rounded-none border-b-2 px-5 ${active === "configure" ? "border-primary font-semibold text-foreground" : "border-transparent text-muted-foreground"}`}
+    <nav aria-label="Assistant navigation" className="flex gap-1 border-b">
+      {tabs.map((tab) => (
+        <Link
+          key={tab.id}
+          href={`/assistants/${encodeURIComponent(assistantId)}${tab.suffix}`}
+          aria-current={active === tab.id ? "page" : undefined}
+          className={`flex h-9 items-center border-b-2 px-3 text-sm focus-visible:outline-2 focus-visible:outline-ring ${active === tab.id ? "border-primary font-semibold text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
         >
-          <Link
-            href={`/assistants/${assistantId}`}
-            aria-current={active === "configure" ? "page" : undefined}
-          >
-            Configure
-          </Link>
-        </Button>
-        {hasUnsavedChanges ? (
-          <Button
-            type="button"
-            variant="ghost"
-            className="min-h-11 shrink-0"
-            disabled
-          >
-            Practice
-          </Button>
-        ) : (
-          <Button
-            asChild
-            variant="ghost"
-            className={`min-h-11 shrink-0 rounded-none border-b-2 px-5 ${active === "practice" ? "border-primary font-semibold text-foreground" : "border-transparent text-muted-foreground"}`}
-          >
-            <Link
-              href={`/assistants/${assistantId}/sandbox`}
-              aria-current={active === "practice" ? "page" : undefined}
-            >
-              Practice
-            </Link>
-          </Button>
-        )}
-        <Button
-          asChild
-          variant="ghost"
-          className={`min-h-11 shrink-0 rounded-none border-b-2 px-5 ${active === "calls" ? "border-primary font-semibold text-foreground" : "border-transparent text-muted-foreground"}`}
-        >
-          <Link
-            href={`/assistants/${assistantId}/calls`}
-            aria-current={active === "calls" ? "page" : undefined}
-          >
-            Calls
-          </Link>
-        </Button>
-      </nav>
-      {hasUnsavedChanges && (
-        <p className="mt-2 text-sm text-muted-foreground">
-          Save your changes before opening Practice. This version tests saved
-          configurations only.
-        </p>
-      )}
-    </div>
+          {tab.label}
+        </Link>
+      ))}
+    </nav>
   )
 }

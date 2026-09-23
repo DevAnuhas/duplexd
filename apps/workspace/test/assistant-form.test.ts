@@ -156,7 +156,7 @@ const TEXT_FIELDS = [
 /** The "Edit as JSON" button that opens and closes the tool editor. */
 function toolsToggle(mounted: Mounted): HTMLElement {
   const trigger = mounted.form.querySelector<HTMLElement>(
-    '[data-slot="collapsible-trigger"]'
+    '#tool-settings [data-slot="collapsible-trigger"]'
   )
 
   if (trigger === null) {
@@ -218,14 +218,13 @@ beforeEach(() => {
 
 describe("every section stays mounted", () => {
   const SECTION_IDS = [
-    "identity",
-    "conversation",
-    "waiting",
+    "essentials",
+    "instructions",
     "backend",
     "tool-settings",
   ] as const
 
-  it("renders all five sections with the tool editor collapsed", async () => {
+  it("renders all four sections with the tool editor collapsed", async () => {
     const mounted = await editor(editing(), rejectingAction())
 
     // The collapsed state is the default, so this is the state an operator
@@ -235,6 +234,8 @@ describe("every section stays mounted", () => {
     for (const id of SECTION_IDS) {
       expect(mounted.container.querySelector(`#${id}`)).not.toBeNull()
     }
+    expect(control(mounted, "serverUrl")).not.toBeNull()
+    expect(control(mounted, "serverSecret")).not.toBeNull()
 
     mounted.unmount()
   })
@@ -881,7 +882,7 @@ describe("the tool summary beside the editor", () => {
   it("says so plainly when there are no tools", async () => {
     const mounted = await editor(editing({ tools: [] }), rejectingAction())
 
-    expect(toolSummary(mounted)).toContain("No tools configured")
+    expect(toolSummary(mounted)).toContain("No tools yet.")
 
     mounted.unmount()
   })

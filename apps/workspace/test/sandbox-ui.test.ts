@@ -158,7 +158,7 @@ describe("Sandbox workspace UI", () => {
       "Voice calls are not available yet"
     )
     expect(container!.querySelector('[aria-current="page"]')?.textContent).toBe(
-      "Practice"
+      "Talk"
     )
   })
   it("prepares the selected sample scenario, freezes controls and cancels through the same API", async () => {
