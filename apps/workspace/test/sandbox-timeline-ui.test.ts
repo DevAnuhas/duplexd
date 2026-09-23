@@ -102,7 +102,7 @@ describe("safe and stable timeline DOM", () => {
     expect(node.textContent).not.toContain("SYNTHETIC_SECRET")
     expect(node.textContent).toContain("Practice · sample data")
     expect(node.textContent).toContain(
-      "<b>lookup</b>: delivery failed · 12 ms · success scenario · selected sample HTTP 200"
+      "<b>lookup</b>: Sample delivery failed · 12 ms · success scenario · selected sample HTTP 200"
     )
     expect(node.textContent).toContain(
       "Sample selection is not business success"
@@ -172,7 +172,7 @@ describe("safe and stable timeline DOM", () => {
       "without claiming an agent-confirmed ending"
     )
     expect(button("Refresh evidence").disabled).toBe(true)
-    expect(node.textContent).toContain("Evidence partial")
+    expect(node.textContent).toContain("Partial record")
     expect(
       node.querySelector('[role="status"]')!.getAttribute("aria-live")
     ).toBe("polite")

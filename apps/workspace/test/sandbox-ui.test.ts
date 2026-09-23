@@ -144,11 +144,10 @@ describe("Sandbox workspace UI", () => {
     expect(calls.length).toBeGreaterThan(0)
     expect(calls.every((call) => call.options?.method === "GET")).toBe(true)
     expect(microphone).not.toHaveBeenCalled()
-    // No attempt yet, so the panel is in `idle`: it offers Prepare and does not
-    // render Start at all. Both halves matter — the second alone would pass on
-    // an empty panel.
-    expect(absent("Start voice call")).toBe(true)
-    expect(button("Prepare test").disabled).toBe(false)
+    // No attempt yet: the primary Start is available, while the prepared-call
+    // action is absent. Neither starts on mount.
+    expect(absent("Start prepared call")).toBe(true)
+    expect(button("Start practice call").disabled).toBe(false)
     // The execution gate is a report of what the server said, so it waits for
     // the server to say it. The condition used to be
     // `state.attempt?.execution !== "enabled"`, which is also true when there
@@ -159,14 +158,14 @@ describe("Sandbox workspace UI", () => {
       "Voice calls are not available yet"
     )
     expect(container!.querySelector('[aria-current="page"]')?.textContent).toBe(
-      "Sandbox"
+      "Practice"
     )
   })
   it("prepares the selected sample scenario, freezes controls and cancels through the same API", async () => {
     const calls = stubFetch()
     await render()
     await click(container!.querySelector('input[value="unavailable"]')!)
-    await click(button("Prepare test"))
+    await click(button("Prepare without calling"))
     const prepare = calls.find(
       (call) =>
         call.path.endsWith("/attempts") && call.options?.method === "POST"
@@ -182,16 +181,16 @@ describe("Sandbox workspace UI", () => {
         overrides: { get_property_information: "unavailable" },
       },
     })
-    expect(container!.textContent).toContain(
-      "Test prepared · voice not started"
-    )
+    expect(container!.textContent).toContain("Ready to call")
     // Prepared: Start replaces Prepare in the primary slot rather than sitting
     // beside it disabled.
-    expect(absent("Prepare test")).toBe(true)
-    expect(button("Start voice call")).toBeDefined()
+    expect(absent("Prepare without calling")).toBe(true)
+    expect(button("Start prepared call")).toBeDefined()
     // The other half of the gate: the attempt reports `execution: "disabled"`,
     // so now — and only now — the panel says so.
-    expect(container!.textContent).toContain("Voice calls are not available yet")
+    expect(container!.textContent).toContain(
+      "Voice calls are not available yet"
+    )
     expect(container!.textContent).toContain("Preparation starts no agent")
     expect(
       container!.querySelector<HTMLFieldSetElement>("fieldset")?.disabled
@@ -205,8 +204,8 @@ describe("Sandbox workspace UI", () => {
     expect(container!.textContent).toContain("Preparation canceled")
     // Re-preparing is still offered, under the label that fits having just
     // finished one.
-    expect(absent("Prepare test")).toBe(true)
-    expect(button("Prepare another test").disabled).toBe(false)
+    expect(button("Prepare without calling").disabled).toBe(false)
+    expect(button("Start another call").disabled).toBe(false)
     expect(
       calls.some((call) => /\/(start|join|presence)$/.test(call.path))
     ).toBe(false)
@@ -219,7 +218,7 @@ describe("Sandbox workspace UI", () => {
     expect(container!.textContent).toContain(
       "Tool changed; review its sample mapping."
     )
-    expect(button("Prepare test").disabled).toBe(true)
+    expect(button("Prepare without calling").disabled).toBe(true)
     expect(
       container!.querySelector('a[href="/assistants/assistant-a"]')
     ).not.toBeNull()

@@ -180,6 +180,75 @@ describeDatabase("provider-independent Sandbox foundation", () => {
     if (publicCalls.kind !== "ok") throw new Error("Public history unavailable")
     expect(publicCalls.calls).toHaveLength(0)
   })
+  it("pages assistant history inside both account and assistant scope", async () => {
+    const setup = await fixture()
+    const other = await createAssistant(setup.account.accountId, {
+      name: `Other ${randomUUID()}`,
+      voice: "marin",
+      accentStyle: "Neutral.",
+      instructions: "Use synthetic data.",
+      backendInstructions: "Answer briefly.",
+      backendModel: "gpt-5.6-luna",
+      waitingBehavior: "One moment.",
+      tools: [],
+    })
+    const foreign = await fixture()
+    const ids = [randomUUID(), randomUUID(), randomUUID(), randomUUID()]
+    const now = Date.now()
+    await getDb()
+      .insert(calls)
+      .values([
+        {
+          id: ids[0]!,
+          accountId: setup.account.accountId,
+          assistantId: setup.assistant.id,
+          assistantSnapshot: {},
+          state: "ended",
+          createdAt: new Date(now),
+        },
+        {
+          id: ids[1]!,
+          accountId: setup.account.accountId,
+          assistantId: other.id,
+          assistantSnapshot: {},
+          state: "ended",
+          createdAt: new Date(now - 1000),
+        },
+        {
+          id: ids[2]!,
+          accountId: setup.account.accountId,
+          assistantId: setup.assistant.id,
+          assistantSnapshot: {},
+          state: "ended",
+          createdAt: new Date(now - 2000),
+        },
+        {
+          id: ids[3]!,
+          accountId: foreign.account.accountId,
+          assistantId: foreign.assistant.id,
+          assistantSnapshot: {},
+          state: "ended",
+          createdAt: new Date(now - 3000),
+        },
+      ])
+    const first = await listWorkspaceCallsForAccount(setup.account.accountId, {
+      assistantId: setup.assistant.id,
+      limit: 1,
+    })
+    expect(first.kind).toBe("ok")
+    if (first.kind !== "ok") return
+    expect(first.calls.map((call) => call.id)).toEqual([ids[0]])
+    expect(first.nextCursor).not.toBeNull()
+    const second = await listWorkspaceCallsForAccount(setup.account.accountId, {
+      assistantId: setup.assistant.id,
+      cursor: first.nextCursor,
+      limit: 1,
+    })
+    expect(second.kind).toBe("ok")
+    if (second.kind !== "ok") return
+    expect(second.calls.map((call) => call.id)).toEqual([ids[2]])
+    expect(second.nextCursor).toBeNull()
+  })
   it("atomically replays identical same-attempt requests and conflicts changed input", async () => {
     const setup = await fixture()
     const request = prepareInput(setup.assistant.id)

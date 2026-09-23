@@ -10,6 +10,7 @@ import {
 import { useRouter } from "next/navigation"
 
 import { Button } from "@/components/ui/button"
+import { useOptionalPracticeSession } from "@/components/sandbox/practice-session"
 import {
   AssistantDraftStore,
   draftDirty,
@@ -23,6 +24,7 @@ import { validateAssistantDraft } from "../draft-actions"
 const DraftContext = createContext<{
   store: AssistantDraftStore
   controller: SandboxController
+  assistantId: string
 } | null>(null)
 
 export function useAssistantDraft() {
@@ -38,12 +40,18 @@ export function useAssistantDraft() {
     context.controller.getSnapshot,
     context.controller.getSnapshot
   )
+  const anotherAssistantOwnsAttempt =
+    attempt.attempt !== null &&
+    attempt.attempt.assistantId !== context.assistantId
   const locked =
     state.saving ||
-    !attempt.statusKnown ||
-    ["loading", "preparing", "canceling", "unknown"].includes(attempt.phase) ||
-    attempt.canRetryPreparation ||
-    (attempt.attempt !== null && !sandboxReleased(attempt.attempt))
+    (!anotherAssistantOwnsAttempt &&
+      (!attempt.statusKnown ||
+        ["loading", "preparing", "canceling", "unknown"].includes(
+          attempt.phase
+        ) ||
+        attempt.canRetryPreparation ||
+        (attempt.attempt !== null && !sandboxReleased(attempt.attempt))))
   return { ...context, state, attempt, locked }
 }
 export function useOptionalAssistantDraft() {
@@ -58,11 +66,14 @@ export function AssistantDraftProvider({
   children: React.ReactNode
 }) {
   const [store] = useState(() => new AssistantDraftStore(seed))
-  const [controller] = useState(() => new SandboxController())
+  const session = useOptionalPracticeSession()
+  const [localController] = useState(() => new SandboxController())
+  const controller = session?.controller ?? localController
   useEffect(() => {
     store.observe(seed)
   }, [store, seed])
   useEffect(() => {
+    if (session !== null) return
     void controller.refresh()
     const refresh = () => {
       void controller.refresh()
@@ -74,7 +85,7 @@ export function AssistantDraftProvider({
       window.removeEventListener("focus", refresh)
       controller.leave()
     }
-  }, [controller])
+  }, [controller, session])
   useEffect(() => {
     const base = `/assistants/${encodeURIComponent(seed.assistantId)}`
     const warn = () => {
@@ -101,7 +112,7 @@ export function AssistantDraftProvider({
           url.pathname !== window.location.pathname &&
           store.getSnapshot().editorOnlyDirty &&
           !window.confirm(
-            "Unsaved name or connection fields cannot move to Sandbox and will be discarded. Your conversation draft is kept. Continue?"
+            "Unsaved name or connection fields cannot move to Practice and will be discarded. Your conversation draft is kept. Continue?"
           )
         )
       }
@@ -151,7 +162,9 @@ export function AssistantDraftProvider({
     }
   }, [store, seed.assistantId])
   return (
-    <DraftContext.Provider value={{ store, controller }}>
+    <DraftContext.Provider
+      value={{ store, controller, assistantId: seed.assistantId }}
+    >
       <DraftStatus />
       {children}
     </DraftContext.Provider>
@@ -239,7 +252,7 @@ function DraftStatus() {
             ? "Editing is locked while a test is being checked, prepared or remains unresolved. Its snapshot will not change."
             : conflict
               ? "Saved configuration or samples changed. Your local draft has been kept."
-              : "Unsaved conversation or sample changes are kept in this tab across Configure and Sandbox. Refreshing or leaving can discard them."}
+              : "Unsaved conversation or sample changes are kept in this tab across Configure and Practice. Refreshing or leaving can discard them."}
       </p>
       <div className="flex flex-wrap gap-2">
         {locked && !state.saving && (

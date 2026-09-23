@@ -1,15 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-const { expireSandboxReservations, secretsMatch, sweepStaleCalls } = vi.hoisted(
-  () => ({
-    expireSandboxReservations: vi.fn(),
-    secretsMatch: vi.fn((left: string, right: string) => left === right),
-    sweepStaleCalls: vi.fn(),
-  })
-)
+const {
+  expireSandboxReservations,
+  secretsMatch,
+  sweepStaleCalls,
+  sandboxSweep,
+} = vi.hoisted(() => ({
+  expireSandboxReservations: vi.fn(),
+  secretsMatch: vi.fn((left: string, right: string) => left === right),
+  sweepStaleCalls: vi.fn(),
+  sandboxSweep: vi.fn(),
+}))
 vi.mock("@/data/calls", () => ({ sweepStaleCalls }))
 vi.mock("@/lib/crypto", () => ({ secretsMatch }))
 vi.mock("@/sandbox/admission", () => ({ expireSandboxReservations }))
+vi.mock("@/sandbox/provider", () => ({
+  sandboxLifecycle: () => ({ sweep: sandboxSweep }),
+}))
 
 import { POST } from "@/app/v1/internal/sweep/route"
 import { authenticateSweep } from "@/control/sweep-auth"
@@ -83,6 +90,8 @@ describe("sweep route", () => {
     sweepStaleCalls.mockResolvedValue({ incomplete: 2, failed: 1 })
     expireSandboxReservations.mockReset()
     expireSandboxReservations.mockResolvedValue(3)
+    sandboxSweep.mockReset()
+    sandboxSweep.mockResolvedValue(undefined)
   })
 
   afterEach(() => {
@@ -138,6 +147,7 @@ describe("sweep route", () => {
     })
     expect(sweepStaleCalls).toHaveBeenCalledOnce()
     expect(expireSandboxReservations).toHaveBeenCalledOnce()
+    expect(sandboxSweep).toHaveBeenCalledOnce()
   })
 
   it("maps sweep failures to a secret-free error", async () => {
