@@ -33,6 +33,7 @@ export const EXPECTED_TABLES = [
   "assistants",
   "auth_accounts",
   "call_events",
+  "call_observations",
   "call_rate_limits",
   "calls",
   "practice_invocations",

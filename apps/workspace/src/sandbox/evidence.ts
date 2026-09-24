@@ -1,8 +1,12 @@
 import { createHash, createHmac } from "node:crypto"
-import { and, asc, eq, gt, lt } from "drizzle-orm"
+import { and, asc, eq, gt, inArray, lt } from "drizzle-orm"
 
 import { AGENT_EVENT_TYPES, AGENT_SEQUENCE_LIMIT } from "@/control/constants"
-import { projectWorkspaceCallEvent } from "@/data/calls"
+import {
+  projectReviewEvents,
+  projectWorkspaceCallEvents,
+  reviewInvocationIds,
+} from "@/data/calls"
 import { getDb } from "@/db/client"
 import { requireAuthSecret } from "@/db/env"
 import {
@@ -32,6 +36,7 @@ import {
   SANDBOX_LIMITS,
   SANDBOX_END_REASONS,
   SANDBOX_EVIDENCE_LIMITS as LIMITS,
+  sandboxEvidenceState,
   type AgentProtocol,
   type SandboxCompletion,
   type SandboxEvent,
@@ -143,15 +148,7 @@ async function ledger(tx: SandboxTransaction, callId: string): Promise<Ledger> {
     .where(eq(sandboxEvidence.callId, callId))
   return value!
 }
-function state(value: Ledger): "unknown" | "partial" | "complete" {
-  if (value.finalSeq === null) return "unknown"
-  return value.producerLoss ||
-    value.truncated ||
-    value.integrityConflict ||
-    value.contiguousSeq !== value.finalSeq
-    ? "partial"
-    : "complete"
-}
+const state = sandboxEvidenceState
 async function acknowledge(
   tx: SandboxTransaction,
   row: LockedSandboxExecution,
@@ -465,39 +462,32 @@ export async function getSandboxEventPage(
       )
       .orderBy(asc(callEvents.ingestCursor))
       .limit(LIMITS.pageEvents + 1)
+    const pageRows = rows.slice(0, LIMITS.pageEvents)
+    const projected = projectWorkspaceCallEvents(pageRows)
+    const invocationIds = reviewInvocationIds(projected)
+    const selections =
+      invocationIds.length === 0
+        ? []
+        : await tx
+            .select({
+              invocationId: practiceInvocations.invocationId,
+              scenario: practiceInvocations.scenario,
+              statusCode: practiceInvocations.statusCode,
+            })
+            .from(practiceInvocations)
+            .where(
+              and(
+                eq(practiceInvocations.callId, callId),
+                inArray(practiceInvocations.invocationId, invocationIds)
+              )
+            )
+    const reviewEvents = projectReviewEvents(projected, selections)
     const events: SandboxEventPage["events"] = []
     let bytes = 0
-    for (const event of rows.slice(0, LIMITS.pageEvents)) {
-      const projected = projectWorkspaceCallEvent(event)
-      const payload: Record<string, string | number | boolean> | undefined =
-        projected.payload ? { ...projected.payload } : undefined
-      if (
-        event.type === "tool_finished" &&
-        payload &&
-        typeof payload.invocationId === "string"
-      ) {
-        const [invocation] = await tx
-          .select({
-            scenario: practiceInvocations.scenario,
-            status: practiceInvocations.statusCode,
-          })
-          .from(practiceInvocations)
-          .where(
-            and(
-              eq(practiceInvocations.callId, callId),
-              eq(practiceInvocations.invocationId, payload.invocationId)
-            )
-          )
-        if (invocation) {
-          payload.practiceScenario = invocation.scenario
-          payload.practiceSelectedStatus = invocation.status
-        }
-      }
+    for (const [index, event] of pageRows.entries()) {
       const item: SandboxEventPage["events"][number] = {
-        ...projected,
-        ...(payload ? { payload } : {}),
+        ...reviewEvents[index]!,
         cursor: cursor(accountId, callId, event.ingestCursor!),
-        namespace: event.seq < AGENT_SEQUENCE_LIMIT ? "agent" : "platform",
       }
       const size = Buffer.byteLength(JSON.stringify(item))
       if (bytes + size > LIMITS.pageBytes - 1024) break

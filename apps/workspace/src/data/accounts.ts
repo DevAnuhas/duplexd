@@ -58,6 +58,7 @@ export async function renameAccount(
 
 export type ShellContext = {
   account: AccountProfile
+  userId: string
   userEmail: string
   userName: string | null
   counts: {
@@ -73,13 +74,12 @@ export type ShellContext = {
  *
  * This runs on **every page render**, so it is deliberately one query rather
  * than four: the account row, the signed-in user's email for the footer, and
- * the three sidebar counts as scalar subqueries.
+ * the sidebar counts as scalar subqueries.
  *
- * Each count is scoped by `accountId` and counts exactly what its link
- * navigates to — an archived assistant is absent from `/assistants`, so it is
- * absent here; a revoked key still appears on `/keys`, so it is counted. A
- * badge that disagrees with the page it points at is the one lie a tenant can
- * catch instantly.
+ * Each count is scoped by `accountId` and its destination — an archived
+ * assistant is absent from `/assistants`, while a revoked key appears on
+ * `/keys`. Call counts cover Integration only, like the overview's recent calls
+ * and the linked Integration history filter. Sandbox tests are separate usage.
  *
  * The user is joined on **both** its id and its account, so a `userId` that
  * belongs to a different tenant returns nothing rather than that tenant's
@@ -110,6 +110,7 @@ export async function getShellContext(
       calls: sql<number>`(
         select count(*) from ${calls}
         where ${calls.accountId} = ${accounts.id}
+          and ${calls.source} = 'integration'
       )`.mapWith(Number),
       /**
        * Calls the platform closed because the agent stopped reporting.
@@ -122,6 +123,7 @@ export async function getShellContext(
       incompleteCalls: sql<number>`(
         select count(*) from ${calls}
         where ${calls.accountId} = ${accounts.id}
+          and ${calls.source} = 'integration'
           and ${calls.state} = 'incomplete'
       )`.mapWith(Number),
     })
@@ -141,6 +143,7 @@ export async function getShellContext(
 
   return {
     account: { id: row.id, name: row.name, createdAt: row.createdAt },
+    userId,
     userEmail: row.userEmail,
     userName: row.userName,
     counts: {

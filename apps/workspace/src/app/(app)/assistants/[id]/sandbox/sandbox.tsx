@@ -41,6 +41,9 @@ import { useOptionalPracticeSession } from "@/components/sandbox/practice-sessio
 import { AssistantNavigation } from "../../assistant-navigation"
 
 export type SandboxProps = {
+  initialScenario?: "success" | "unavailable" | "slow" | "failure"
+  retestFromHistory?: boolean
+  retestFromPreview?: boolean
   assistant: {
     id: string
     name: string
@@ -160,7 +163,12 @@ function phaseHeadline(
   return PHASE_HEADLINE.finished
 }
 
-export function Sandbox({ assistant }: SandboxProps) {
+export function Sandbox({
+  assistant,
+  initialScenario,
+  retestFromHistory = false,
+  retestFromPreview = false,
+}: SandboxProps) {
   const session = useOptionalPracticeSession()
   const sharedSession = session !== null
   const {
@@ -199,7 +207,12 @@ export function Sandbox({ assistant }: SandboxProps) {
   const [namedOverrides, setNamedOverrides] = useState<Record<string, string>>(
     {}
   )
-  const [scenario, setScenario] = useState<Scenario>("success")
+  const [scenario, setScenario] = useState<Scenario>(
+    initialScenario ?? "success"
+  )
+  useEffect(() => {
+    if (initialScenario) setScenario(initialScenario)
+  }, [initialScenario])
   const [audioState, setAudioState] = useState<LocalAudioState>({
     kind: "idle",
     message: "Audio checks run locally. Nothing is recorded or sent.",
@@ -223,6 +236,14 @@ export function Sandbox({ assistant }: SandboxProps) {
   const unavailableCount = samples.filter((sample) =>
     sample.overrides.some((override) => override.name === "unavailable")
   ).length
+  useEffect(() => {
+    if (
+      draft.validation !== null &&
+      scenario === "unavailable" &&
+      unavailableCount === 0
+    )
+      setScenario("success")
+  }, [draft.validation, scenario, unavailableCount])
   const [endedReason, setEndedReason] = useState<string | null>(null)
   const panelPhase = sandboxPanelPhase(state)
   const confirming = state.mediaPhase === "waiting" && state.confirming
@@ -427,6 +448,24 @@ export function Sandbox({ assistant }: SandboxProps) {
       )}
 
       <div className="flex min-w-0 flex-col gap-4">
+        {retestFromHistory && (
+          <p className="rounded-md border p-3 text-sm" role="status">
+            Test again uses the current settings and sample responses. Review
+            named overrides before starting; the previous call’s overrides are
+            not restored.
+            {initialScenario === "unavailable" &&
+              draft.validation !== null &&
+              unavailableCount === 0 &&
+              " The unavailable scenario is no longer available, so Default responses is selected."}
+          </p>
+        )}
+        {retestFromPreview && draft.source === "saved" && (
+          <p className="rounded-md border p-3 text-sm" role="status">
+            The previous call used an unsaved preview. This test currently uses
+            the saved configuration. Select Unsaved conversation preview if its
+            in-tab draft is still available.
+          </p>
+        )}
         <details className="order-2 min-w-0 rounded-lg border p-3">
           <summary className="cursor-pointer text-sm font-medium">
             Practice settings and sample responses
@@ -863,8 +902,10 @@ export function Sandbox({ assistant }: SandboxProps) {
                     )}
                     {panelPhase === "finished" && state.attempt !== null && (
                       <Button asChild className="min-h-11 w-full">
-                        <Link href={`/calls/${state.attempt.callId}`}>
-                          View test record
+                        <Link
+                          href={`/assistants/${encodeURIComponent(assistant.id)}/sandbox?review=${encodeURIComponent(state.attempt.callId)}`}
+                        >
+                          Review call
                         </Link>
                       </Button>
                     )}

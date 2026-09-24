@@ -25,10 +25,14 @@ import {
   callEvents,
   callRateLimits,
   calls,
+  practiceInvocations,
+  sandboxAttempts,
+  sandboxEvidence,
 } from "@/db/schema"
 import { decryptSecret, secretsMatch } from "@/lib/crypto"
 import { hashCredential, mintAgentToken } from "@/lib/credentials"
 import { validateRunnableAssistant } from "@/practice/configuration"
+import { sandboxEvidenceState, type SandboxEventPage } from "@/sandbox/protocol"
 
 type StoredTool = {
   type: "function"
@@ -97,8 +101,21 @@ export type WorkspaceCall = PublicCall & {
   source: string
   testMode: string | null
   assistantName: string | null
+  assistantArchived: boolean
+  configSource: "saved" | "preview" | null
+  baseAssistantRevision: number | null
+  scenarioRevision: number | null
+  scenario: "success" | "unavailable" | "slow" | "failure" | "custom" | null
+  scenarioHasOverrides: boolean
+  readyAt: string | null
+  reportingUntil: string | null
   apiKey: { name: string; prefix: string } | null
+  /** Null means Integration has no Sandbox evidence ledger. */
+  evidence: SandboxEventPage["evidence"] | null
 }
+
+export type WorkspaceSourceFilter = "all" | "sandbox" | "integration"
+export type SandboxModeFilter = "all" | "practice"
 
 type TranscriptPayload = { text: string }
 type ToolStartedPayload = { tool: string; invocationId: string }
@@ -120,6 +137,13 @@ export type WorkspaceCallEventRow = {
   at: Date
   type: string
   payload: unknown
+}
+
+export type ReviewEvent = Omit<SandboxEventPage["events"][number], "cursor">
+type ReviewSelection = {
+  invocationId: string
+  scenario: string
+  statusCode: number
 }
 
 const ERROR_CATEGORY_LABELS: Readonly<Record<string, string>> = {
@@ -146,8 +170,14 @@ const publicCallColumns = {
   lastHeartbeatAt: calls.lastHeartbeatAt,
 } as const
 
-function publicCall(row: PublicCallRow, now = new Date()): PublicCall {
-  const transition = deriveStaleTransition(row, now)
+function publicCall(
+  row: PublicCallRow,
+  now = new Date(),
+  source = "integration"
+): PublicCall {
+  // Integration's sweeper rules do not describe a Sandbox reservation or lease.
+  const transition =
+    source === "integration" ? deriveStaleTransition(row, now) : null
   const projected = transition === null ? row : { ...row, ...transition }
 
   return {
@@ -251,6 +281,57 @@ export function projectWorkspaceCallEvents(
   events: WorkspaceCallEventRow[]
 ): WorkspaceCallEvent[] {
   return events.map((event) => projectWorkspaceCallEvent(event))
+}
+
+/** One allowlisted event model for the live Practice and durable Calls views. */
+export function projectReviewEvents(
+  events: WorkspaceCallEvent[],
+  selections: ReviewSelection[]
+): ReviewEvent[] {
+  const byInvocation = new Map(
+    selections.map((item) => [item.invocationId, item])
+  )
+  return events.map((event) => {
+    const payload: ReviewEvent["payload"] = event.payload
+      ? { ...event.payload }
+      : undefined
+    if (
+      event.type === "tool_finished" &&
+      payload &&
+      typeof payload.invocationId === "string"
+    ) {
+      const selected = byInvocation.get(payload.invocationId)
+      if (selected) {
+        if (["success", "slow", "failure"].includes(selected.scenario))
+          payload.practiceScenario = selected.scenario
+        if (
+          Number.isInteger(selected.statusCode) &&
+          selected.statusCode >= 100 &&
+          selected.statusCode <= 599
+        )
+          payload.practiceSelectedStatus = selected.statusCode
+      }
+    }
+    return {
+      ...event,
+      namespace: event.seq < AGENT_SEQUENCE_LIMIT ? "agent" : "platform",
+      ...(payload ? { payload } : {}),
+    }
+  })
+}
+
+export function reviewInvocationIds(events: WorkspaceCallEvent[]): string[] {
+  return [
+    ...new Set(
+      events.flatMap((event) =>
+        event.type === "tool_finished" &&
+        event.payload &&
+        "invocationId" in event.payload
+          ? [event.payload.invocationId]
+          : []
+      )
+    ),
+  ]
 }
 
 function privateSecretCiphertext(value: unknown): string | null {
@@ -473,8 +554,21 @@ type WorkspaceCallRow = PublicCallRow & {
   source: string
   testMode: string | null
   assistantName: string | null
+  assistantArchivedAt: Date | null
+  configSource: string | null
+  baseAssistantRevision: number | null
+  scenarioRevision: number | null
+  practiceScenario: unknown
+  readyAt: Date | null
+  reportingUntil: Date | null
   apiKeyName: string | null
   apiKeyPrefix: string | null
+  evidenceFinalSeq: number | null
+  evidenceContiguousSeq: number | null
+  evidenceProducerLoss: boolean | null
+  evidenceTruncated: boolean | null
+  evidenceIntegrityConflict: boolean | null
+  evidenceReconciled: boolean | null
 }
 
 const workspaceCallColumns = {
@@ -482,20 +576,92 @@ const workspaceCallColumns = {
   source: calls.source,
   testMode: calls.testMode,
   assistantName: assistants.name,
+  assistantArchivedAt: assistants.archivedAt,
+  configSource: calls.configSource,
+  baseAssistantRevision: calls.baseAssistantRevision,
+  scenarioRevision: calls.scenarioRevision,
+  // A frozen snapshot can contain large sample bodies. History needs only
+  // this safe, small scenario projection.
+  practiceScenario: sql<unknown>`${calls.practiceSnapshot} -> 'scenario'`,
+  readyAt: sandboxAttempts.readyAt,
+  reportingUntil: sandboxAttempts.reportingUntil,
   apiKeyName: apiKeys.name,
   apiKeyPrefix: apiKeys.prefix,
+  evidenceFinalSeq: sandboxEvidence.finalSeq,
+  evidenceContiguousSeq: sandboxEvidence.contiguousSeq,
+  evidenceProducerLoss: sandboxEvidence.producerLoss,
+  evidenceTruncated: sandboxEvidence.truncated,
+  evidenceIntegrityConflict: sandboxEvidence.integrityConflict,
+  evidenceReconciled: sandboxEvidence.reconciled,
 } as const
 
-function workspaceCall(row: WorkspaceCallRow): WorkspaceCall {
+export function projectPracticeScenario(value: unknown): {
+  scenario: WorkspaceCall["scenario"]
+  hasOverrides: boolean
+} {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return { scenario: null, hasOverrides: false }
+  const { transport, overrides } = value as Record<string, unknown>
+  if (!["success", "slow", "failure"].includes(String(transport)))
+    return { scenario: null, hasOverrides: false }
+  if (!overrides || typeof overrides !== "object" || Array.isArray(overrides))
+    return { scenario: null, hasOverrides: false }
+  const values = Object.values(overrides)
+  const hasOverrides = values.length > 0
+  if (transport === "slow" || transport === "failure")
+    return { scenario: transport, hasOverrides }
+  if (!hasOverrides) return { scenario: "success", hasOverrides: false }
   return {
-    ...publicCall(row),
+    scenario: values.every((value) => value === "unavailable")
+      ? "unavailable"
+      : "custom",
+    hasOverrides,
+  }
+}
+
+function workspaceCall(row: WorkspaceCallRow): WorkspaceCall {
+  const projectedScenario =
+    row.source === "sandbox"
+      ? projectPracticeScenario(row.practiceScenario)
+      : { scenario: null, hasOverrides: false }
+  return {
+    ...publicCall(row, new Date(), row.source),
     source: row.source,
     testMode: row.testMode,
     assistantName: row.assistantName,
+    assistantArchived: row.assistantArchivedAt !== null,
+    configSource:
+      row.configSource === "saved" || row.configSource === "preview"
+        ? row.configSource
+        : null,
+    baseAssistantRevision: row.baseAssistantRevision,
+    scenarioRevision: row.scenarioRevision,
+    scenario: projectedScenario.scenario,
+    scenarioHasOverrides: projectedScenario.hasOverrides,
+    readyAt: row.readyAt?.toISOString() ?? null,
+    reportingUntil: row.reportingUntil?.toISOString() ?? null,
     apiKey:
       row.apiKeyName === null || row.apiKeyPrefix === null
         ? null
         : { name: row.apiKeyName, prefix: row.apiKeyPrefix },
+    evidence:
+      row.source !== "sandbox"
+        ? null
+        : {
+            state: sandboxEvidenceState({
+              finalSeq: row.evidenceFinalSeq,
+              contiguousSeq: row.evidenceContiguousSeq ?? 0,
+              producerLoss: row.evidenceProducerLoss ?? false,
+              truncated: row.evidenceTruncated ?? false,
+              integrityConflict: row.evidenceIntegrityConflict ?? false,
+            }),
+            finalSeq: row.evidenceFinalSeq,
+            contiguousSeq: row.evidenceContiguousSeq ?? 0,
+            producerLoss: row.evidenceProducerLoss ?? false,
+            truncated: row.evidenceTruncated ?? false,
+            integrityConflict: row.evidenceIntegrityConflict ?? false,
+            reconciled: row.evidenceReconciled ?? false,
+          },
   }
 }
 
@@ -503,7 +669,11 @@ function workspaceCall(row: WorkspaceCallRow): WorkspaceCall {
 export async function getWorkspaceCallForAccount(
   accountId: string,
   callId: string
-): Promise<{ call: WorkspaceCall; events: WorkspaceCallEvent[] } | null> {
+): Promise<{
+  call: WorkspaceCall
+  events: WorkspaceCallEvent[]
+  reviewEvents: ReviewEvent[]
+} | null> {
   const rows = await getDb()
     .select(workspaceCallColumns)
     .from(calls)
@@ -518,6 +688,8 @@ export async function getWorkspaceCallForAccount(
       apiKeys,
       and(eq(apiKeys.id, calls.apiKeyId), eq(apiKeys.accountId, accountId))
     )
+    .leftJoin(sandboxEvidence, eq(sandboxEvidence.callId, calls.id))
+    .leftJoin(sandboxAttempts, eq(sandboxAttempts.callId, calls.id))
     .where(and(eq(calls.id, callId), eq(calls.accountId, accountId)))
     .limit(1)
 
@@ -542,9 +714,31 @@ export async function getWorkspaceCallForAccount(
     .where(and(eq(callEvents.callId, callId), eq(calls.accountId, accountId)))
     .orderBy(callEvents.seq)
 
+  const events = projectWorkspaceCallEvents(storedEvents)
+  const invocationIds = reviewInvocationIds(events)
+  const selections =
+    row.source === "sandbox" && invocationIds.length > 0
+      ? await getDb()
+          .select({
+            invocationId: practiceInvocations.invocationId,
+            scenario: practiceInvocations.scenario,
+            statusCode: practiceInvocations.statusCode,
+          })
+          .from(practiceInvocations)
+          .innerJoin(calls, eq(calls.id, practiceInvocations.callId))
+          .where(
+            and(
+              eq(calls.accountId, accountId),
+              eq(practiceInvocations.callId, callId),
+              inArray(practiceInvocations.invocationId, invocationIds)
+            )
+          )
+      : []
+
   return {
     call: workspaceCall(row),
-    events: projectWorkspaceCallEvents(storedEvents),
+    events,
+    reviewEvents: projectReviewEvents(events, selections),
   }
 }
 
@@ -629,7 +823,13 @@ export async function listCallsForAccount(
 
 export async function listWorkspaceCallsForAccount(
   accountId: string,
-  options: { cursor?: string | null; limit?: number; assistantId?: string } = {}
+  options: {
+    cursor?: string | null
+    limit?: number
+    assistantId?: string
+    source?: WorkspaceSourceFilter
+    mode?: SandboxModeFilter
+  } = {}
 ): Promise<
   | { kind: "invalid_cursor" }
   | { kind: "ok"; calls: WorkspaceCall[]; nextCursor: string | null }
@@ -649,6 +849,10 @@ export async function listWorkspaceCallsForAccount(
     options.assistantId === undefined
       ? undefined
       : eq(calls.assistantId, options.assistantId),
+    options.source === undefined || options.source === "all"
+      ? undefined
+      : eq(calls.source, options.source),
+    options.mode === "practice" ? eq(calls.testMode, "practice") : undefined,
     cursor === null
       ? undefined
       : or(
@@ -671,6 +875,8 @@ export async function listWorkspaceCallsForAccount(
       apiKeys,
       and(eq(apiKeys.id, calls.apiKeyId), eq(apiKeys.accountId, accountId))
     )
+    .leftJoin(sandboxEvidence, eq(sandboxEvidence.callId, calls.id))
+    .leftJoin(sandboxAttempts, eq(sandboxAttempts.callId, calls.id))
     .where(predicate)
     .orderBy(desc(calls.createdAt), desc(calls.id))
     .limit(limit + 1)
