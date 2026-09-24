@@ -29,12 +29,11 @@ import { sendPasswordResetEmail } from "@/lib/email"
  *
  * Two consequences worth knowing before changing anything here:
  *
- *  - **Session posture is not observable from the test suite.** Better Auth
- *    derives `skipOriginCheck` from `isTest()`, so under Vitest the origin
- *    check returns before comparing anything. A probe run there reports a
- *    cross-origin sign-in succeeding whether or not production would reject
- *    it — measuring the absence of a check that is switched off. Assert this
- *    against a running server, or not at all.
+ *  - **Origin and CSRF behavior needs the standalone-server test.** Better
+ *    Auth derives `skipOriginCheck` from `isTest()`, so calling it inside the
+ *    Vitest process bypasses the guard. `control-live-server.test.ts` launches
+ *    a separate process with `isTest() === false` and checks foreign-origin,
+ *    cross-site and accepted writes plus the session cookie attributes.
  *  - `Secure` and the `__Secure-` cookie prefix follow the base URL's scheme,
  *    which is why it is resolved and validated at boot rather than left to the
  *    request. On Vercel previews the base URL is `DynamicBaseURLConfig` with
