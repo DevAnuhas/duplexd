@@ -1,6 +1,6 @@
 # Operations
 
-Hosting and environments. Repository configuration exists, but the owner dashboard actions and first real deployment are still unverified. [DEPLOYMENT.md](DEPLOYMENT.md) is the canonical setup and recovery runbook.
+Hosting and environments. Preview and production deployments have run; the [A07 acceptance run](https://github.com/DevAnuhas/duplexd/issues/66) still needs integrated live evidence. [DEPLOYMENT.md](DEPLOYMENT.md) is the canonical setup and recovery runbook.
 
 ## Local
 
@@ -59,16 +59,16 @@ An API key cannot be recovered. The row holds a prefix and a hash, so support ca
 
 Sandbox execution is enabled by server configuration ([ADR 015](decisions/015-server-configured-sandbox-execution.md)). The bounds on a running call are enforced at different layers:
 
-| Bound | Enforced by | Effect |
-| --- | --- | --- |
-| Execution deadline, 600 s from dispatch | Platform, durable on the call row | `advanceSandboxExecution` requests a stop; the call ends `execution_deadline` |
-| Daily room expiry, set to the same instant with `eject_at_room_exp` | Provider | The browser and the agent are ejected from the room |
-| Presence lease, 60 s, renewed every 15 s by the tab | Platform | A closed tab stops local audio immediately. A ready call may continue in a hidden tab while renewals succeed; if the browser suspends renewals, the server requests a stop at lease expiry. Hiding a tab before the call reaches ready stops it immediately. |
-| Pipecat pipeline idle timeout, currently 300 s | Agent | The pinned Pipecat 1.11.0 runner default cancels after five minutes without relevant speech or transcript frames. Activity resets this timer. Duplexd does not override the default; verify it when upgrading Pipecat. |
-| Startup deadline, 120 s | Platform | An agent that never reaches readiness ends the call `startup_deadline` |
-| Watchdog, polling control every 3 s | Agent | The agent stops itself when the platform says stop |
-| Sweep, every five minutes | Platform + provider private API | Unresolved sessions get a session `DELETE`, up to three attempts |
-| `max_agents = 1`, spend cap | Provider | A bug cannot fan out into many paid sessions |
+| Bound                                                               | Enforced by                       | Effect                                                                                                                                                                                                                                                       |
+| ------------------------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Execution deadline, 600 s from dispatch                             | Platform, durable on the call row | `advanceSandboxExecution` requests a stop; the call ends `execution_deadline`                                                                                                                                                                                |
+| Daily room expiry, set to the same instant with `eject_at_room_exp` | Provider                          | The browser and the agent are ejected from the room                                                                                                                                                                                                          |
+| Presence lease, 60 s, renewed every 15 s by the tab                 | Platform                          | A closed tab stops local audio immediately. A ready call may continue in a hidden tab while renewals succeed; if the browser suspends renewals, the server requests a stop at lease expiry. Hiding a tab before the call reaches ready stops it immediately. |
+| Pipecat pipeline idle timeout, currently 300 s                      | Agent                             | The pinned Pipecat 1.11.0 runner default cancels after five minutes without relevant speech or transcript frames. Activity resets this timer. Duplexd does not override the default; verify it when upgrading Pipecat.                                       |
+| Startup deadline, 120 s                                             | Platform                          | An agent that never reaches readiness ends the call `startup_deadline`                                                                                                                                                                                       |
+| Watchdog, polling control every 3 s                                 | Agent                             | The agent stops itself when the platform says stop                                                                                                                                                                                                           |
+| Sweep, every five minutes                                           | Platform + provider private API   | Unresolved sessions get a session `DELETE`, up to three attempts                                                                                                                                                                                             |
+| `max_agents = 1`, spend cap                                         | Provider                          | A bug cannot fan out into many paid sessions                                                                                                                                                                                                                 |
 
 **Pipecat's deploy configuration has no session-duration field.** `pcc-deploy.toml` accepts `min_agents`, `max_agents`, the secret set, the profile and the region, and nothing else that bounds a session's length. Anything claiming a provider-enforced session ceiling is describing the room expiry above, which is a Daily room property this platform sets per start — so the ceiling holds because the start request sets it, not because the deployment does.
 

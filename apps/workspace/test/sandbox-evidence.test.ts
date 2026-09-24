@@ -5,8 +5,14 @@ import { requireWorkspaceSession } from "@/lib/workspace-mutation"
 import { POST as eventRoute } from "@/app/v1/agent/calls/[id]/events/route"
 import { POST as completeRoute } from "@/app/v1/agent/calls/[id]/complete/route"
 import { GET as protocolRoute } from "@/app/v1/agent/calls/[id]/protocol/route"
+import { getWorkspaceCallForAccount } from "@/data/calls"
 import { closeDb, getDb } from "@/db/client"
-import { callEvents, sandboxEvidence } from "@/db/schema"
+import {
+  callEvents,
+  calls,
+  sandboxAttempts,
+  sandboxEvidence,
+} from "@/db/schema"
 import {
   getSandboxEventPage,
   parseSandboxEvents,
@@ -81,6 +87,79 @@ describe("frozen evidence schema", () => {
 
 const describeDatabase = describe.skipIf(!isDatabaseConfigured())
 describeDatabase("offline Sandbox evidence ledger", () => {
+  it("marks a lost final batch partial and cannot revive a completed call when authenticated readiness arrives late", async () => {
+    const f = await sandboxFixture()
+    const params = { params: Promise.resolve({ id: f.agent.callId }) }
+
+    // The agent has sent sequence 1, but its last event batch (sequence 2)
+    // does not reach the server before its authenticated completion seal.
+    const first = await eventRoute(request(f, { events: [event(1)] }), params)
+    expect(first.status).toBe(200)
+    const sealed = await completeRoute(
+      request(f, { ...completion, finalSeq: 2 }),
+      params
+    )
+    expect(sealed.status).toBe(200)
+    expect(await sealed.json()).toMatchObject({
+      evidenceState: "partial",
+      missingRanges: [[2, 2]],
+    })
+    expect((await f.rows()).call.state).toBe("ended")
+    expect(
+      (await getWorkspaceCallForAccount(f.account.accountId, f.agent.callId))
+        ?.call
+    ).toMatchObject({ state: "ended", evidence: { state: "partial" } })
+
+    // A replay can fill the evidence gap, but a historical agent_ready is
+    // evidence about the past, never permission to activate the call again.
+    const replay = await eventRoute(
+      request(f, { events: [event(2, "agent_ready")] }),
+      params
+    )
+    expect(replay.status).toBe(200)
+    expect(await replay.json()).toMatchObject({ evidenceState: "complete" })
+    const rows = await f.rows()
+    expect(rows.attempt.readyAt).toBeNull()
+    expect(rows.attempt.state).not.toBe("active")
+    expect(rows.call.state).toBe("ended")
+    expect(rows.ledger).toMatchObject({
+      finalSeq: 2,
+      contiguousSeq: 2,
+      reconciled: true,
+    })
+    expect(
+      (await getWorkspaceCallForAccount(f.account.accountId, f.agent.callId))
+        ?.call.evidence?.state
+    ).toBe("complete")
+  })
+
+  it("treats authenticated readiness as history when a terminal call has no stop request", async () => {
+    const f = await sandboxFixture()
+    const params = { params: Promise.resolve({ id: f.agent.callId }) }
+
+    // Model a terminal state written by another recovery observer before a
+    // stop request reached this attempt. The call state must still be enough
+    // to prevent a late event from turning the attempt active.
+    await getDb()
+      .update(calls)
+      .set({ state: "incomplete" })
+      .where(eq(calls.id, f.agent.callId))
+    await getDb()
+      .update(sandboxAttempts)
+      .set({ reportingUntil: new Date(Date.now() + 60_000) })
+      .where(eq(sandboxAttempts.id, f.browser.attemptId))
+    expect((await f.rows()).attempt.stopRequestedAt).toBeNull()
+
+    const replay = await eventRoute(
+      request(f, { events: [event(1, "agent_ready")] }),
+      params
+    )
+    expect(replay.status).toBe(200)
+    expect((await f.rows()).attempt.readyAt).toBeNull()
+    expect((await f.rows()).attempt.state).not.toBe("active")
+    expect((await f.rows()).call.state).toBe("incomplete")
+  })
+
   it("accepts canonical replay once, trims ACK at gaps and reconciles a sealed missing sequence", async () => {
     const f = await sandboxFixture()
     expect(await f.evidence.ingest(f.agent, [event(2)])).toMatchObject({
