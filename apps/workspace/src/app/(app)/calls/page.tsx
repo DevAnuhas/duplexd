@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation"
 
 import { listWorkspaceCallsForAccount } from "@/data/calls"
+import { parseCallListFilters } from "@/data/call-list-filters"
 import { requireShell } from "../shell-data"
 import { CallsList } from "./calls-list"
 
@@ -9,12 +10,18 @@ export const dynamic = "force-dynamic"
 export default async function CallsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ cursor?: string | string[] }>
+  searchParams: Promise<{
+    cursor?: string | string[]
+    source?: string | string[]
+    mode?: string | string[]
+  }>
 }) {
   const { account } = await requireShell()
-  const value = (await searchParams).cursor
-  const cursor = typeof value === "string" ? value : null
-  const result = await listWorkspaceCallsForAccount(account.id, { cursor })
+  const filters = parseCallListFilters(await searchParams)
+  if (filters === null) redirect("/calls")
+  const result = await listWorkspaceCallsForAccount(account.id, {
+    ...filters,
+  })
   if (result.kind === "invalid_cursor") redirect("/calls")
 
   return (
@@ -29,6 +36,8 @@ export default async function CallsPage({
         calls={result.calls}
         nextCursor={result.nextCursor}
         basePath="/calls"
+        source={filters.source}
+        mode={filters.mode}
       />
     </div>
   )

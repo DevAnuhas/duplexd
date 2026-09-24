@@ -48,7 +48,7 @@ Running it for real is what found the bugs fixtures could not. Three timeouts we
 
 Those failures are a **local-tunnel artefact and not a product fault**: the agent runs on Pipecat Cloud and reaches a laptop through ngrok, and the tunnel alone consumes the budget before the handler is entered. It is also why `WEBHOOK_TIMEOUT_SECS` has not been changed — the only honest measurement is `durationMs` from a preview call, where there is no tunnel hop, and that has not been taken.
 
-Still NOT RUN, and not to be counted: **a successful tool result**. The Vercel preview call is NOT RUN, and voice execution is not configured in the Preview environment, so it cannot be run there today. Keyboard and 390 px passes for #64 are NOT RUN. Durable observations (#65) remain unfinished, and #29 acceptance (#66) has not been walked.
+Still NOT RUN, and not to be counted here: **a successful tool result**. The evidence in this section does not include a successful tool round trip. Durable Practice review and authored observations are implemented in #65; the UI acceptance pass and merge are pending. #29 acceptance (#66) has not been walked.
 
 The caller turn still cannot be driven by the automated rig: Chrome's fake audio device attenuates the synthesised caller by about 15 dB (−12.7 dB at source against −28.3 dB captured), which the agent hears too faintly to transcribe reliably. Every user turn recorded so far came from a human microphone.
 

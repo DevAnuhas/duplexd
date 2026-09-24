@@ -10,7 +10,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import type { WorkspaceCall } from "@/data/calls"
+import type {
+  SandboxModeFilter,
+  WorkspaceCall,
+  WorkspaceSourceFilter,
+} from "@/data/calls"
 import { CallProvenance, WorkspaceCallStateBadge } from "./call-provenance"
 
 const dateTime = new Intl.DateTimeFormat("en", {
@@ -44,31 +48,95 @@ export function CallsList({
   nextCursor,
   basePath,
   assistantName,
+  source,
+  mode,
 }: {
   calls: WorkspaceCall[]
   nextCursor: string | null
   basePath: string
   assistantName?: string
+  source: WorkspaceSourceFilter
+  mode: SandboxModeFilter
 }) {
+  function href(
+    nextSource: WorkspaceSourceFilter,
+    nextMode: SandboxModeFilter,
+    cursor?: string
+  ) {
+    const params = new URLSearchParams()
+    if (nextSource !== "all") params.set("source", nextSource)
+    if (nextMode !== "all") params.set("mode", nextMode)
+    if (cursor) params.set("cursor", cursor)
+    const query = params.toString()
+    return query ? `${basePath}?${query}` : basePath
+  }
+  const filtered = source !== "all" || mode !== "all"
   return (
     <div className="space-y-5">
+      <nav aria-label="Filter calls" className="flex flex-wrap gap-2">
+        {(
+          [
+            ["all", "All"],
+            ["sandbox", "Sandbox"],
+            ["integration", "Integration"],
+          ] as const
+        ).map(([value, label]) => (
+          <Button
+            key={value}
+            asChild
+            variant={source === value ? "secondary" : "outline"}
+            className="min-h-11"
+          >
+            <Link
+              href={href(value, "all")}
+              aria-current={source === value ? "page" : undefined}
+            >
+              {label}
+            </Link>
+          </Button>
+        ))}
+        {source === "sandbox" && (
+          <Button
+            asChild
+            variant={mode === "practice" ? "secondary" : "outline"}
+            className="min-h-11"
+          >
+            <Link
+              href={href("sandbox", mode === "practice" ? "all" : "practice")}
+              aria-current={mode === "practice" ? "page" : undefined}
+            >
+              Practice mode
+            </Link>
+          </Button>
+        )}
+      </nav>
       {calls.length === 0 ? (
         <div className="flex min-h-52 flex-col items-start justify-center border-y py-10">
-          <h2 className="text-lg font-medium">No calls yet</h2>
+          <h2 className="text-lg font-medium">
+            {filtered ? "No matching calls" : "No calls yet"}
+          </h2>
           <p className="mt-1 max-w-md text-sm text-muted-foreground">
-            {assistantName
-              ? `Calls with ${assistantName} will appear here.`
-              : "Integration calls and Practice preparations appear here."}
+            {filtered
+              ? "Try another source or view all calls."
+              : assistantName
+                ? `Calls with ${assistantName} will appear here.`
+                : "Integration calls and Practice preparations appear here."}
           </p>
           <Button asChild className="mt-5 h-11">
             <Link
               href={
-                assistantName
-                  ? basePath.replace(/\/calls$/, "/sandbox")
-                  : "/keys"
+                filtered
+                  ? basePath
+                  : assistantName
+                    ? basePath.replace(/\/calls$/, "/sandbox")
+                    : "/keys"
               }
             >
-              {assistantName ? "Open Practice" : "View API keys"}
+              {filtered
+                ? "View all calls"
+                : assistantName
+                  ? "Open Practice"
+                  : "View API keys"}
             </Link>
           </Button>
         </div>
@@ -101,7 +169,14 @@ export function CallsList({
                     </Link>
                   </TableCell>
                   {assistantName === undefined && (
-                    <TableCell>{call.assistantName ?? "Unavailable"}</TableCell>
+                    <TableCell>
+                      {call.assistantName ?? "Unavailable"}
+                      {call.assistantArchived && (
+                        <span className="block text-xs text-muted-foreground">
+                          Archived assistant
+                        </span>
+                      )}
+                    </TableCell>
                   )}
                   <TableCell>
                     <CallProvenance call={call} />
@@ -145,9 +220,7 @@ export function CallsList({
       )}
       {nextCursor !== null && (
         <Button variant="outline" asChild className="h-11">
-          <Link href={`${basePath}?cursor=${encodeURIComponent(nextCursor)}`}>
-            Older calls
-          </Link>
+          <Link href={href(source, mode, nextCursor)}>Older calls</Link>
         </Button>
       )}
     </div>

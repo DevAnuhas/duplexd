@@ -5,6 +5,7 @@ import {
   integer,
   jsonb,
   numeric,
+  pgEnum,
   pgTable,
   primaryKey,
   text,
@@ -254,6 +255,56 @@ export const calls = pgTable(
     index("calls_starting_idx")
       .on(table.state)
       .where(sql`${table.state} = 'starting'`),
+  ]
+)
+
+/** A tester's assertions are separate from agent events and evidence. */
+export const observationAnswer = pgEnum("observation_answer", [
+  "met",
+  "needs_work",
+  "not_checked",
+])
+
+export const callObservations = pgTable(
+  "call_observations",
+  {
+    id: text("id").primaryKey(),
+    callId: text("call_id")
+      .notNull()
+      .references(() => calls.id, { onDelete: "cascade" }),
+    // Deleted members leave a frozen, account-visible review behind.
+    authorUserId: text("author_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    revision: integer("revision").notNull().default(1),
+    checklistVersion: integer("checklist_version").notNull().default(1),
+    heardExpectedAnswer: observationAnswer("heard_expected_answer")
+      .notNull()
+      .default("not_checked"),
+    correctToolOutcome: observationAnswer("correct_tool_outcome")
+      .notNull()
+      .default("not_checked"),
+    honestFailureSpeech: observationAnswer("honest_failure_speech")
+      .notNull()
+      .default("not_checked"),
+    acceptableInterruptionWaiting: observationAnswer(
+      "acceptable_interruption_waiting"
+    )
+      .notNull()
+      .default("not_checked"),
+    note: text("note").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("call_observations_call_author_idx").on(
+      table.callId,
+      table.authorUserId
+    ),
   ]
 )
 
