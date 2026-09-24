@@ -1,6 +1,6 @@
 # Deployment
 
-Canonical deployment runbook for the workspace/control API. The repository contains the Vercel configuration and GitHub workflows; the dashboard setup below is still an owner action and has **not** been performed or verified by this change.
+Canonical deployment runbook for the workspace/control API. Preview deployments and the staged production workflow have run successfully. The checklist below describes the required dashboard configuration; verify its current values before a new release or live acceptance run.
 
 ## Platform shape
 
@@ -26,27 +26,27 @@ Before a migration fixture drops schemas, connect read-only and inspect Neon's `
 6. Scope the application variables below separately for Preview and Production. Previews use synthetic credentials and data only.
 7. Add the GitHub production-environment and scheduler secrets below. Keep production-environment approval enabled if the repository policy requires human production approval.
 
-Writing these steps does not prove the dashboards are configured. The first preview database injection and first production deployment remain blocked until the owner performs them and reads the resulting environment/deployment back.
+The successful preview builds and production promotions prove those deployment paths ran. They do not prove every environment variable, provider image or spend limit needed for [Stage A acceptance](https://github.com/DevAnuhas/duplexd/issues/66); read those back before the live run.
 
 ## Vercel application environment
 
-| Variable                    | Scope                                                            | Purpose                                                                   |
-| --------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `DATABASE_URL`              | Preview: integration-injected; Production: pooled production URL | Runtime database connection                                               |
-| `DATABASE_URL_UNPOOLED`     | Preview: integration-injected                                    | Exact connection preflighted and migrated during a preview build          |
-| `NEON_PRODUCTION_BRANCH_ID` | Preview                                                          | Production branch ID; the preview preflight refuses an equal branch       |
-| `VERCEL_GIT_COMMIT_REF`     | Preview, supplied by Vercel                                      | Git branch name; preview migration refuses `main`                         |
-| `BETTER_AUTH_SECRET`        | Preview and Production, different values                         | Session signing                                                           |
-| `BETTER_AUTH_URL`           | Production, matching the public origin; leave **unset** on Preview | Auth callback/cookie origin                                               |
-| `ASSISTANT_SECRET_KEY`      | Preview and Production, different values                         | AES-256-GCM key for webhook secrets                                       |
-| `PIPECAT_API_KEY`           | Preview and Production                                           | Starts the Pipecat agent; previews must not receive a customer credential |
-| `PIPECAT_PRIVATE_API_KEY`   | Preview and Production — **all-or-nothing with the three below** | Reads and terminates provider sessions; must differ from `PIPECAT_API_KEY` |
-| `PIPECAT_ORGANIZATION_ID`   | Preview and Production                                           | Organization **UUID**, not the CLI namespace slug                         |
-| `PIPECAT_SERVICE_ID`        | Preview and Production                                           | `duplexd-agent` service UUID                                              |
-| `PIPECAT_DEPLOYMENT_ID`     | Preview and Production                                           | Active deployment UUID; re-set it after every `pipecat cloud deploy`      |
-| `SANDBOX_AGENT_API_BASE`    | Local development only — **optional**                            | HTTPS origin the agent calls back on when it differs from `BETTER_AUTH_URL` |
-| `RESEND_API_KEY`            | Preview and Production, different values — **optional**          | Sends the password reset email                                            |
-| `EMAIL_FROM`                | Preview and Production — **optional**, e.g. `duplexd <auth@example.com>` | From-address on the password reset email                          |
+| Variable                    | Scope                                                                    | Purpose                                                                     |
+| --------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| `DATABASE_URL`              | Preview: integration-injected; Production: pooled production URL         | Runtime database connection                                                 |
+| `DATABASE_URL_UNPOOLED`     | Preview: integration-injected                                            | Exact connection preflighted and migrated during a preview build            |
+| `NEON_PRODUCTION_BRANCH_ID` | Preview                                                                  | Production branch ID; the preview preflight refuses an equal branch         |
+| `VERCEL_GIT_COMMIT_REF`     | Preview, supplied by Vercel                                              | Git branch name; preview migration refuses `main`                           |
+| `BETTER_AUTH_SECRET`        | Preview and Production, different values                                 | Session signing                                                             |
+| `BETTER_AUTH_URL`           | Production, matching the public origin; leave **unset** on Preview       | Auth callback/cookie origin                                                 |
+| `ASSISTANT_SECRET_KEY`      | Preview and Production, different values                                 | AES-256-GCM key for webhook secrets                                         |
+| `PIPECAT_API_KEY`           | Preview and Production                                                   | Starts the Pipecat agent; previews must not receive a customer credential   |
+| `PIPECAT_PRIVATE_API_KEY`   | Preview and Production — **all-or-nothing with the three below**         | Reads and terminates provider sessions; must differ from `PIPECAT_API_KEY`  |
+| `PIPECAT_ORGANIZATION_ID`   | Preview and Production                                                   | Organization **UUID**, not the CLI namespace slug                           |
+| `PIPECAT_SERVICE_ID`        | Preview and Production                                                   | `duplexd-agent` service UUID                                                |
+| `PIPECAT_DEPLOYMENT_ID`     | Preview and Production                                                   | Active deployment UUID; re-set it after every `pipecat cloud deploy`        |
+| `SANDBOX_AGENT_API_BASE`    | Local development only — **optional**                                    | HTTPS origin the agent calls back on when it differs from `BETTER_AUTH_URL` |
+| `RESEND_API_KEY`            | Preview and Production, different values — **optional**                  | Sends the password reset email                                              |
+| `EMAIL_FROM`                | Preview and Production — **optional**, e.g. `duplexd <auth@example.com>` | From-address on the password reset email                                    |
 
 ### Why the Sandbox provider variables are all-or-nothing
 

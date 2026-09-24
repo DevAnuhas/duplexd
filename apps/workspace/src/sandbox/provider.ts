@@ -18,7 +18,7 @@ import { createPipecatSandboxTransport } from "./pipecat-transport"
  * ADR 015 supersedes; the rest of both stands, including the rule that made
  * this module necessary. A deployment without the five variables composes the
  * no-transport lifecycle and answers 503 from every execution-bearing route,
- * which is exactly what production does today.
+ * which is what any unconfigured deployment does.
  *
  * **Composed per call, not at import.** `next build` must not need a provider
  * configuration, an auth origin or a database, and a memoised instance built
